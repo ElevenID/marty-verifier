@@ -1,0 +1,28 @@
+[package]
+name = "marty-reporting"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Reporting and analytics for Marty Verifier"
+
+[features]
+default = ["api", "batch"]
+api = ["reqwest"]     # REST API reporting
+batch = []            # Batch upload to S3/blob
+local-only = []       # Local storage only, no remote
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+reqwest = { workspace = true, optional = true }
+
+marty-secure-storage.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

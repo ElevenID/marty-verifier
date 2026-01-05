@@ -1,0 +1,32 @@
+# Test results
+test-results/
+coverage/
+.vitest/
+
+# Playwright
+playwright-report/
+playwright/.cache/
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Rust targets in ui folder
+target/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local

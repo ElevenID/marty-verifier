@@ -1,0 +1,87 @@
+[workspace]
+resolver = "2"
+members = [
+    "src-tauri",
+    "crates/marty-license",
+    "crates/marty-sync",
+    "crates/marty-reporting",
+    "crates/marty-verifier-storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Marty Team"]
+license = "Proprietary"
+repository = "https://github.com/ElevenID/marty-verifier"
+
+[workspace.dependencies]
+# Tauri
+tauri = { version = "2.1", features = ["devtools"] }
+tauri-build = "2.0"
+tauri-plugin-shell = "2.0"
+tauri-plugin-updater = "2.1.0"
+
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
+
+# Crypto
+ring = "0.17"
+ed25519-dalek = { version = "2.1", features = ["serde"] }
+blake3 = "1.5"
+jsonwebtoken = "9.3"
+
+# Keychain
+keyring = "3.6"
+
+# Platform
+directories = "5.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Encoding
+base64 = "0.22"
+url = "2"
+
+# X.509 parsing
+x509-cert = "0.2"
+
+# UUID
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# HTTP client (for sync)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# External crates from marty-core (git dependencies)
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", branch = "main" }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", branch = "main", features = ["serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", branch = "main", features = ["native"] }
+
+# Internal crates
+marty-license = { path = "crates/marty-license" }
+marty-sync = { path = "crates/marty-sync" }
+marty-reporting = { path = "crates/marty-reporting" }
+marty-verifier-storage = { path = "crates/marty-verifier-storage" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = "z"
