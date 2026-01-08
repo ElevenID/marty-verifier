@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use marty_license::LicenseManager;
-use marty_secure_storage::SecureStorage;
+use marty_app_storage::SecureStorage;
 use marty_sync::SyncEngine;
 
 use crate::config::AppConfig;

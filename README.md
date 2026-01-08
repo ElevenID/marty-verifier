@@ -267,24 +267,70 @@ pnpm lint
 
 ## Deployment
 
-### macOS
+### Desktop App Releases
 
-1. Build the app: `pnpm tauri build`
-2. Sign with Developer ID
-3. Notarize with Apple
-4. Distribute DMG
+Marty Verifier uses an automated release pipeline with:
 
-### Windows
+- **RC (Release Candidate) testing** before stable releases
+- **Code signing** for macOS and Windows
+- **Auto-updater** for seamless updates
+- **Multi-platform builds** (macOS x86_64/arm64, Windows x64, Linux AppImage/deb)
 
-1. Build the app: `pnpm tauri build`
-2. Sign with EV certificate
-3. Distribute MSI installer
+See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for certificate setup instructions.
 
-### Linux
+### Release Process
 
-1. Build the app: `pnpm tauri build`
-2. Package as AppImage or deb
-3. Distribute via package manager
+**Automated from marty-core:**
+
+When marty-core releases a new version, this repository automatically:
+1. Updates marty-core dependencies
+2. Runs full test suite
+3. Bumps patch version (e.g., 0.1.0 → 0.1.1)
+4. Creates new release if tests pass
+5. Creates GitHub Issue if tests fail
+
+**Manual release:**
+
+```bash
+# Create RC tag
+git tag v0.2.0-rc.1
+git push origin v0.2.0-rc.1
+
+# Test the RC build from GitHub Releases
+
+# Promote to stable (creates v0.2.0 tag)
+# Manually tag or wait for auto-promotion after marty-core update
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+### Auto-Updater
+
+The app automatically checks for updates on launch and periodically during operation:
+
+- **Update channel:** Stable only (no beta/rc channel for end users)
+- **Update manifest:** `https://github.com/ElevenID/marty-verifier/releases/latest/download/latest.json`
+- **Signature verification:** Updates are cryptographically signed
+- **Silent updates:** Downloads in background, prompts on next launch
+
+Users can disable auto-updates in Settings.
+
+### Distribution
+
+**macOS:**
+- DMG installer from GitHub Releases
+- Code signed and notarized
+- Supports macOS 10.15+
+
+**Windows:**
+- NSIS installer (.exe) from GitHub Releases
+- Code signed with EV certificate
+- Supports Windows 10+
+
+**Linux:**
+- AppImage (universal) from GitHub Releases
+- .deb package for Debian/Ubuntu
+- Tested on Ubuntu 20.04+
 
 ## License
 

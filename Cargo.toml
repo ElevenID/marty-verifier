@@ -5,7 +5,7 @@ members = [
     "crates/marty-license",
     "crates/marty-sync",
     "crates/marty-reporting",
-    "crates/marty-verifier-storage",
+    "crates/marty-app-storage",
 ]
 
 [workspace.package]
@@ -77,7 +77,7 @@ marty-biometrics = { git = "https://github.com/ElevenID/marty-core", branch = "m
 marty-license = { path = "crates/marty-license" }
 marty-sync = { path = "crates/marty-sync" }
 marty-reporting = { path = "crates/marty-reporting" }
-marty-verifier-storage = { path = "crates/marty-verifier-storage" }
+marty-app-storage = { path = "crates/marty-app-storage" }
 
 [profile.release]
 lto = true

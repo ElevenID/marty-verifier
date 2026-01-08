@@ -1,5 +1,5 @@
 [package]
-name = "marty-secure-storage"
+name = "marty-app-storage"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

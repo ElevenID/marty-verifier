@@ -19,7 +19,7 @@ fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "marty_verifier=debug,marty_secure_storage=debug".into()),
+                .unwrap_or_else(|_| "marty_verifier=debug,marty_app_storage=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

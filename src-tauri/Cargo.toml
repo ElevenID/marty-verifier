@@ -50,7 +50,7 @@ url.workspace = true
 directories = "5.0"
 
 # Internal crates
-marty-secure-storage.workspace = true
+marty-app-storage.workspace = true
 marty-license.workspace = true
 marty-sync.workspace = true
 

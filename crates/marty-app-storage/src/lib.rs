@@ -1,4 +1,4 @@
-//! Marty Secure Storage
+//! Marty App Storage
 //!
 //! Encrypted local storage for the Marty Verifier application.
 //! Uses SQLCipher for encrypted SQLite and platform keychain for key storage.
