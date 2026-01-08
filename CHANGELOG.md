@@ -1,3 +1,8 @@
+## [unreleased] - 2026-01-08
+
+### 🚀 Features
+
+- Add automated release pipeline and Tauri auto-updater
 # Changelog
 
 All notable changes to this project will be documented in this file.
