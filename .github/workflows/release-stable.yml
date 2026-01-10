@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # Required for attestations
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -154,6 +156,13 @@ jobs:
           cargo install git-cliff
           git cliff --tag ${{ steps.version.outputs.tag }} --unreleased --strip all > RELEASE_NOTES.md
 
+      - name: Install cargo-cyclonedx for SBOM
+        run: cargo install cargo-cyclonedx
+
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --output-cdx marty-verifier-sbom.json
+
       - name: Download release assets
         uses: robinraju/release-downloader@v1
         with:
@@ -193,12 +202,19 @@ jobs:
           # TODO: Add proper signature extraction from .sig files if TAURI_SIGNING_PRIVATE_KEY is configured
           # For now, signatures are empty - updater will skip signature verification
 
+      - name: Generate attestations for release artifacts
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'release-assets/*.tar.gz'
+
       - name: Update release with manifest and notes
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Marty Verifier ${{ steps.version.outputs.version }}
           body_path: RELEASE_NOTES.md
-          files: latest.json
+          files: |
+            latest.json
+            marty-verifier-sbom.json
           prerelease: false
           generate_release_notes: true
