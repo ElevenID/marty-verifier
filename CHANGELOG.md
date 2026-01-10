@@ -1,3 +1,13 @@
+## [unreleased] - 2026-01-10
+
+### 🚀 Features
+
+- Add automated release pipeline and Tauri auto-updater
+
+### ⚙️ Miscellaneous Tasks
+
+- Update CHANGELOG.md
+- Add comprehensive security and quality checks
 ## [unreleased] - 2026-01-08
 
 ### 🚀 Features
