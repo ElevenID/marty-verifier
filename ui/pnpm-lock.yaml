@@ -91,8 +91,8 @@ importers:
         specifier: ^12.10.0
         version: 12.10.3
       javascript-obfuscator:
-        specifier: ^4.1.0
-        version: 4.2.2
+        specifier: ^5.1.0
+        version: 5.1.0
       jsdom:
         specifier: ^23.0.0
         version: 23.2.0
@@ -1787,8 +1787,8 @@ packages:
     resolution: {integrity: sha512-HGYWWS/ehqTV3xN10i23tkPkpH46MLCIMFNCaaKNavAXTF1RkqxawEPtnjnGZ6XKSInBKkiOA5BKS+aZiY3AvA==}
     engines: {node: '>=8'}
 
-  javascript-obfuscator@4.2.2:
-    resolution: {integrity: sha512-+7oXAUnFCA6vS0omIGHcWpSr67dUBIF7FKGYSXyzxShSLqM6LBgdugWKFl0XrYtGWyJMGfQR5F4LL85iCefkRA==}
+  javascript-obfuscator@5.1.0:
+    resolution: {integrity: sha512-yw0zSxH20YVxJ7Jg23ii9eojcsGkfZmP6AEvaddv026+3H3QPOd/qPo168+80gvzN6pyMQDCbLwxjrP76jkPAg==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -2604,10 +2604,12 @@ packages:
   whatwg-encoding@2.0.0:
     resolution: {integrity: sha512-p41ogyeMUrw3jWclHWTQg1k05DSVXPLcVxRTYsXUk+ZooOCZLcoYgPZ/HL/D/N+uQPOtcp1me1WhBEaX02mhWg==}
     engines: {node: '>=12'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-mimetype@3.0.0:
     resolution: {integrity: sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q==}
@@ -4488,7 +4490,7 @@ snapshots:
       html-escaper: 2.0.2
       istanbul-lib-report: 3.0.1
 
-  javascript-obfuscator@4.2.2:
+  javascript-obfuscator@5.1.0:
     dependencies:
       '@javascript-obfuscator/escodegen': 2.3.1
       '@javascript-obfuscator/estraverse': 5.4.0
