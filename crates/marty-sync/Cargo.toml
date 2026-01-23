@@ -18,9 +18,10 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
 chrono.workspace = true
-reqwest = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json"] }
 
 marty-secure-storage.workspace = true
+marty-verification = { path = "../../../marty-core/marty-verification" }
 
 # Certificate parsing
 x509-cert = "0.2"

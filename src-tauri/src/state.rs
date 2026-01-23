@@ -11,6 +11,7 @@ use marty_sync::SyncEngine;
 use crate::config::AppConfig;
 use crate::error::AppResult;
 use crate::hardware::{HardwareDetector, HardwareTier};
+use crate::runtime_config::RuntimeConfig;
 
 /// Stored liveness challenge metadata for replay protection
 #[derive(Debug, Clone)]
@@ -37,6 +38,9 @@ pub struct AppState {
 
     /// Sync engine for trust anchor updates
     pub sync_engine: Arc<SyncEngine>,
+
+    /// Runtime configuration (deployment profile, lane, UX settings)
+    pub runtime_config: RuntimeConfig,
 
     /// Hardware detection and tier management
     pub hardware: Arc<HardwareDetector>,
@@ -92,6 +96,7 @@ impl AppState {
             storage,
             license,
             sync_engine,
+            runtime_config: RuntimeConfig::new(),
             hardware,
             hardware_tier: RwLock::new(hardware_tier),
             is_online: RwLock::new(false), // Assume offline until proven otherwise

@@ -9,6 +9,7 @@ mod commands;
 mod config;
 mod error;
 mod hardware;
+mod runtime_config;
 mod state;
 
 use state::AppState;
@@ -32,6 +33,10 @@ fn main() {
     // Clone license manager for async setup
     let license_for_setup = app_state.license.clone();
     let config_public_key = app_state.config.blocking_read().license_public_key.clone();
+    
+    // Clone storage and runtime config for profile sync
+    let storage_for_sync = app_state.storage.clone();
+    let runtime_config_for_sync = app_state.runtime_config.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -67,6 +72,26 @@ fn main() {
                     }
                 });
             }
+            
+            // Sync device configuration on startup
+            tauri::async_runtime::spawn(async move {
+                tracing::info!("Syncing device configuration on startup");
+                match commands::profile_sync::sync_device_config_impl(
+                    storage_for_sync,
+                    runtime_config_for_sync,
+                ).await {
+                    Ok(result) => {
+                        tracing::info!(
+                            profile_id = ?result.deployment_profile_id,
+                            lane_id = ?result.lane_id,
+                            "Device configuration synced successfully"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to sync device config on startup: {}", e);
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -86,6 +111,9 @@ fn main() {
             commands::sync::sync_trust_anchors,
             commands::sync::get_sync_status,
             commands::sync::import_trust_anchors_usb,
+            // Profile sync commands
+            commands::profile_sync::sync_device_config,
+            commands::profile_sync::get_runtime_config,
             // Hardware commands
             commands::hardware::detect_hardware,
             commands::hardware::get_hardware_tier,

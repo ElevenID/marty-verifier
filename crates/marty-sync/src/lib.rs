@@ -5,9 +5,16 @@
 
 mod engine;
 mod error;
+mod policy;
+mod profile_sync;
 mod sources;
 mod usb;
 
 pub use engine::{SyncConfig, SyncEngine, SyncResult, SyncStatus};
 pub use error::SyncError;
+pub use policy::{PolicySyncProvider, PolicyStorage};
+pub use profile_sync::{
+    DeploymentProfile, DeviceConfig, Lane, NetworkMode, ProfileSyncProvider, UXConfig,
+    UpdatePolicy,
+};
 pub use usb::UsbImportResult;

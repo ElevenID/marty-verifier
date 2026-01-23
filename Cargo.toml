@@ -72,6 +72,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 marty-crypto = { git = "https://github.com/ElevenID/marty-core", branch = "main" }
 marty-verification = { git = "https://github.com/ElevenID/marty-core", branch = "main", features = ["serde"] }
 marty-biometrics = { git = "https://github.com/ElevenID/marty-core", branch = "main", features = ["native"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", branch = "main" }
 
 # Internal crates
 marty-license = { path = "crates/marty-license" }

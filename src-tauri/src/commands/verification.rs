@@ -12,6 +12,9 @@ use marty_verification::open_badges::{
     detect_version as detect_open_badges_version, verify_ob2_json, verify_ob3_json_async,
     DocumentStore, OpenBadgesVersion,
 };
+use marty_verification::policy::{
+    PresentationPolicy, PolicyEvaluator, IssuerConstraintChecker, FreshnessChecker,
+};
 use marty_verification::trust_anchor::CscaRegistry;
 use marty_verification::verification::emrtd::{verify_emrtd, SecurityObject};
 use ring::hmac;
@@ -697,6 +700,73 @@ pub enum RevocationStatus {
     CachedValid,
 }
 
+/// Load cached presentation policies from storage
+async fn load_cached_policies(state: &AppState) -> AppResult<Vec<PresentationPolicy>> {
+    let conn = state.db.conn.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT policy_json FROM presentation_policies WHERE deployment_profile_id = ?1")
+        .map_err(|e| AppError::Storage(format!("Failed to prepare query: {}", e)))?;
+    
+    let policies: Result<Vec<PresentationPolicy>, _> = stmt
+        .query_map([&state.deployment_profile_id], |row| {
+            let json: String = row.get(0)?;
+            serde_json::from_str(&json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+        })?
+        .collect();
+    
+    policies.map_err(|e| AppError::Storage(format!("Failed to load policies: {}", e)))
+}
+
+/// Evaluate policy constraints for a verification request
+async fn evaluate_policy_constraints(
+    request: &VerifyRequest,
+    issuer_id: &str,
+    trust_verified: bool,
+    state: &AppState,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    
+    // Load cached policies
+    let policies = match load_cached_policies(state).await {
+        Ok(p) => p,
+        Err(_) => return warnings, // No policies cached, skip checks
+    };
+    
+    // Find applicable policy by credential type
+    let policy = policies.iter().find(|p| p.credential_types.contains(&request.credential_type));
+    
+    if let Some(policy) = policy {
+        // Check issuer constraints
+        let issuer_checker = IssuerConstraintChecker::new(policy.clone());
+        if !issuer_checker.is_issuer_allowed(issuer_id) {
+            warnings.push(format!(
+                "Issuer '{}' is not in the allowed list for this credential type",
+                issuer_id
+            ));
+        }
+        
+        // Check trust profile requirement
+        if policy.require_trust_profile && !trust_verified {
+            warnings.push(
+                "Credential does not meet trust profile requirements".to_string()
+            );
+        }
+        
+        // Check freshness if specified
+        if let Some(max_age_days) = policy.max_credential_age_days {
+            let freshness_checker = FreshnessChecker::new(policy.clone());
+            // Would need issuance_date from credential - placeholder for now
+            warnings.push(format!(
+                "Credential freshness check required (max age: {} days)",
+                max_age_days
+            ));
+        }
+    }
+    
+    warnings
+}
+
 /// Verify a credential
 #[tauri::command]
 pub async fn verify_credential(
@@ -811,6 +881,28 @@ pub async fn verify_credential(
         result.warnings.push(
             "Liveness evaluated via PAD adapter; replace mock when provider is ready".to_string(),
         );
+    }
+
+    // Evaluate policy constraints if credential verified
+    if result.status == VerificationStatus::Valid {
+        // Extract issuer_id from result (placeholder for now)
+        let issuer_id = result
+            .issuer
+            .as_deref()
+            .unwrap_or("unknown");
+        
+        let trust_verified = result.trust_profile.as_ref()
+            .map(|tp| tp.verified)
+            .unwrap_or(false);
+        
+        let policy_warnings = evaluate_policy_constraints(
+            &request,
+            issuer_id,
+            trust_verified,
+            state.inner()
+        ).await;
+        
+        result.warnings.extend(policy_warnings);
     }
 
     // Store verification event

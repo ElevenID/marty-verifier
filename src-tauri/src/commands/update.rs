@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use marty_sync::ProfileSyncProvider;
 
 #[derive(Debug, Serialize)]
 pub struct UpdateInfo {
@@ -15,6 +16,7 @@ pub struct UpdateInfo {
     pub notes: Option<String>,
     pub pub_date: Option<i64>,
     pub channel: String,
+    pub eligible_for_rollout: bool,
 }
 
 /// Check for updates using the licensed update channel.
@@ -53,12 +55,18 @@ pub async fn check_for_updates(
         .await
         .map_err(|e| AppError::Update(e.to_string()))?;
 
-    Ok(update.map(|update| UpdateInfo {
-        version: update.version,
-        current_version: update.current_version,
-        notes: update.body,
-        pub_date: update.date.map(|d| d.unix_timestamp()),
-        channel,
+    Ok(update.map(|update| {
+        // Check deployment profile update policy
+        let eligible_for_rollout = check_rollout_eligibility(&state, &update.version);
+        
+        UpdateInfo {
+            version: update.version,
+            current_version: update.current_version,
+            notes: update.body,
+            pub_date: update.date.map(|d| d.unix_timestamp()),
+            channel,
+            eligible_for_rollout,
+        }
     }))
 }
 
@@ -101,6 +109,15 @@ pub async fn download_and_install_update(
     let Some(update) = update else {
         return Ok(false);
     };
+    
+    // Check deployment profile update policy
+    if !check_rollout_eligibility(&state, &update.version) {
+        tracing::info!(
+            version = %update.version,
+            "Update available but device not eligible for rollout"
+        );
+        return Ok(false);
+    }
 
     update
         .download_and_install(|_, _| {}, || {})
@@ -159,6 +176,61 @@ fn build_update_endpoint(base_url: &str, channel: &str) -> AppResult<Url> {
     Url::parse(&endpoint).map_err(|e| {
         AppError::Update(format!("Invalid update endpoint: {}", e))
     })
+}
+
+/// Check if device is eligible for update based on deployment profile rollout policy
+fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> bool {
+    // Get runtime config snapshot
+    let snapshot = match tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(state.runtime_config.snapshot())
+    }) {
+        snapshot => snapshot,
+    };
+    
+    // Get device ID
+    let device_id = match snapshot.device_id {
+        Some(id) => id,
+        None => {
+            tracing::warn!("Device ID not set, allowing update");
+            return true;
+        }
+    };
+    
+    // Get update policy from deployment profile
+    let update_policy = match snapshot.deployment_profile {
+        Some(profile) => profile.update_policy,
+        None => {
+            tracing::info!("No deployment profile, allowing update");
+            return true;
+        }
+    };
+    
+    // Check if version is pinned
+    if let Some(pinned_version) = &update_policy.version_pinned {
+        if update_version != pinned_version {
+            tracing::info!(
+                current = update_version,
+                pinned = pinned_version,
+                "Update rejected: version pinned"
+            );
+            return false;
+        }
+    }
+    
+    // Check rollout percentage
+    let rollout_percentage = update_policy.rollout_percentage.unwrap_or(100);
+    let eligible = ProfileSyncProvider::should_apply_update(&device_id, rollout_percentage);
+    
+    if !eligible {
+        tracing::info!(
+            device_id = %device_id,
+            rollout_percentage = rollout_percentage,
+            version = update_version,
+            "Device not in rollout group"
+        );
+    }
+    
+    eligible
 }
 
 #[cfg(test)]

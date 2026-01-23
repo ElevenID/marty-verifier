@@ -5,6 +5,8 @@ import VerificationPage from '@/pages/VerificationPage';
 import SettingsPage from '@/pages/SettingsPage';
 import LicensePage from '@/pages/LicensePage';
 import SyncPage from '@/pages/SyncPage';
+import { FlowsPage } from '@/pages/FlowsPage';
+import { ApprovalQueuePage } from '@/pages/ApprovalQueuePage';
 
 function App() {
   return (
@@ -16,6 +18,8 @@ function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/license" element={<LicensePage />} />
             <Route path="/sync" element={<SyncPage />} />
+            <Route path="/flows" element={<FlowsPage />} />
+            <Route path="/approvals" element={<ApprovalQueuePage />} />
           </Routes>
         </Layout>
       </Box>

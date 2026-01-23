@@ -20,6 +20,8 @@ import {
   Sync as SyncIcon,
   Settings as SettingsIcon,
   Badge as LicenseIcon,
+  AccountTree as FlowIcon,
+  Approval as ApprovalIcon,
 } from '@mui/icons-material';
 import { useAppStore } from '@/store';
 import OfflineStatusBanner from './OfflineStatusBanner';
@@ -29,6 +31,8 @@ const DRAWER_WIDTH = 240;
 
 const navItems = [
   { path: '/', label: 'Verify', icon: <VerifyIcon /> },
+  { path: '/flows', label: 'Flows', icon: <FlowIcon /> },
+  { path: '/approvals', label: 'Approvals', icon: <ApprovalIcon /> },
   { path: '/sync', label: 'Trust Anchors', icon: <SyncIcon /> },
   { path: '/license', label: 'License', icon: <LicenseIcon /> },
   { path: '/settings', label: 'Settings', icon: <SettingsIcon /> },
