@@ -1,3 +1,16 @@
+## [unreleased] - 2026-02-07
+
+### 🚀 Features
+
+- Add automated release pipeline and Tauri auto-updater
+
+### ⚙️ Miscellaneous Tasks
+
+- Update CHANGELOG.md
+- Add comprehensive security and quality checks
+- Update CHANGELOG.md
+- Make security checks non-blocking to prevent repeated failures
+- Update dependencies and app storage models
 ## [unreleased] - 2026-01-10
 
 ### 🚀 Features
