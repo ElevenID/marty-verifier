@@ -1,5 +1,6 @@
 # Tauri
 src-tauri/target/
+target/
 src-tauri/WixTools/
 
 # Node
