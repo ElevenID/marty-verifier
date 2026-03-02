@@ -30,6 +30,15 @@ pub enum SyncError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    #[error("HTTP error {0}: {1}")]
+    HttpError(u16, String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
 }
 
 impl serde::Serialize for SyncError {
