@@ -1,3 +1,24 @@
+## [unreleased] - 2026-03-12
+
+### 🚀 Features
+
+- Add automated release pipeline and Tauri auto-updater
+- *(storage,verification)* Implement app storage database layer and expand verification command API
+
+### 🐛 Bug Fixes
+
+- *(sync)* Improve error handling in marty-sync crate
+
+### ⚙️ Miscellaneous Tasks
+
+- Update CHANGELOG.md
+- Add comprehensive security and quality checks
+- Update CHANGELOG.md
+- Make security checks non-blocking to prevent repeated failures
+- Update dependencies and app storage models
+- Update CHANGELOG.md
+- Update CHANGELOG.md
+- Update CHANGELOG.md
 ## [unreleased] - 2026-03-02
 
 ### 🚀 Features
