@@ -13,7 +13,7 @@ default = ["iaca", "csca", "oid4vp", "sd-jwt", "reporting"]
 # Credential verification standards
 iaca = []           # AAMVA mDL verification (ISO 18013-5)
 csca = []           # ICAO eMRTD verification (ICAO 9303)
-oid4vp = []         # OpenID for Verifiable Presentations
+oid4vp = ["dep:marty-oid4vci"]  # OpenID for Verifiable Presentations
 sd-jwt = []         # SD-JWT Verifiable Credentials
 
 # Hardware features
@@ -52,6 +52,7 @@ directories = "5.0"
 # Internal crates
 marty-app-storage.workspace = true
 marty-license.workspace = true
+marty-secure-storage.workspace = true
 marty-sync.workspace = true
 
 # Optional crates
@@ -61,6 +62,10 @@ marty-reporting = { workspace = true, optional = true }
 # Verification crates from marty-core (via workspace)
 marty-verification.workspace = true
 marty-crypto.workspace = true
+marty-oid4vci = { workspace = true, optional = true }
+
+# HTTP client (for online OID4VP verification fallback)
+reqwest.workspace = true
 
 [build-dependencies]
 tauri-build.workspace = true

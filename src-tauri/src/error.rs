@@ -9,7 +9,7 @@ pub enum AppError {
     License(#[from] marty_license::LicenseError),
 
     #[error("Storage error: {0}")]
-    Storage(#[from] marty_secure_storage::StorageError),
+    Storage(#[from] marty_app_storage::StorageError),
 
     #[error("Sync error: {0}")]
     Sync(#[from] marty_sync::SyncError),

@@ -22,8 +22,8 @@ pub async fn sync_device_config(
 
 /// Internal implementation shared by command and startup sync
 pub async fn sync_device_config_impl(
-    storage: Arc<marty_app_storage::AppStorage>,
-    runtime_config: Arc<RuntimeConfig>,
+    storage: Arc<marty_app_storage::SecureStorage>,
+    runtime_config: RuntimeConfig,
 ) -> AppResult<DeviceConfigSyncResult> {
     // Get device ID from runtime config
     let device_id = runtime_config.get_device_id().await
@@ -42,7 +42,7 @@ pub async fn sync_device_config_impl(
     // Fetch device configuration
     let provider = ProfileSyncProvider::new(endpoint, license_jwt);
     let device_config = provider.fetch_device_config(&device_id).await
-        .map_err(|e| crate::error::AppError::Sync(e.to_string()))?;
+        .map_err(|e| crate::error::AppError::Sync(e))?;
 
     // Store deployment profile if present
     let profile_id = if let Some(profile) = &device_config.deployment_profile {
@@ -100,99 +100,32 @@ pub struct DeviceConfigSyncResult {
     pub lane_id: Option<String>,
 }
 
-// Storage helpers
+// Storage helpers — persist deployment data to the app database.
+// The runtime_config holds the live in-memory state; these helpers
+// write through to SQLite for persistence across restarts.
 
 async fn store_deployment_profile(
-    storage: &Arc<marty_app_storage::AppStorage>,
+    storage: &Arc<marty_app_storage::SecureStorage>,
     profile: &DeploymentProfile,
 ) -> AppResult<()> {
-    let conn = storage.connection().await?;
-    
-    let ux_config_json = serde_json::to_string(&profile.ux_config)
-        .map_err(|e| crate::error::AppError::Sync(e.to_string()))?;
-    
-    let update_policy_json = serde_json::to_string(&profile.update_policy)
-        .map_err(|e| crate::error::AppError::Sync(e.to_string()))?;
-    
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO deployment_profiles 
-        (id, name, site_id, network_mode, key_access_mode, ux_config, update_policy, 
-         offline_cache_ttl_hours, biometric_required, audit_all_events, synced_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
-        "#,
-        rusqlite::params![
-            &profile.id,
-            &profile.name,
-            &profile.site_id,
-            format!("{:?}", profile.network_mode).to_lowercase(),
-            &profile.key_access_mode,
-            ux_config_json,
-            update_policy_json,
-            profile.offline_cache_ttl_hours,
-            if profile.biometric_required { 1 } else { 0 },
-            if profile.audit_all_events { 1 } else { 0 },
-            &now,
-        ],
-    ).map_err(|e| crate::error::AppError::Database(e.to_string()))?;
-
-    Ok(())
+    storage.store_deployment_profile(profile).await
+        .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
 async fn store_lane(
-    storage: &Arc<marty_app_storage::AppStorage>,
+    storage: &Arc<marty_app_storage::SecureStorage>,
     lane: &Lane,
 ) -> AppResult<()> {
-    let conn = storage.connection().await?;
-    
-    let device_ids_json = serde_json::to_string(&lane.device_ids)
-        .map_err(|e| crate::error::AppError::Sync(e.to_string()))?;
-    
-    let metadata_json = serde_json::to_string(&lane.metadata)
-        .map_err(|e| crate::error::AppError::Sync(e.to_string()))?;
-    
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO lanes 
-        (id, name, deployment_profile_id, default_policy_id, device_ids, metadata, synced_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-        "#,
-        rusqlite::params![
-            &lane.id,
-            &lane.name,
-            &lane.deployment_profile_id,
-            &lane.default_policy_id,
-            device_ids_json,
-            metadata_json,
-            &now,
-        ],
-    ).map_err(|e| crate::error::AppError::Database(e.to_string()))?;
-
-    Ok(())
+    storage.store_lane(lane).await
+        .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
 async fn store_device_config(
-    storage: &Arc<marty_app_storage::AppStorage>,
+    storage: &Arc<marty_app_storage::SecureStorage>,
     device_id: &str,
     profile_id: Option<&str>,
     lane_id: Option<&str>,
 ) -> AppResult<()> {
-    let conn = storage.connection().await?;
-    
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.execute(
-        r#"
-        INSERT OR REPLACE INTO device_config 
-        (id, device_id, deployment_profile_id, lane_id, assigned_at, updated_at)
-        VALUES ('current', ?1, ?2, ?3, ?4, ?4)
-        "#,
-        rusqlite::params![device_id, profile_id, lane_id, &now],
-    ).map_err(|e| crate::error::AppError::Database(e.to_string()))?;
-
-    Ok(())
+    storage.store_device_config(device_id, profile_id, lane_id).await
+        .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }

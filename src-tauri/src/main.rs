@@ -42,7 +42,18 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state)
-        .setup(move |_app| {
+        .setup(move |app| {
+            // Restore runtime configuration from storage
+            let state = app.state::<AppState>();
+            tauri::async_runtime::spawn({
+                let state = state.inner().clone();
+                async move {
+                    if let Err(e) = state.restore_from_storage().await {
+                        tracing::warn!("Failed to restore runtime config from storage: {}", e);
+                    }
+                }
+            });
+
             // Auto-install dev license on startup if in dev mode
             if config_public_key.is_empty() {
                 tauri::async_runtime::spawn(async move {
@@ -82,7 +93,7 @@ fn main() {
                 ).await {
                     Ok(result) => {
                         tracing::info!(
-                            profile_id = ?result.deployment_profile_id,
+                            profile_id = ?result.profile_id,
                             lane_id = ?result.lane_id,
                             "Device configuration synced successfully"
                         );

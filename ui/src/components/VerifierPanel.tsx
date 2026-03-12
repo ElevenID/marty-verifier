@@ -38,6 +38,33 @@ import {
 import { useAppStore } from '@/store';
 import VerificationResultCard from './VerificationResultCard';
 
+/**
+ * Normalize OID4VP credential data before sending to the backend.
+ *
+ * The Rust `verify_oid4vp_payload` expects a JSON object:
+ *   { "vp_token": "...", "nonce": "...", "presentation_submission"?: {...} }
+ *
+ * If the caller passes a raw compact JWT (starts with "eyJ"), wrap it.
+ * If it's already valid JSON with a "vp_token" field, pass it through unchanged.
+ */
+function normalizeOid4vpPayload(raw: string): string {
+  const trimmed = raw.trim();
+  // Already a JSON object — check for vp_token key
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.vp_token) return trimmed;
+    } catch {
+      // fall through to JWT wrapping below
+    }
+  }
+  // Raw JWT VP token — wrap it
+  if (trimmed.startsWith('eyJ')) {
+    return JSON.stringify({ vp_token: trimmed, nonce: '' });
+  }
+  return raw;
+}
+
 interface VerifierPanelProps {
   credentialType?: string;
   onVerificationComplete?: (result: VerificationResult) => void;
@@ -113,7 +140,9 @@ export default function VerifierPanel({
 
       const request: VerifyRequest = {
         credential_type: selectedType,
-        credential_data: payload,
+        credential_data: (selectedType === 'oid4vp' || selectedType === 'sd-jwt')
+          ? normalizeOid4vpPayload(payload)
+          : payload,
         use_nfc: selectedType === 'emrtd' ? useNfc : undefined,
         liveness_challenge: activeChallenge,
         require_liveness: requireLiveness,
@@ -207,7 +236,9 @@ export default function VerifierPanel({
       const payload = credentialData || 'mock_credential_qr_data';
       const request: VerifyRequest = {
         credential_type: selectedType,
-        credential_data: payload,
+        credential_data: (selectedType === 'oid4vp' || selectedType === 'sd-jwt')
+          ? normalizeOid4vpPayload(payload)
+          : payload,
         use_nfc: selectedType === 'emrtd' ? useNfc : undefined,
         liveness_challenge: challenge ?? undefined,
         require_liveness: requireLiveness,

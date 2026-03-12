@@ -74,6 +74,7 @@ marty-verification = { path = "../marty-core/marty-verification", features = ["s
 marty-biometrics = { path = "../marty-core/marty-biometrics", features = ["native"] }
 marty-secure-storage = { path = "../marty-core/marty-secure-storage" }
 marty-types = { path = "../marty-core/marty-types" }
+marty-oid4vci = { path = "../marty-core/marty-oid4vci", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-license = { path = "crates/marty-license" }

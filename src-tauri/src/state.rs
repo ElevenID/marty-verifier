@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use marty_license::LicenseManager;
 use marty_app_storage::SecureStorage;
+use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use marty_sync::SyncEngine;
 
 use crate::config::AppConfig;
@@ -63,18 +64,22 @@ impl AppState {
     pub fn new() -> AppResult<Self> {
         let config = AppConfig::load()?;
 
-        // Initialize secure storage
+        // Initialize secure storage (app-level: verification events, trust anchors)
         let storage = Arc::new(SecureStorage::new(&config.data_dir)?);
+
+        // Initialize core secure storage (used by license manager and sync engine)
+        let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir)
+            .map_err(|e| crate::error::AppError::Config(format!("Core storage init failed: {}", e)))?);
 
         // Initialize license manager
         let license = Arc::new(LicenseManager::new(
-            storage.clone(),
+            core_storage.clone(),
             config.license_public_key.clone(),
         )?);
 
         // Initialize sync engine
         let sync_engine = Arc::new(SyncEngine::new(
-            storage.clone(),
+            core_storage,
             config.sync_config.clone(),
         )?);
 
@@ -105,6 +110,51 @@ impl AppState {
         };
 
         Ok(state)
+    }
+
+    /// Restore runtime configuration from persistent storage
+    pub async fn restore_from_storage(&self) -> AppResult<()> {
+        // Try to get the stored device configuration
+        match self.storage.get_device_config().await {
+            Ok(Some((device_id, profile_id, lane_id))) => {
+                tracing::info!(
+                    device_id = %device_id,
+                    profile_id = %profile_id,
+                    lane_id = %lane_id,
+                    "Restoring device configuration from storage"
+                );
+
+                // Load the deployment profile
+                if let Some(profile) = self.storage.get_deployment_profile(&profile_id).await
+                    .map_err(|e| crate::error::AppError::Config(e.to_string()))? 
+                {
+                    self.runtime_config.apply_deployment_profile(profile.clone()).await;
+                    tracing::info!(profile_id = %profile.id, "Restored deployment profile");
+
+                    // Load the lane
+                    let lanes = self.storage.get_lanes_for_profile(&profile_id).await
+                        .map_err(|e| crate::error::AppError::Config(e.to_string()))?;
+                    
+                    if let Some(lane) = lanes.into_iter().find(|l| l.id == lane_id) {
+                        self.runtime_config.apply_lane(lane.clone()).await;
+                        tracing::info!(lane_id = %lane.id, "Restored lane configuration");
+                    } else {
+                        tracing::warn!(lane_id = %lane_id, "Lane not found in storage");
+                    }
+                } else {
+                    tracing::warn!(profile_id = %profile_id, "Deployment profile not found in storage");
+                }
+            }
+            Ok(None) => {
+                tracing::debug!("No device configuration found in storage");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to restore device configuration: {}", e);
+                // Don't fail initialization if restore fails
+            }
+        }
+
+        Ok(())
     }
 
     /// Check if a feature is licensed and hardware supports it

@@ -51,6 +51,38 @@ pub struct AppConfig {
     /// Open Badge trust policy
     #[serde(default)]
     pub open_badge_trust: OpenBadgeTrustConfig,
+
+    /// OID4VP verification configuration
+    #[serde(default)]
+    pub oid4vp: Oid4vpConfig,
+}
+
+/// OID4VP verifier configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Oid4vpConfig {
+    /// DID or URL used as the verifier identifier (`aud` in VP tokens)
+    pub verifier_id: String,
+    /// URL the wallet should POST the VP response to (response_uri in requests)
+    pub response_uri: String,
+    /// Base URL of the marty-credentials API, used for online VP verification.
+    /// When `None` the verifier falls back to offline-only processing.
+    pub credentials_api_url: Option<String>,
+    /// Bearer token for the marty-credentials API (if required)
+    pub credentials_api_token: Option<String>,
+    /// Timeout for online verification calls (milliseconds)
+    pub online_timeout_ms: u64,
+}
+
+impl Default for Oid4vpConfig {
+    fn default() -> Self {
+        Self {
+            verifier_id: "did:example:marty-verifier".to_string(),
+            response_uri: String::new(),
+            credentials_api_url: None,
+            credentials_api_token: None,
+            online_timeout_ms: 10_000,
+        }
+    }
 }
 
 /// Updater configuration
@@ -193,6 +225,7 @@ impl Default for AppConfig {
             ui_config: UiConfig::default(),
             retention: RetentionConfig::default(),
             open_badge_trust: OpenBadgeTrustConfig::default(),
+            oid4vp: Oid4vpConfig::default(),
         }
     }
 }

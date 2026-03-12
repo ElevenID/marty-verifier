@@ -700,6 +700,372 @@ impl SecureStorage {
 
         Ok(())
     }
+
+    /// Store deployment profile
+    pub async fn store_deployment_profile(
+        &self,
+        profile: &crate::DeploymentProfile,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        let ux_config_json = serde_json::to_string(&profile.ux_config)?;
+        let update_policy_json = serde_json::to_string(&profile.update_policy)?;
+        let network_mode = format!("{:?}", profile.network_mode).to_lowercase();
+
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO deployment_profiles 
+            (id, name, site_id, network_mode, key_access_mode, ux_config, update_policy,
+             offline_cache_ttl_hours, biometric_required, audit_all_events, synced_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+            rusqlite::params![
+                profile.id,
+                profile.name,
+                profile.site_id,
+                network_mode,
+                profile.key_access_mode,
+                ux_config_json,
+                update_policy_json,
+                profile.offline_cache_ttl_hours as i64,
+                if profile.biometric_required { 1 } else { 0 },
+                if profile.audit_all_events { 1 } else { 0 },
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get deployment profile by ID
+    pub async fn get_deployment_profile(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::DeploymentProfile>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let result = conn.query_row(
+            r#"
+            SELECT id, name, site_id, network_mode, key_access_mode, ux_config, update_policy,
+                   offline_cache_ttl_hours, biometric_required, audit_all_events
+            FROM deployment_profiles WHERE id = ?
+            "#,
+            [id],
+            |row| {
+                let ux_config_json: String = row.get(5)?;
+                let update_policy_json: String = row.get(6)?;
+                let network_mode_str: String = row.get(3)?;
+                
+                let ux_config: crate::UXConfig = serde_json::from_str(&ux_config_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                let update_policy: crate::UpdatePolicy = serde_json::from_str(&update_policy_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                let network_mode = match network_mode_str.as_str() {
+                    "online" => crate::NetworkMode::Online,
+                    "offline" => crate::NetworkMode::Offline,
+                    "hybrid" => crate::NetworkMode::Hybrid,
+                    _ => crate::NetworkMode::Online,
+                };
+
+                Ok(crate::DeploymentProfile {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    site_id: row.get(2)?,
+                    network_mode,
+                    key_access_mode: row.get(4)?,
+                    ux_config,
+                    update_policy,
+                    offline_cache_ttl_hours: row.get::<_, i64>(7)? as u32,
+                    biometric_required: row.get::<_, i32>(8)? != 0,
+                    audit_all_events: row.get::<_, i32>(9)? != 0,
+                    default_presentation_policy_id: None, // Not stored in DB
+                })
+            },
+        );
+
+        match result {
+            Ok(profile) => Ok(Some(profile)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Store lane
+    pub async fn store_lane(&self, lane: &crate::Lane) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        let device_ids_json = serde_json::to_string(&lane.device_ids)?;
+        let metadata_json = serde_json::to_string(&lane.metadata)?;
+
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO lanes 
+            (id, name, deployment_profile_id, default_policy_id, device_ids, metadata, synced_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+            rusqlite::params![
+                lane.id,
+                lane.name,
+                lane.deployment_profile_id,
+                lane.default_policy_id,
+                device_ids_json,
+                metadata_json,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get lanes for a deployment profile
+    pub async fn get_lanes_for_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Vec<crate::Lane>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, name, deployment_profile_id, default_policy_id, device_ids, metadata
+            FROM lanes WHERE deployment_profile_id = ?
+            "#,
+        )?;
+
+        let lanes = stmt
+            .query_map([profile_id], |row| {
+                let device_ids_json: String = row.get(4)?;
+                let metadata_json: String = row.get(5)?;
+
+                let device_ids: Vec<String> = serde_json::from_str(&device_ids_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                let metadata: serde_json::Value = serde_json::from_str(&metadata_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+                Ok(crate::Lane {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    deployment_profile_id: row.get(2)?,
+                    default_policy_id: row.get(3)?,
+                    device_ids,
+                    metadata,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(lanes)
+    }
+
+    /// Store device configuration (singleton pattern)
+    pub async fn store_device_config(
+        &self,
+        device_id: &str,
+        deployment_profile_id: Option<&str>,
+        lane_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO device_config 
+            (id, device_id, deployment_profile_id, lane_id, assigned_at, updated_at)
+            VALUES ('current', ?, ?, ?, ?, ?)
+            "#,
+            rusqlite::params![device_id, deployment_profile_id, lane_id, now, now],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get device configuration (singleton)
+    pub async fn get_device_config(
+        &self,
+    ) -> Result<Option<(String, Option<String>, Option<String>)>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let result = conn.query_row(
+            r#"
+            SELECT device_id, deployment_profile_id, lane_id
+            FROM device_config WHERE id = 'current'
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        );
+
+        match result {
+            Ok((Some(device_id), profile_id, lane_id)) => Ok(Some((device_id, profile_id, lane_id))),
+            Ok((None, _, _)) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Store presentation policy
+    pub async fn store_presentation_policy(
+        &self,
+        policy: &crate::PresentationPolicy,
+        deployment_profile_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        let policy_json = serde_json::to_string(policy)?;
+
+        conn.execute(
+            r#"
+            INSERT OR REPLACE INTO presentation_policies 
+            (id, policy_json, version, deployment_profile_id, synced_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            rusqlite::params![
+                policy.id,
+                policy_json,
+                policy.version,
+                deployment_profile_id,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get presentation policy by ID
+    pub async fn get_presentation_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::PresentationPolicy>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let result = conn.query_row(
+            "SELECT policy_json FROM presentation_policies WHERE id = ?",
+            [id],
+            |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str(&json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+            },
+        );
+
+        match result {
+            Ok(policy) => Ok(Some(policy)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get all presentation policies, optionally filtered by deployment profile
+    pub async fn get_presentation_policies(
+        &self,
+        deployment_profile_id: Option<&str>,
+    ) -> Result<Vec<crate::PresentationPolicy>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let (query, params): (&str, Vec<&str>) = match deployment_profile_id {
+            Some(profile_id) => (
+                "SELECT policy_json FROM presentation_policies WHERE deployment_profile_id = ?",
+                vec![profile_id],
+            ),
+            None => (
+                "SELECT policy_json FROM presentation_policies",
+                vec![],
+            ),
+        };
+
+        let mut stmt = conn.prepare(query)?;
+        let policies = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str(&json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(policies)
+    }
+
+    /// Get last policy sync timestamp from sync_state
+    pub async fn get_last_policy_sync(&self) -> Result<Option<String>, StorageError> {
+        let conn = self.conn.lock().await;
+
+        let result = conn.query_row(
+            "SELECT last_policy_sync FROM sync_state WHERE id = 'current'",
+            [],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(sync_time) => Ok(sync_time),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Update last policy sync timestamp in sync_state
+    pub async fn update_last_policy_sync(&self, timestamp: String) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            r#"
+            INSERT INTO sync_state (id, last_policy_sync, updated_at)
+            VALUES ('current', ?, ?)
+            ON CONFLICT(id) DO UPDATE SET 
+                last_policy_sync = excluded.last_policy_sync,
+                updated_at = excluded.updated_at
+            "#,
+            rusqlite::params![timestamp, now],
+        )?;
+
+        Ok(())
+    }
+}
+
+/// Implement PolicyStorage trait from marty-sync
+#[cfg_attr(test, allow(unused))]
+impl marty_sync::policy::PolicyStorage for SecureStorage {
+    async fn store(&self, policies: &[crate::PresentationPolicy]) -> Result<(), marty_sync::SyncError> {
+        for policy in policies {
+            self.store_presentation_policy(policy, None)
+                .await
+                .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn get_all(&self) -> Result<Vec<crate::PresentationPolicy>, marty_sync::SyncError> {
+        self.get_presentation_policies(None)
+            .await
+            .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
+    }
+
+    async fn get_by_id(&self, id: &str) -> Result<Option<crate::PresentationPolicy>, marty_sync::SyncError> {
+        self.get_presentation_policy(id)
+            .await
+            .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
+    }
+
+    async fn get_last_sync(&self) -> Result<Option<String>, marty_sync::SyncError> {
+        self.get_last_policy_sync()
+            .await
+            .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
+    }
+
+    async fn update_last_sync(&self, timestamp: String) -> Result<(), marty_sync::SyncError> {
+        self.update_last_policy_sync(timestamp)
+            .await
+            .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
+    }
 }
 
 fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {

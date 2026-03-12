@@ -3,7 +3,7 @@
 //! Applies deployment profile settings to the running application,
 //! including network mode, UX configuration, and policy selection.
 
-use marty_sync::{DeploymentProfile, Lane, NetworkMode, UXConfig};
+use marty_sync::{DeploymentProfile, Lane, NetworkMode, UpdatePolicy, UXConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -168,6 +168,7 @@ pub struct ConfigSnapshot {
     pub device_id: Option<String>,
     pub deployment_profile_id: Option<String>,
     pub lane_id: Option<String>,
+    pub update_policy: Option<UpdatePolicy>,
     pub network_mode: String,
     pub active_policy_id: Option<String>,
     pub offline_cache_ttl_hours: u32,
@@ -203,6 +204,7 @@ impl RuntimeConfig {
             device_id: inner.device_id.clone(),
             deployment_profile_id: inner.deployment_profile.as_ref().map(|p| p.id.clone()),
             lane_id: inner.lane.as_ref().map(|l| l.id.clone()),
+            update_policy: inner.deployment_profile.as_ref().map(|p| p.update_policy.clone()),
             network_mode,
             active_policy_id: inner.active_policy_id.clone(),
             offline_cache_ttl_hours: self.get_offline_cache_ttl_hours().await,

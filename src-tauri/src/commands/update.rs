@@ -197,8 +197,8 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
     };
     
     // Get update policy from deployment profile
-    let update_policy = match snapshot.deployment_profile {
-        Some(profile) => profile.update_policy,
+    let update_policy = match snapshot.update_policy {
+        Some(policy) => policy,
         None => {
             tracing::info!("No deployment profile, allowing update");
             return true;
@@ -218,7 +218,7 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
     }
     
     // Check rollout percentage
-    let rollout_percentage = update_policy.rollout_percentage.unwrap_or(100);
+    let rollout_percentage = update_policy.rollout_percentage;
     let eligible = ProfileSyncProvider::should_apply_update(&device_id, rollout_percentage);
     
     if !eligible {

@@ -6,7 +6,7 @@ use crate::error::AppResult;
 use crate::state::AppState;
 
 // Re-export from storage crate
-pub use marty_secure_storage::OfflineQueueStatus;
+pub use marty_app_storage::OfflineQueueStatus;
 
 /// Get offline queue status
 #[tauri::command]
