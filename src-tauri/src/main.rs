@@ -5,14 +5,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod commands;
-mod config;
-mod error;
-mod hardware;
-mod runtime_config;
-mod state;
-
-use state::AppState;
+use marty_verifier::commands;
+use marty_verifier::state::AppState;
+use tauri::Manager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() {
@@ -44,13 +39,11 @@ fn main() {
         .manage(app_state)
         .setup(move |app| {
             // Restore runtime configuration from storage
-            let state = app.state::<AppState>();
-            tauri::async_runtime::spawn({
-                let state = state.inner().clone();
-                async move {
-                    if let Err(e) = state.restore_from_storage().await {
-                        tracing::warn!("Failed to restore runtime config from storage: {}", e);
-                    }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                if let Err(e) = state.restore_from_storage().await {
+                    tracing::warn!("Failed to restore runtime config from storage: {}", e);
                 }
             });
 

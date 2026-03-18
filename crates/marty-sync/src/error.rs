@@ -22,6 +22,9 @@ pub enum SyncError {
     #[error("Signature verification failed")]
     SignatureVerification,
 
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
     #[error("Sync already in progress")]
     SyncInProgress,
 

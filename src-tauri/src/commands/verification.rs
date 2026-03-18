@@ -1612,14 +1612,19 @@ async fn verify_oid4vp_payload(
                 serde_json::from_value(def_val.clone()).ok();
 
             if let (Some(submission), Some(definition)) = (submission, definition) {
-                let struct_result =
-                    engine.verify_presentation_structure(&definition, &submission);
-                if !struct_result.valid {
-                    struct_result
+                // Decode the VP token payload for PEX field constraint evaluation.
+                let vp_payload = decode_vp_token_payload(&vp_token);
+                let pex_result = engine.verify_presentation(
+                    &definition,
+                    &submission,
+                    vp_payload.as_ref(),
+                );
+                if !pex_result.valid {
+                    pex_result
                         .errors
                         .into_iter()
                         .chain(
-                            struct_result
+                            pex_result
                                 .descriptor_results
                                 .into_iter()
                                 .filter(|r| !r.valid)
@@ -1684,6 +1689,449 @@ async fn verify_oid4vp_payload(
         emrtd_details: None,
         dtc_details: None,
         open_badge_details: None,
+        liveness: None,
+        face_match: None,
+    })
+}
+
+/// Decode the JWT payload segment of a compact VP token (or any JWT) without
+/// signature verification.  Returns `None` if the string is not a valid
+/// three-part compact JWT with base64url-encoded JSON in the second segment.
+#[cfg(feature = "oid4vp")]
+fn decode_vp_token_payload(token: &str) -> Option<serde_json::Value> {
+    let mut parts = token.splitn(4, '.');
+    parts.next(); // header
+    let payload_b64 = parts.next()?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Public offline OID4VP verification entry point — exposed for integration
+/// tests in `tests/oid4vp_conformance.rs`.
+///
+/// Exercises the same offline path as [`verify_oid4vp_payload`] but accepts
+/// raw JSON and explicit verifier configuration rather than `AppState`, so
+/// tests can run without a Tauri runtime.
+///
+/// `credential_data_json` is the same JSON object format accepted by the
+/// `verify_credential` Tauri command (fields: `vp_token`, `nonce`, and
+/// optionally `presentation_submission` + `presentation_definition`).
+///
+/// `verifier_id` must match the `aud` claim in the VP token.
+#[cfg(feature = "oid4vp")]
+pub fn verify_oid4vp_offline(
+    credential_data_json: &str,
+    verifier_id: &str,
+    response_uri: &str,
+) -> crate::error::AppResult<VerificationResult> {
+    let raw = parse_json_input(credential_data_json, "OID4VP")?;
+
+    let vp_token = raw
+        .get("vp_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            AppError::Verification("OID4VP payload missing 'vp_token' field".into())
+        })?
+        .to_string();
+
+    let nonce = raw
+        .get("nonce")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let engine = VerificationEngine::new(
+        verifier_id.to_string(),
+        response_uri.to_string(),
+    );
+
+    let token_result = engine.verify_vp_token(&vp_token, &nonce);
+
+    let structural_errors: Vec<String> = if token_result.valid {
+        let sub_val = raw.get("presentation_submission");
+        let def_val = raw.get("presentation_definition");
+
+        if let (Some(sub_val), Some(def_val)) = (sub_val, def_val) {
+            let submission: Option<PresentationSubmission> =
+                serde_json::from_value(sub_val.clone()).ok();
+            let definition: Option<PresentationDefinition> =
+                serde_json::from_value(def_val.clone()).ok();
+
+            if let (Some(submission), Some(definition)) = (submission, definition) {
+                // Decode the VP token payload for PEX field constraint evaluation.
+                let vp_payload = decode_vp_token_payload(&vp_token);
+                let pex_result = engine.verify_presentation(
+                    &definition,
+                    &submission,
+                    vp_payload.as_ref(),
+                );
+                if !pex_result.valid {
+                    pex_result
+                        .errors
+                        .into_iter()
+                        .chain(
+                            pex_result
+                                .descriptor_results
+                                .into_iter()
+                                .filter(|r| !r.valid)
+                                .filter_map(|r| r.error),
+                        )
+                        .collect()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let overall_valid = token_result.valid && structural_errors.is_empty();
+
+    let mut warnings: Vec<String> =
+        vec!["Verified offline — revocation and trust anchoring not available".into()];
+    warnings.extend(structural_errors.iter().cloned());
+    for err in &token_result.errors {
+        warnings.push(format!("Verification error: {}", err));
+    }
+
+    let (holder, disclosed_claims) = if overall_valid {
+        extract_claims_from_vp(&vp_token)
+    } else {
+        (None, serde_json::json!({}))
+    };
+
+    Ok(VerificationResult {
+        verification_id: uuid::Uuid::new_v4().to_string(),
+        status: if overall_valid {
+            VerificationStatus::Valid
+        } else {
+            VerificationStatus::Invalid
+        },
+        credential_type: "oid4vp".to_string(),
+        issuer: holder.map(|h| IssuerInfo {
+            name: Some(h),
+            jurisdiction: None,
+            subject: None,
+        }),
+        disclosed_claims,
+        trust_chain: TrustChainStatus {
+            valid: overall_valid,
+            chain_type: "oid4vp".to_string(),
+            trust_anchor: None,
+            offline_verified: true,
+        },
+        revocation_status: RevocationStatus::Unknown,
+        verified_at: chrono::Utc::now().to_rfc3339(),
+        warnings,
+        emrtd_details: None,
+        dtc_details: None,
+        open_badge_details: None,
+        liveness: None,
+        face_match: None,
+    })
+}
+
+/// Testable offline entry point for eMRTD verification (no `AppState`).
+///
+/// Accepts the same JSON shape as `verify_credential` for `credential_type == "emrtd"`:
+/// ```json
+/// { "sod_base64": "<base64 SOD DER>", "data_groups": {"DG1": "<b64>"}, "country": "DEU" }
+/// ```
+///
+/// Uses an **empty** CSCA registry (no trust anchors loaded), so chain validation will
+/// return `ChainStatus::Invalid` on any real credential.  This is intentional — the
+/// function is designed for testing JSON parsing, error paths, and `VerificationResult`
+/// shape without a running database or Tauri runtime.
+pub fn verify_emrtd_offline(credential_data_json: &str) -> crate::error::AppResult<VerificationResult> {
+    let payload: EmrtdPayload = serde_json::from_str(credential_data_json)
+        .map_err(|e| AppError::Verification(format!("Invalid eMRTD payload JSON: {}", e)))?;
+
+    if payload.sod_base64.trim().is_empty() {
+        return Err(AppError::Verification(
+            "eMRTD payload missing or empty sod_base64".to_string(),
+        ));
+    }
+
+    let sod_bytes = BASE64_STANDARD
+        .decode(payload.sod_base64.as_bytes())
+        .map_err(|e| AppError::Verification(format!("Invalid SOD base64: {}", e)))?;
+
+    let security_object = SecurityObject::from_sod_der(&sod_bytes, payload.country.clone())
+        .map_err(|e| AppError::Verification(format!("Failed to parse SOD: {}", e)))?;
+
+    let mut dg_map: HashMap<u8, Vec<u8>> = HashMap::new();
+    for (dg_name, b64) in payload.data_groups {
+        let num = dg_name
+            .trim_start_matches("DG")
+            .parse::<u8>()
+            .map_err(|_| {
+                AppError::Verification(format!("Invalid data group name: {}", dg_name))
+            })?;
+        if num == 0 {
+            return Err(AppError::Verification(format!(
+                "Invalid data group name: {} (DG0 is not defined in ICAO 9303)",
+                dg_name
+            )));
+        }
+        let dg_bytes = BASE64_STANDARD.decode(b64.as_bytes()).map_err(|e| {
+            AppError::Verification(format!("Invalid base64 for {}: {}", dg_name, e))
+        })?;
+        dg_map.insert(num, dg_bytes);
+    }
+
+    // Empty registry — chain will show Invalid, but all other fields are populated
+    let registry = CscaRegistry::new();
+    let verification = verify_emrtd(&security_object, &dg_map, &registry);
+
+    let status = if verification.verified {
+        VerificationStatus::Valid
+    } else if verification
+        .errors
+        .iter()
+        .any(|e| e.contains("expired") || e.contains("not yet valid"))
+    {
+        VerificationStatus::Invalid
+    } else {
+        VerificationStatus::Failed
+    };
+
+    let issuer_subject = security_object
+        .signer_certificate
+        .certificate
+        .tbs_certificate
+        .subject
+        .to_string();
+
+    let country = security_object
+        .signer_certificate
+        .country
+        .or(verification.country.clone());
+
+    Ok(VerificationResult {
+        verification_id: uuid::Uuid::new_v4().to_string(),
+        status,
+        credential_type: "emrtd".to_string(),
+        issuer: Some(IssuerInfo {
+            name: Some("Passport Issuer".to_string()),
+            jurisdiction: country.clone(),
+            subject: Some(issuer_subject),
+        }),
+        disclosed_claims: serde_json::json!({ "document_type": "passport" }),
+        trust_chain: TrustChainStatus {
+            valid: verification.dsc_chain_status
+                == marty_verification::verification::emrtd::ChainStatus::Valid,
+            chain_type: "csca".to_string(),
+            trust_anchor: country,
+            offline_verified: true,
+        },
+        revocation_status: RevocationStatus::Unknown,
+        verified_at: chrono::Utc::now().to_rfc3339(),
+        warnings: {
+            let mut w = vec!["Verified offline with empty CSCA registry".to_string()];
+            w.extend(verification.errors.clone());
+            w
+        },
+        emrtd_details: Some(EmrtdDetails {
+            dsc_chain_status: format!("{:?}", verification.dsc_chain_status),
+            sod_signature_status: format!("{:?}", verification.sod_signature_status),
+            dg_hash_status: format!("{:?}", verification.dg_hash_status),
+            errors: verification.errors,
+        }),
+        dtc_details: None,
+        open_badge_details: None,
+        liveness: None,
+        face_match: None,
+    })
+}
+
+/// Testable offline entry point for DTC verification (no `AppState`).
+///
+/// Accepts the same JSON shape as `verify_credential` for `credential_type == "dtc"`.
+/// Unlike the Tauri command path, this function is synchronous and requires no
+/// app state, making it suitable for unit and integration tests.
+pub fn verify_dtc_offline(credential_data_json: &str) -> crate::error::AppResult<VerificationResult> {
+    let raw = parse_json_input(credential_data_json, "DTC")?;
+    let payload = build_dtc_verify_payload(&raw)?;
+    let verify_json = serde_json::to_string(&payload)?;
+    let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
+        .map_err(|e| AppError::Verification(format!("DTC verification failed: {}", e)))?;
+    let value: Value = serde_json::from_str(&verify_result).map_err(|e| {
+        AppError::Verification(format!("Invalid DTC verify response: {}", e))
+    })?;
+
+    let is_valid = value
+        .get("is_valid")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let dtc_data = value.get("dtc_data").cloned().unwrap_or(Value::Null);
+    let checks = parse_dtc_checks(&value);
+    let dtc_errors = extract_string_list(value.get("errors"));
+    let dtc_error_codes = extract_string_list(value.get("error_codes"));
+    let dtc_type = dtc_data
+        .get("dtc_type")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let issuer = dtc_data
+        .get("issuing_authority")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let mut warnings = Vec::new();
+    if let Some(msg) = value.get("error_message").and_then(|v| v.as_str()) {
+        if !msg.is_empty() {
+            warnings.push(msg.to_string());
+        }
+    }
+    warnings.push("Verified offline with local DTC trust data".to_string());
+
+    let trust_chain_valid = dtc_trust_chain_valid(&checks);
+    let revocation_status = if dtc_data
+        .get("is_revoked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        RevocationStatus::Revoked
+    } else {
+        RevocationStatus::Unknown
+    };
+
+    Ok(VerificationResult {
+        verification_id: uuid::Uuid::new_v4().to_string(),
+        status: if is_valid {
+            VerificationStatus::Valid
+        } else {
+            VerificationStatus::Invalid
+        },
+        credential_type: "dtc".to_string(),
+        issuer: issuer.map(|i| IssuerInfo {
+            name: Some(i.clone()),
+            jurisdiction: Some(i),
+            subject: None,
+        }),
+        disclosed_claims: build_dtc_claims(&dtc_data),
+        trust_chain: TrustChainStatus {
+            valid: trust_chain_valid,
+            chain_type: "x509".to_string(),
+            trust_anchor: None,
+            offline_verified: true,
+        },
+        revocation_status,
+        verified_at: chrono::Utc::now().to_rfc3339(),
+        warnings,
+        emrtd_details: None,
+        dtc_details: Some(DtcDetails {
+            checks,
+            dtc_type,
+            errors: dtc_errors,
+            error_codes: dtc_error_codes,
+        }),
+        open_badge_details: None,
+        liveness: None,
+        face_match: None,
+    })
+}
+
+/// Testable offline entry point for Open Badge verification (no `AppState`).
+///
+/// Uses an empty trusted-key store and the `FailOpen` policy so that badges
+/// with embedded key documents can be verified without a running database.
+/// Useful for testing JSON parsing, version detection, and `VerificationResult`
+/// shape without Tauri/storage plumbing.
+pub async fn verify_open_badge_offline(
+    credential_data_json: &str,
+) -> crate::error::AppResult<VerificationResult> {
+    let raw = parse_json_input(credential_data_json, "Open Badge")?;
+    let (version, mut req_value) = build_open_badge_request(&raw)?;
+
+    // Empty store + FailOpen so embedded key documents are accepted
+    let mut store = build_trusted_open_badge_store(&[]);
+    let allow_untrusted_keys = true;
+
+    let request_store = extract_open_badge_document_store(&req_value)?;
+    merge_open_badge_store(&mut store, &request_store, allow_untrusted_keys);
+
+    if let Value::Object(ref mut obj) = req_value {
+        obj.insert("document_store".to_string(), serde_json::to_value(&store)?);
+    }
+
+    let req_json = serde_json::to_string(&req_value)?;
+    let verify_result_json = match version {
+        OpenBadgesVersion::V2 => verify_ob2_json(&req_json)
+            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
+        OpenBadgesVersion::V3 => verify_ob3_json_async(&req_json)
+            .await
+            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
+        OpenBadgesVersion::Unknown => {
+            return Err(AppError::Verification(
+                "Unable to detect Open Badge version".to_string(),
+            ))
+        }
+    };
+
+    let result_value: Value = serde_json::from_str(&verify_result_json).map_err(|e| {
+        AppError::Verification(format!("Invalid Open Badge verify response: {}", e))
+    })?;
+
+    let valid = result_value
+        .get("valid")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let errors = extract_string_list(result_value.get("errors"));
+    let error_codes = extract_string_list(result_value.get("error_codes"));
+    let warnings_from_result = extract_string_list(result_value.get("warnings"));
+    let normalized = result_value.get("normalized").cloned();
+
+    let version_label = result_value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or(open_badge_version_label(version))
+        .to_string();
+
+    let details = OpenBadgeDetails {
+        version: version_label,
+        errors,
+        error_codes,
+        warnings: warnings_from_result,
+        normalized: normalized.clone(),
+    };
+
+    let method_id = extract_open_badge_method_id(&req_value, version);
+    let disclosed_claims = normalized
+        .as_ref()
+        .map(open_badge_claims_from_normalized)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let issuer = normalized.as_ref().and_then(open_badge_issuer_from_normalized);
+
+    Ok(VerificationResult {
+        verification_id: uuid::Uuid::new_v4().to_string(),
+        status: if valid {
+            VerificationStatus::Valid
+        } else {
+            VerificationStatus::Invalid
+        },
+        credential_type: "open-badge".to_string(),
+        issuer,
+        disclosed_claims,
+        trust_chain: TrustChainStatus {
+            valid,
+            chain_type: match version {
+                OpenBadgesVersion::V2 | OpenBadgesVersion::V3 => "did".to_string(),
+                OpenBadgesVersion::Unknown => "unknown".to_string(),
+            },
+            trust_anchor: method_id,
+            offline_verified: true,
+        },
+        revocation_status: RevocationStatus::Unknown,
+        verified_at: chrono::Utc::now().to_rfc3339(),
+        warnings: vec!["Verified offline — empty trust store".to_string()],
+        emrtd_details: None,
+        dtc_details: None,
+        open_badge_details: Some(details),
         liveness: None,
         face_match: None,
     })

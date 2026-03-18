@@ -119,30 +119,32 @@ impl AppState {
             Ok(Some((device_id, profile_id, lane_id))) => {
                 tracing::info!(
                     device_id = %device_id,
-                    profile_id = %profile_id,
-                    lane_id = %lane_id,
+                    profile_id = ?profile_id,
+                    lane_id = ?lane_id,
                     "Restoring device configuration from storage"
                 );
 
                 // Load the deployment profile
-                if let Some(profile) = self.storage.get_deployment_profile(&profile_id).await
+                let profile_id_str = profile_id.as_deref().unwrap_or("");
+                let lane_id_str = lane_id.as_deref().unwrap_or("");
+                if let Some(profile) = self.storage.get_deployment_profile(profile_id_str).await
                     .map_err(|e| crate::error::AppError::Config(e.to_string()))? 
                 {
                     self.runtime_config.apply_deployment_profile(profile.clone()).await;
                     tracing::info!(profile_id = %profile.id, "Restored deployment profile");
 
                     // Load the lane
-                    let lanes = self.storage.get_lanes_for_profile(&profile_id).await
+                    let lanes = self.storage.get_lanes_for_profile(profile_id_str).await
                         .map_err(|e| crate::error::AppError::Config(e.to_string()))?;
                     
-                    if let Some(lane) = lanes.into_iter().find(|l| l.id == lane_id) {
+                    if let Some(lane) = lanes.into_iter().find(|l| l.id.as_str() == lane_id_str) {
                         self.runtime_config.apply_lane(lane.clone()).await;
                         tracing::info!(lane_id = %lane.id, "Restored lane configuration");
                     } else {
-                        tracing::warn!(lane_id = %lane_id, "Lane not found in storage");
+                        tracing::warn!(lane_id = ?lane_id, "Lane not found in storage");
                     }
                 } else {
-                    tracing::warn!(profile_id = %profile_id, "Deployment profile not found in storage");
+                    tracing::warn!(profile_id = ?profile_id, "Deployment profile not found in storage");
                 }
             }
             Ok(None) => {

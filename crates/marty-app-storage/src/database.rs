@@ -1033,7 +1033,7 @@ impl SecureStorage {
 
 /// Implement PolicyStorage trait from marty-sync
 #[cfg_attr(test, allow(unused))]
-impl marty_sync::policy::PolicyStorage for SecureStorage {
+impl marty_sync::PolicyStorage for SecureStorage {
     async fn store(&self, policies: &[crate::PresentationPolicy]) -> Result<(), marty_sync::SyncError> {
         for policy in policies {
             self.store_presentation_policy(policy, None)
