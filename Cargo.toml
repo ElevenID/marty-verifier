@@ -68,13 +68,13 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 # HTTP client (for sync)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
-# External crates from marty-core (local paths for testing)
-marty-crypto = { path = "../marty-core/marty-crypto" }
-marty-verification = { path = "../marty-core/marty-verification", features = ["serde"] }
-marty-biometrics = { path = "../marty-core/marty-biometrics", features = ["native"] }
-marty-secure-storage = { path = "../marty-core/marty-secure-storage" }
-marty-types = { path = "../marty-core/marty-types" }
-marty-oid4vci = { path = "../marty-core/marty-oid4vci", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+# External crates from marty-core
+marty-crypto = { git = "https://github.com/ElevenID/marty-core.git", branch = "main" }
+marty-verification = { git = "https://github.com/ElevenID/marty-core.git", branch = "main", features = ["serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core.git", branch = "main", features = ["native"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core.git", branch = "main" }
+marty-types = { git = "https://github.com/ElevenID/marty-core.git", branch = "main" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core.git", branch = "main", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-license = { path = "crates/marty-license" }
