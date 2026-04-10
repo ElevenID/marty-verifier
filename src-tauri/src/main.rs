@@ -47,7 +47,8 @@ fn main() {
                 }
             });
 
-            // Auto-install dev license on startup if in dev mode
+            // Auto-install dev license on startup (debug builds only)
+            #[cfg(debug_assertions)]
             if config_public_key.is_empty() {
                 tauri::async_runtime::spawn(async move {
                     // Check if license already valid
@@ -108,6 +109,8 @@ fn main() {
             commands::verification::verify_credential,
             commands::verification::get_verification_history,
             commands::biometrics::verify_face_match,
+            #[cfg(feature = "biometrics")]
+            commands::biometrics::assess_face_quality,
             // Storage commands
             commands::storage::get_offline_queue_status,
             commands::storage::clear_verification_history,
@@ -141,7 +144,7 @@ fn generate_dev_license_jwt() -> String {
 
     let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
     let claims = format!(
-        r#"{{"iss":"marty-license-issuer","sub":"dev-org-001","iat":{},"exp":{},"jti":"dev-license-auto","features":["mdl","emrtd","oid4vp","sd-jwt","dtc","open-badge","usb-sync","reporting"],"deployment_mode":"development","max_verifications_total":100000,"org_name":"Development License","update_channels":["stable","beta","dev"],"grace_period_days":90}}"#,
+        r#"{{"iss":"marty-license-issuer","sub":"dev-org-001","iat":{},"exp":{},"jti":"dev-license-auto","features":["mdl","emrtd","oid4vp","sd-jwt","dtc","open-badge","usb-sync","reporting","biometrics"],"deployment_mode":"development","max_verifications_total":100000,"org_name":"Development License","update_channels":["stable","beta","dev"],"grace_period_days":90}}"#,
         now, exp
     );
 

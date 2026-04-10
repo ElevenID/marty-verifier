@@ -69,17 +69,6 @@ impl KeychainManager {
         rand::thread_rng().fill_bytes(&mut key);
         Ok(key)
     }
-
-    /// Delete all stored keys (for testing/reset)
-    #[allow(dead_code)]
-    pub fn delete_all_keys(&self) -> Result<(), StorageError> {
-        for key_name in [DB_KEY_NAME, PII_KEY_NAME] {
-            if let Ok(entry) = keyring::Entry::new(&self.service, key_name) {
-                let _ = entry.delete_credential();
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Default for KeychainManager {

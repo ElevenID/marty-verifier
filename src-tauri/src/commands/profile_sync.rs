@@ -36,6 +36,10 @@ pub async fn sync_device_config_impl(
     let endpoint = std::env::var("MARTY_API_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:8000".to_string());
     
+    // Validate endpoint URL
+    let _parsed = url::Url::parse(&endpoint)
+        .map_err(|e| crate::error::AppError::Config(format!("Invalid MARTY_API_ENDPOINT URL: {e}")))?;
+    
     let license_jwt = std::env::var("MARTY_LICENSE_JWT")
         .unwrap_or_default();
 

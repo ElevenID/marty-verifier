@@ -35,6 +35,12 @@ pub struct LicenseStatus {
     pub verifications_remaining: Option<u64>,
     /// Allowed update channels
     pub update_channels: Vec<String>,
+    /// Subscription plan tier
+    pub plan_tier: Option<String>,
+    /// Entitled products
+    pub entitled_products: Vec<String>,
+    /// Container registry pull access
+    pub registry_access: bool,
 }
 
 /// Validate a license file
@@ -61,6 +67,9 @@ pub async fn validate_license(
         verifications_total: result.verifications_total,
         verifications_remaining: result.verifications_remaining,
         update_channels: result.update_channels,
+        plan_tier: result.plan_tier,
+        entitled_products: result.entitled_products,
+        registry_access: result.registry_access,
     })
 }
 
@@ -83,6 +92,9 @@ pub async fn get_license_status(state: State<'_, AppState>) -> AppResult<License
         verifications_total: status.verifications_total,
         verifications_remaining: status.verifications_remaining,
         update_channels: status.update_channels,
+        plan_tier: status.plan_tier,
+        entitled_products: status.entitled_products,
+        registry_access: status.registry_access,
     })
 }
 
@@ -113,6 +125,9 @@ mod tests {
             verifications_total: 50,
             verifications_remaining: Some(950),
             update_channels: vec!["stable".to_string()],
+            plan_tier: Some("institution".to_string()),
+            entitled_products: vec!["verifier".to_string(), "document-signer".to_string()],
+            registry_access: true,
         };
 
         let json = serde_json::to_string(&status).unwrap();

@@ -193,6 +193,11 @@ impl AppState {
     /// Record a newly issued liveness challenge for replay protection
     pub async fn record_liveness_challenge(&self, challenge: StoredLivenessChallenge) {
         let mut guard = self.liveness_challenges.write().await;
+        // Periodic cleanup: remove expired challenges to prevent unbounded growth
+        if guard.len() > 100 {
+            let now = chrono::Utc::now();
+            guard.retain(|_id, c| c.expires_at > now);
+        }
         guard.insert(challenge.challenge_id.clone(), challenge);
     }
 

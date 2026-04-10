@@ -562,7 +562,7 @@ async fn run_face_match(request: &VerifyRequest) -> AppResult<FaceMatchPayload> 
 
     #[cfg(feature = "biometrics")]
     {
-        use marty_biometrics::{BiometricProvider, FaceVerificationRequest};
+        use marty_biometrics::{BiometricProvider, FaceVerificationRequest, FaceVerifier};
 
         let reference_image = request.reference_image.clone().unwrap_or_default();
         let probe_image = request.probe_image.clone().unwrap_or_default();

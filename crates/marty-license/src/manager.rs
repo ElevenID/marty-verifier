@@ -29,6 +29,9 @@ pub struct LicenseValidationResult {
     pub verifications_total: u64,
     pub verifications_remaining: Option<u64>,
     pub update_channels: Vec<String>,
+    pub plan_tier: Option<String>,
+    pub entitled_products: Vec<String>,
+    pub registry_access: bool,
 }
 
 /// License status (current state)
@@ -47,6 +50,9 @@ pub struct LicenseStatus {
     pub verifications_total: u64,
     pub verifications_remaining: Option<u64>,
     pub update_channels: Vec<String>,
+    pub plan_tier: Option<String>,
+    pub entitled_products: Vec<String>,
+    pub registry_access: bool,
 }
 
 /// License manager for validation and tracking
@@ -153,6 +159,9 @@ impl LicenseManager {
             verifications_total,
             verifications_remaining,
             update_channels: claims.update_channels.clone(),
+            plan_tier: claims.plan_tier.as_ref().map(|t| t.to_string()),
+            entitled_products: claims.entitled_products.clone(),
+            registry_access: claims.registry_access,
         })
     }
 
@@ -347,6 +356,9 @@ impl LicenseManager {
             verifications_total,
             verifications_remaining,
             update_channels: claims.update_channels.clone(),
+            plan_tier: claims.plan_tier.as_ref().map(|t| t.to_string()),
+            entitled_products: claims.entitled_products.clone(),
+            registry_access: claims.registry_access,
         })
     }
 }

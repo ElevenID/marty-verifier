@@ -170,37 +170,67 @@ jobs:
           fileName: '*'
           out-file-path: 'release-assets'
 
+      - name: Validate signing artifacts exist
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MISSING=0
+          for sig_file in \
+            "release-assets/Marty-Verifier_${VERSION}_x64.app.tar.gz.sig" \
+            "release-assets/Marty-Verifier_${VERSION}_aarch64.app.tar.gz.sig" \
+            "release-assets/marty-verifier_${VERSION}_amd64.AppImage.tar.gz.sig" \
+            "release-assets/Marty-Verifier_${VERSION}_x64-setup.nsis.zip.sig"; do
+            if [ ! -f "$sig_file" ]; then
+              echo "::error::Missing signature file: $sig_file"
+              echo "Ensure TAURI_SIGNING_PRIVATE_KEY is configured in repository secrets."
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            exit 1
+          fi
+          echo "All signature files present."
+
       - name: Generate updater manifest
         run: |
-          # Create JSON manifest for Tauri updater
-          cat > latest.json << 'EOF'
-          {
-            "version": "${{ steps.version.outputs.version }}",
-            "notes": "See full release notes at https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "darwin-x86_64": {
-                "signature": "",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/Marty-Verifier_${{ steps.version.outputs.version }}_x64.app.tar.gz"
-              },
-              "darwin-aarch64": {
-                "signature": "",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/Marty-Verifier_${{ steps.version.outputs.version }}_aarch64.app.tar.gz"
-              },
-              "linux-x86_64": {
-                "signature": "",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/marty-verifier_${{ steps.version.outputs.version }}_amd64.AppImage.tar.gz"
-              },
-              "windows-x86_64": {
-                "signature": "",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/Marty-Verifier_${{ steps.version.outputs.version }}_x64-setup.nsis.zip"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Read signatures from .sig files produced by tauri-action
+          SIG_DARWIN_X64=$(cat "release-assets/Marty-Verifier_${VERSION}_x64.app.tar.gz.sig")
+          SIG_DARWIN_AARCH64=$(cat "release-assets/Marty-Verifier_${VERSION}_aarch64.app.tar.gz.sig")
+          SIG_LINUX_X64=$(cat "release-assets/marty-verifier_${VERSION}_amd64.AppImage.tar.gz.sig")
+          SIG_WINDOWS_X64=$(cat "release-assets/Marty-Verifier_${VERSION}_x64-setup.nsis.zip.sig")
+
+          # Build manifest with real signatures using jq
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See full release notes at https://github.com/${REPO}/releases/tag/${TAG}" \
+            --arg pub_date "$PUB_DATE" \
+            --arg sig_darwin_x64 "$SIG_DARWIN_X64" \
+            --arg url_darwin_x64 "${BASE_URL}/Marty-Verifier_${VERSION}_x64.app.tar.gz" \
+            --arg sig_darwin_aarch64 "$SIG_DARWIN_AARCH64" \
+            --arg url_darwin_aarch64 "${BASE_URL}/Marty-Verifier_${VERSION}_aarch64.app.tar.gz" \
+            --arg sig_linux_x64 "$SIG_LINUX_X64" \
+            --arg url_linux_x64 "${BASE_URL}/marty-verifier_${VERSION}_amd64.AppImage.tar.gz" \
+            --arg sig_windows_x64 "$SIG_WINDOWS_X64" \
+            --arg url_windows_x64 "${BASE_URL}/Marty-Verifier_${VERSION}_x64-setup.nsis.zip" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-x86_64": { signature: $sig_darwin_x64, url: $url_darwin_x64 },
+                "darwin-aarch64": { signature: $sig_darwin_aarch64, url: $url_darwin_aarch64 },
+                "linux-x86_64": { signature: $sig_linux_x64, url: $url_linux_x64 },
+                "windows-x86_64": { signature: $sig_windows_x64, url: $url_windows_x64 }
               }
-            }
-          }
-          EOF
-          
-          # TODO: Add proper signature extraction from .sig files if TAURI_SIGNING_PRIVATE_KEY is configured
-          # For now, signatures are empty - updater will skip signature verification
+            }' > latest.json
+
+          echo "Generated latest.json with real signatures:"
+          cat latest.json
 
       - name: Generate attestations for release artifacts
         uses: actions/attest-build-provenance@v1

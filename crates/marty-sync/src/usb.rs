@@ -83,10 +83,8 @@ pub async fn import_from_usb(
     let package: TrustAnchorPackage = serde_json::from_str(&package_json)
         .map_err(|e| SyncError::UsbImport(format!("Invalid package format: {}", e)))?;
 
-    // TODO: Verify package signature
-    // For now, accept without verification (with warning)
-    tracing::warn!("USB package signature verification not implemented - accepting package");
-    let signature_valid = true;
+    // Verify package signature
+    let signature_valid = verify_package_signature(&package_json, &package)?;
 
     // Convert certificates to TrustAnchor format
     let mut anchors = Vec::new();
@@ -231,4 +229,73 @@ fn parse_open_badge_method(
         source: OpenBadgeKeySource::UsbImport,
         synced_at: Utc::now(),
     })
+}
+
+/// Verify the Ed25519 signature on a trust-anchor USB package.
+///
+/// The signature covers the canonical JSON of all fields *except* the
+/// `signature` field itself.  The signing public key is loaded from
+/// `USB_SIGNING_PUBLIC_KEY_PATH` (32-byte raw Ed25519 key, base64-encoded
+/// file) or, when that is unset, from the embedded
+/// `marty-verifier.key.pub` checked into the repository.
+fn verify_package_signature(
+    raw_json: &str,
+    package: &TrustAnchorPackage,
+) -> Result<bool, SyncError> {
+    use base64::Engine;
+    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+
+    // ── Load the trusted public key ─────────────────────────────────
+    let pub_key_path = std::env::var("USB_SIGNING_PUBLIC_KEY_PATH").ok();
+    let pub_key_bytes: Vec<u8> = if let Some(ref p) = pub_key_path {
+        let raw = std::fs::read_to_string(p)
+            .map_err(|e| SyncError::UsbImport(format!("Cannot read public key {p}: {e}")))?;
+        base64::engine::general_purpose::STANDARD
+            .decode(raw.trim())
+            .map_err(|e| SyncError::UsbImport(format!("Invalid base64 in public key: {e}")))?
+    } else {
+        // Fallback: built-in public key
+        const EMBEDDED_PUBKEY: &str = env!("USB_SIGNING_PUBLIC_KEY", "Set USB_SIGNING_PUBLIC_KEY at compile time or use USB_SIGNING_PUBLIC_KEY_PATH at runtime");
+        base64::engine::general_purpose::STANDARD
+            .decode(EMBEDDED_PUBKEY)
+            .map_err(|e| SyncError::UsbImport(format!(
+                "Invalid embedded public key: {e}"
+            )))?
+    };
+
+    let pub_key_array: [u8; 32] = pub_key_bytes
+        .try_into()
+        .map_err(|_| SyncError::UsbImport("Public key must be 32 bytes".to_string()))?;
+    let verifying_key = VerifyingKey::from_bytes(&pub_key_array)
+        .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 public key: {e}")))?;
+
+    // ── Decode the signature from the package ───────────────────────
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&package.signature)
+        .map_err(|e| SyncError::UsbImport(format!("Invalid signature base64: {e}")))?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 signature: {e}")))?;
+
+    // ── Build the signed payload (JSON without the "signature" field)
+    let mut doc: serde_json::Value = serde_json::from_str(raw_json)
+        .map_err(|e| SyncError::UsbImport(format!("Re-parse failed: {e}")))?;
+    if let Some(obj) = doc.as_object_mut() {
+        obj.remove("signature");
+    }
+    let canonical = serde_json::to_string(&doc)
+        .map_err(|e| SyncError::UsbImport(format!("Canonicalization failed: {e}")))?;
+
+    // ── Verify ──────────────────────────────────────────────────────
+    match verifying_key.verify(canonical.as_bytes(), &signature) {
+        Ok(()) => {
+            tracing::info!("USB package signature verified successfully");
+            Ok(true)
+        }
+        Err(e) => {
+            tracing::error!("USB package signature verification FAILED: {e}");
+            Err(SyncError::UsbImport(
+                "Package signature verification failed — rejecting import".to_string(),
+            ))
+        }
+    }
 }

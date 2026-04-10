@@ -3,7 +3,6 @@
 use crate::error::SyncError;
 use marty_verification::policy::PresentationPolicy;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 
 /// Policy sync provider for fetching presentation policies from backend
 pub struct PolicySyncProvider {
