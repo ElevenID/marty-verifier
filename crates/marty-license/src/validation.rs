@@ -39,9 +39,13 @@ pub fn validate_claims(claims: &LicenseClaims) -> Result<(), LicenseError> {
         ));
     }
 
-    if claims.features.is_empty() {
+    if claims.features.is_empty()
+        && claims.entitled_products.is_empty()
+        && claims.plan_tier.is_none()
+    {
         return Err(LicenseError::InvalidClaims(
-            "No features licensed".to_string(),
+            "License must include features, entitled products, or a plan tier"
+                .to_string(),
         ));
     }
 
@@ -50,5 +54,68 @@ pub fn validate_claims(claims: &LicenseClaims) -> Result<(), LicenseError> {
 
 #[cfg(test)]
 mod tests {
-    // JWT validation tests would require generating test keys
+    use std::collections::HashMap;
+
+    use chrono::Utc;
+
+    use super::validate_claims;
+    use crate::{claims::{products, LicenseClaims, PlanTier}, LicenseError};
+
+    fn sample_claims() -> LicenseClaims {
+        let now = Utc::now().timestamp();
+        LicenseClaims {
+            iss: "marty-license-issuer".to_string(),
+            sub: "org-123".to_string(),
+            iat: now,
+            exp: now + 86400,
+            nbf: None,
+            jti: Some("license-123".to_string()),
+            features: vec!["mdl".to_string()],
+            deployment_mode: Some("production".to_string()),
+            max_verifications_total: 0,
+            hardware_binding: None,
+            hardware_tier: None,
+            org_name: Some("Example Org".to_string()),
+            update_channels: vec!["stable".to_string()],
+            grace_period_days: 30,
+            plan_tier: None,
+            entitled_products: Vec::new(),
+            max_instances: HashMap::new(),
+            registry_access: false,
+            api_calls_limit: 0,
+        }
+    }
+
+    #[test]
+    fn accepts_product_only_license() {
+        let mut claims = sample_claims();
+        claims.features.clear();
+        claims.plan_tier = Some(PlanTier::System);
+        claims.entitled_products = vec![products::UI_APP.to_string()];
+
+        assert!(validate_claims(&claims).is_ok());
+    }
+
+    #[test]
+    fn accepts_plan_tier_only_license() {
+        let mut claims = sample_claims();
+        claims.features.clear();
+        claims.plan_tier = Some(PlanTier::System);
+
+        assert!(validate_claims(&claims).is_ok());
+    }
+
+    #[test]
+    fn rejects_license_without_any_entitlement_signal() {
+        let mut claims = sample_claims();
+        claims.features.clear();
+
+        let error = validate_claims(&claims).unwrap_err();
+
+        assert!(matches!(error, LicenseError::InvalidClaims(_)));
+        assert_eq!(
+            error.to_string(),
+            "License claims invalid: License must include features, entitled products, or a plan tier"
+        );
+    }
 }

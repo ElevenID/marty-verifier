@@ -17,7 +17,7 @@ pub struct AppConfig {
     /// Data directory for secure storage
     pub data_dir: PathBuf,
 
-    /// Ed25519 public key for license validation (base64 encoded)
+    /// Ed25519 public key for license validation (PEM encoded)
     pub license_public_key: String,
 
     /// Liveness retention and media handling
