@@ -1,3 +1,34 @@
+## [unreleased] - 2026-04-14
+
+### 🚀 Features
+
+- Add automated release pipeline and Tauri auto-updater
+- *(storage,verification)* Implement app storage database layer and expand verification command API
+- GRPC migration, Cedar authorization, BBS crypto, OID4VC conformance, and service layer enhancements
+
+### 🐛 Bug Fixes
+
+- *(sync)* Improve error handling in marty-sync crate
+
+### ⚙️ Miscellaneous Tasks
+
+- Update CHANGELOG.md
+- Add comprehensive security and quality checks
+- Update CHANGELOG.md
+- Make security checks non-blocking to prevent repeated failures
+- Update dependencies and app storage models
+- Update CHANGELOG.md
+- Update CHANGELOG.md
+- Update CHANGELOG.md
+- Update CHANGELOG.md
+- Update CHANGELOG.md
+- Convert marty-core path deps to git deps
+- Update CHANGELOG.md
+- Add git auth for private repo Cargo deps
+- Update CHANGELOG.md
+- Sync working state for dev environment migration
+- Update CHANGELOG.md
+- Workspace sync 2026-04-14
 ## [unreleased] - 2026-04-10
 
 ### 🚀 Features
