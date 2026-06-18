@@ -106,10 +106,10 @@ impl LicenseManager {
         validate_claims(&claims)?;
 
         // Check hardware binding if required
-        if claims.requires_hardware_binding() {
-            if !claims.validate_hardware_binding(&self.hardware_fingerprint) {
-                return Err(LicenseError::HardwareBindingMismatch);
-            }
+        if claims.requires_hardware_binding()
+            && !claims.validate_hardware_binding(&self.hardware_fingerprint)
+        {
+            return Err(LicenseError::HardwareBindingMismatch);
         }
 
         // Get current verification count
