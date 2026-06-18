@@ -46,7 +46,10 @@ impl PolicySyncProvider {
         &self,
         deployment_profile_id: Option<&str>,
     ) -> Result<Vec<PresentationPolicy>, SyncError> {
-        let mut url = format!("{}/api/v1/identity/presentation-policies/sync", self.endpoint);
+        let mut url = format!(
+            "{}/api/v1/identity/presentation-policies/sync",
+            self.endpoint
+        );
 
         if let Some(profile_id) = deployment_profile_id {
             url.push_str(&format!("?deployment_profile_id={}", profile_id));
@@ -80,7 +83,10 @@ impl PolicySyncProvider {
     /// # Arguments
     /// * `since` - RFC 2822 formatted timestamp
     pub async fn fetch_delta(&self, since: &str) -> Result<Vec<PresentationPolicy>, SyncError> {
-        let url = format!("{}/api/v1/identity/presentation-policies/sync", self.endpoint);
+        let url = format!(
+            "{}/api/v1/identity/presentation-policies/sync",
+            self.endpoint
+        );
 
         let response = self
             .client

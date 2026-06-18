@@ -3,7 +3,7 @@
 //! Applies deployment profile settings to the running application,
 //! including network mode, UX configuration, and policy selection.
 
-use marty_sync::{DeploymentProfile, Lane, NetworkMode, UpdatePolicy, UXConfig};
+use marty_sync::{DeploymentProfile, Lane, NetworkMode, UXConfig, UpdatePolicy};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -56,12 +56,12 @@ impl RuntimeConfig {
     /// Apply lane configuration
     pub async fn apply_lane(&self, lane: Lane) {
         let mut inner = self.inner.write().await;
-        
+
         // Use lane's default policy if specified
         if let Some(policy_id) = &lane.default_policy_id {
             inner.active_policy_id = Some(policy_id.clone());
         }
-        
+
         inner.lane = Some(lane);
     }
 
@@ -87,18 +87,18 @@ impl RuntimeConfig {
     /// Get active policy ID (from lane or profile default)
     pub async fn get_active_policy_id(&self) -> Option<String> {
         let inner = self.inner.read().await;
-        
+
         // Priority: lane default > explicit active > profile default
         if let Some(lane) = &inner.lane {
             if let Some(policy_id) = &lane.default_policy_id {
                 return Some(policy_id.clone());
             }
         }
-        
+
         if let Some(policy_id) = &inner.active_policy_id {
             return Some(policy_id.clone());
         }
-        
+
         inner
             .deployment_profile
             .as_ref()
@@ -181,30 +181,33 @@ impl RuntimeConfig {
     /// Get a snapshot of current configuration
     pub async fn snapshot(&self) -> ConfigSnapshot {
         let inner = self.inner.read().await;
-        
+
         let network_mode = inner
             .deployment_profile
             .as_ref()
             .map(|p| format!("{:?}", p.network_mode))
             .unwrap_or_else(|| "Online".to_string());
-        
+
         let ux_language = inner
             .deployment_profile
             .as_ref()
             .map(|p| p.ux_config.language.clone())
             .unwrap_or_else(|| "en".to_string());
-        
+
         let ux_theme = inner
             .deployment_profile
             .as_ref()
             .map(|p| p.ux_config.theme.clone())
             .unwrap_or_else(|| "default".to_string());
-        
+
         ConfigSnapshot {
             device_id: inner.device_id.clone(),
             deployment_profile_id: inner.deployment_profile.as_ref().map(|p| p.id.clone()),
             lane_id: inner.lane.as_ref().map(|l| l.id.clone()),
-            update_policy: inner.deployment_profile.as_ref().map(|p| p.update_policy.clone()),
+            update_policy: inner
+                .deployment_profile
+                .as_ref()
+                .map(|p| p.update_policy.clone()),
             network_mode,
             active_policy_id: inner.active_policy_id.clone(),
             offline_cache_ttl_hours: self.get_offline_cache_ttl_hours().await,
@@ -218,7 +221,7 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marty_sync::{UpdatePolicy, UXConfig};
+    use marty_sync::{UXConfig, UpdatePolicy};
 
     #[tokio::test]
     async fn test_runtime_config() {

@@ -58,7 +58,7 @@ pub async fn check_for_updates(
     Ok(update.map(|update| {
         // Check deployment profile update policy
         let eligible_for_rollout = check_rollout_eligibility(&state, &update.version);
-        
+
         UpdateInfo {
             version: update.version,
             current_version: update.current_version,
@@ -109,7 +109,7 @@ pub async fn download_and_install_update(
     let Some(update) = update else {
         return Ok(false);
     };
-    
+
     // Check deployment profile update policy
     if !check_rollout_eligibility(&state, &update.version) {
         tracing::info!(
@@ -173,9 +173,7 @@ fn build_update_endpoint(base_url: &str, channel: &str) -> AppResult<Url> {
         "{}/{}/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}",
         base, channel
     );
-    Url::parse(&endpoint).map_err(|e| {
-        AppError::Update(format!("Invalid update endpoint: {}", e))
-    })
+    Url::parse(&endpoint).map_err(|e| AppError::Update(format!("Invalid update endpoint: {}", e)))
 }
 
 /// Check if device is eligible for update based on deployment profile rollout policy
@@ -186,7 +184,7 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
     }) {
         snapshot => snapshot,
     };
-    
+
     // Get device ID
     let device_id = match snapshot.device_id {
         Some(id) => id,
@@ -195,7 +193,7 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
             return true;
         }
     };
-    
+
     // Get update policy from deployment profile
     let update_policy = match snapshot.update_policy {
         Some(policy) => policy,
@@ -204,7 +202,7 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
             return true;
         }
     };
-    
+
     // Check if version is pinned
     if let Some(pinned_version) = &update_policy.version_pinned {
         if update_version != pinned_version {
@@ -216,11 +214,11 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
             return false;
         }
     }
-    
+
     // Check rollout percentage
     let rollout_percentage = update_policy.rollout_percentage;
     let eligible = ProfileSyncProvider::should_apply_update(&device_id, rollout_percentage);
-    
+
     if !eligible {
         tracing::info!(
             device_id = %device_id,
@@ -229,7 +227,7 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
             "Device not in rollout group"
         );
     }
-    
+
     eligible
 }
 

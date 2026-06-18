@@ -146,16 +146,16 @@ pub struct OpenBadgeTrustConfig {
 }
 
 /// Open Badge trust policy
-/// 
+///
 /// Determines how the verifier handles credentials signed by keys that are not
 /// in the trusted key store.
-/// 
+///
 /// # Security Considerations
-/// 
+///
 /// - **FailClosed** (default): Most secure. Rejects any credential whose signing key
 ///   is not in the trusted store. Use this in production environments where you have
 ///   a curated list of trusted issuers.
-/// 
+///
 /// - **FailOpen**: ⚠️ **SECURITY WARNING** - Allows verification to proceed even when
 ///   the signing key is not in the trusted store. This effectively disables trust
 ///   validation and should **only** be used in:
@@ -164,7 +164,7 @@ pub struct OpenBadgeTrustConfig {
 ///   - Initial onboarding when building a trust list
 ///   **Never use FailOpen in production** as it allows any issuer's credentials to be
 ///   accepted without trust verification.
-/// 
+///
 /// - **Selective**: Allows a hybrid approach where certain issuers (domains, DIDs) are
 ///   explicitly trusted while others are rejected. Useful for organizations with
 ///   multiple trusted partners.

@@ -7,20 +7,16 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use marty_app_storage::{OpenBadgeVerificationMethod, TrustAnchorType};
+#[cfg(feature = "oid4vp")]
+use marty_oid4vci::verifier::{PresentationDefinition, PresentationSubmission, VerificationEngine};
 use marty_verification::chip_io::{verify_from_reader, MockPassportReader};
 use marty_verification::open_badges::{
     detect_version as detect_open_badges_version, verify_ob2_json, verify_ob3_json_async,
     DocumentStore, OpenBadgesVersion,
 };
-use marty_verification::policy::{
-    PresentationPolicy, IssuerConstraintChecker,
-};
+use marty_verification::policy::{IssuerConstraintChecker, PresentationPolicy};
 use marty_verification::trust_anchor::CscaRegistry;
 use marty_verification::verification::emrtd::{verify_emrtd, SecurityObject};
-#[cfg(feature = "oid4vp")]
-use marty_oid4vci::verifier::{
-    PresentationDefinition, PresentationSubmission, VerificationEngine,
-};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -708,9 +704,12 @@ pub enum RevocationStatus {
 async fn load_cached_policies(state: &AppState) -> AppResult<Vec<PresentationPolicy>> {
     // Get current deployment profile ID from runtime config
     let profile_id = state.runtime_config.get_deployment_profile_id().await;
-    
+
     // Load policies for this profile (or all if no profile set)
-    state.storage.get_presentation_policies(profile_id.as_deref()).await
+    state
+        .storage
+        .get_presentation_policies(profile_id.as_deref())
+        .await
         .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
@@ -722,31 +721,33 @@ async fn evaluate_policy_constraints(
     state: &AppState,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
-    
+
     // Load cached policies
     let policies = match load_cached_policies(state).await {
         Ok(p) => p,
         Err(_) => return warnings, // No policies cached, skip checks
     };
-    
+
     // Find applicable policy by credential type
-    let policy = policies.iter().find(|p| p.accepted_credential_types.contains(&request.credential_type));
-    
+    let policy = policies.iter().find(|p| {
+        p.accepted_credential_types
+            .contains(&request.credential_type)
+    });
+
     if let Some(policy) = policy {
         // Check issuer constraints
-        let issuer_checker = IssuerConstraintChecker::new(policy.trust_profile_id.as_ref(), &policy.allowed_issuers);
+        let issuer_checker =
+            IssuerConstraintChecker::new(policy.trust_profile_id.as_ref(), &policy.allowed_issuers);
         let issuer_result = issuer_checker.check_issuer(issuer_id, trust_verified);
         if let Some(msg) = issuer_result.violation_message() {
             warnings.push(msg.to_string());
         }
-        
+
         // Check trust profile requirement
         if policy.trust_profile_id.is_some() && !trust_verified {
-            warnings.push(
-                "Credential does not meet trust profile requirements".to_string()
-            );
+            warnings.push("Credential does not meet trust profile requirements".to_string());
         }
-        
+
         // Check freshness if specified
         if let Some(max_age_seconds) = policy.freshness_requirements.max_credential_age_seconds {
             // Would need issuance_date from credential - placeholder for now
@@ -756,7 +757,7 @@ async fn evaluate_policy_constraints(
             ));
         }
     }
-    
+
     warnings
 }
 
@@ -894,16 +895,12 @@ pub async fn verify_credential(
             .as_ref()
             .and_then(|i| i.subject.as_deref())
             .unwrap_or("unknown");
-        
+
         let trust_verified = result.trust_chain.valid;
-        
-        let policy_warnings = evaluate_policy_constraints(
-            &request,
-            issuer_id,
-            trust_verified,
-            state.inner()
-        ).await;
-        
+
+        let policy_warnings =
+            evaluate_policy_constraints(&request, issuer_id, trust_verified, state.inner()).await;
+
         result.warnings.extend(policy_warnings);
     }
 
@@ -927,9 +924,8 @@ async fn verify_dtc_payload(
     let verify_json = serde_json::to_string(&payload)?;
     let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
         .map_err(|e| AppError::Verification(format!("DTC verification failed: {}", e)))?;
-    let value: Value = serde_json::from_str(&verify_result).map_err(|e| {
-        AppError::Verification(format!("Invalid DTC verify response: {}", e))
-    })?;
+    let value: Value = serde_json::from_str(&verify_result)
+        .map_err(|e| AppError::Verification(format!("Invalid DTC verify response: {}", e)))?;
 
     let is_valid = value
         .get("is_valid")
@@ -1057,10 +1053,7 @@ async fn verify_open_badge_payload(
     merge_open_badge_store(&mut store, &request_store, allow_untrusted_keys);
 
     if let Value::Object(ref mut obj) = req_value {
-        obj.insert(
-            "document_store".to_string(),
-            serde_json::to_value(&store)?,
-        );
+        obj.insert("document_store".to_string(), serde_json::to_value(&store)?);
     }
 
     let req_json = serde_json::to_string(&req_value)?;
@@ -1102,8 +1095,7 @@ async fn verify_open_badge_payload(
         normalized: normalized.clone(),
     };
 
-    let (stale_warning, stale_critical) =
-        open_badge_trust_staleness(state, &trust_config).await?;
+    let (stale_warning, stale_critical) = open_badge_trust_staleness(state, &trust_config).await?;
     if let Some(msg) = stale_warning {
         warnings.push(msg);
     }
@@ -1112,14 +1104,7 @@ async fn verify_open_badge_payload(
     }
 
     Ok(build_open_badge_result(
-        request,
-        version,
-        valid,
-        warnings,
-        method_id,
-        normalized,
-        is_online,
-        details,
+        request, version, valid, warnings, method_id, normalized, is_online, details,
     ))
 }
 
@@ -1142,7 +1127,11 @@ fn build_dtc_verify_payload(raw: &Value) -> AppResult<Value> {
     }
 
     if let Value::Object(ref mut obj) = payload {
-        for key in ["signer_public_key_pem", "trust_anchors_pem", "certificate_chain_pem"] {
+        for key in [
+            "signer_public_key_pem",
+            "trust_anchors_pem",
+            "certificate_chain_pem",
+        ] {
             if let Some(value) = raw.get(key) {
                 obj.insert(key.to_string(), value.clone());
             }
@@ -1161,7 +1150,10 @@ fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
                 .iter()
                 .filter_map(|item| {
                     let check_name = item.get("check_name")?.as_str()?.to_string();
-                    let passed = item.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let passed = item
+                        .get("passed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let details = item
                         .get("details")
                         .and_then(|v| v.as_str())
@@ -1203,7 +1195,10 @@ fn build_dtc_claims(dtc_data: &Value) -> Value {
         claims.insert("dtc_id".to_string(), Value::String(id.to_string()));
     }
     if let Some(num) = dtc_data.get("passport_number").and_then(|v| v.as_str()) {
-        claims.insert("passport_number".to_string(), Value::String(num.to_string()));
+        claims.insert(
+            "passport_number".to_string(),
+            Value::String(num.to_string()),
+        );
     }
     if let Some(value) = dtc_data.get("issue_date").and_then(|v| v.as_str()) {
         claims.insert("issue_date".to_string(), Value::String(value.to_string()));
@@ -1253,9 +1248,7 @@ fn build_open_badge_request(raw: &Value) -> AppResult<(OpenBadgesVersion, Value)
     }
 }
 
-fn build_trusted_open_badge_store(
-    methods: &[OpenBadgeVerificationMethod],
-) -> DocumentStore {
+fn build_trusted_open_badge_store(methods: &[OpenBadgeVerificationMethod]) -> DocumentStore {
     let mut store = DocumentStore::new();
     for method in methods {
         store.insert(method.id.clone(), method.document.clone());
@@ -1263,17 +1256,10 @@ fn build_trusted_open_badge_store(
     store
 }
 
-fn extract_open_badge_method_id(
-    request: &Value,
-    version: OpenBadgesVersion,
-) -> Option<String> {
+fn extract_open_badge_method_id(request: &Value, version: OpenBadgesVersion) -> Option<String> {
     match version {
-        OpenBadgesVersion::V2 => request
-            .get("assertion")
-            .and_then(extract_ob2_method_id),
-        OpenBadgesVersion::V3 => request
-            .get("credential")
-            .and_then(extract_ob3_method_id),
+        OpenBadgesVersion::V2 => request.get("assertion").and_then(extract_ob2_method_id),
+        OpenBadgesVersion::V3 => request.get("credential").and_then(extract_ob3_method_id),
         OpenBadgesVersion::Unknown => None,
     }
 }
@@ -1525,7 +1511,10 @@ fn open_badge_claims_from_normalized(normalized: &Value) -> Value {
 
     if let Some(subject) = normalized.get("credential_subject") {
         if let Some(subject_id) = subject.get("id").and_then(|v| v.as_str()) {
-            claims.insert("subject_id".to_string(), Value::String(subject_id.to_string()));
+            claims.insert(
+                "subject_id".to_string(),
+                Value::String(subject_id.to_string()),
+            );
         }
     }
 
@@ -1563,9 +1552,7 @@ async fn verify_oid4vp_payload(
     let vp_token = raw
         .get("vp_token")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            AppError::Verification("OID4VP payload missing 'vp_token' field".into())
-        })?
+        .ok_or_else(|| AppError::Verification("OID4VP payload missing 'vp_token' field".into()))?
         .to_string();
 
     let nonce = raw
@@ -1614,11 +1601,8 @@ async fn verify_oid4vp_payload(
             if let (Some(submission), Some(definition)) = (submission, definition) {
                 // Decode the VP token payload for PEX field constraint evaluation.
                 let vp_payload = decode_vp_token_payload(&vp_token);
-                let pex_result = engine.verify_presentation(
-                    &definition,
-                    &submission,
-                    vp_payload.as_ref(),
-                );
+                let pex_result =
+                    engine.verify_presentation(&definition, &submission, vp_payload.as_ref());
                 if !pex_result.valid {
                     pex_result
                         .errors
@@ -1648,9 +1632,7 @@ async fn verify_oid4vp_payload(
 
     let mut warnings: Vec<String> = vec![];
     if !is_online {
-        warnings.push(
-            "Verified offline — revocation and trust anchoring not available".into(),
-        );
+        warnings.push("Verified offline — revocation and trust anchoring not available".into());
     }
     warnings.extend(structural_errors.iter().cloned());
     for err in &token_result.errors {
@@ -1729,9 +1711,7 @@ pub fn verify_oid4vp_offline(
     let vp_token = raw
         .get("vp_token")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            AppError::Verification("OID4VP payload missing 'vp_token' field".into())
-        })?
+        .ok_or_else(|| AppError::Verification("OID4VP payload missing 'vp_token' field".into()))?
         .to_string();
 
     let nonce = raw
@@ -1740,10 +1720,7 @@ pub fn verify_oid4vp_offline(
         .unwrap_or("")
         .to_string();
 
-    let engine = VerificationEngine::new(
-        verifier_id.to_string(),
-        response_uri.to_string(),
-    );
+    let engine = VerificationEngine::new(verifier_id.to_string(), response_uri.to_string());
 
     let token_result = engine.verify_vp_token(&vp_token, &nonce);
 
@@ -1760,11 +1737,8 @@ pub fn verify_oid4vp_offline(
             if let (Some(submission), Some(definition)) = (submission, definition) {
                 // Decode the VP token payload for PEX field constraint evaluation.
                 let vp_payload = decode_vp_token_payload(&vp_token);
-                let pex_result = engine.verify_presentation(
-                    &definition,
-                    &submission,
-                    vp_payload.as_ref(),
-                );
+                let pex_result =
+                    engine.verify_presentation(&definition, &submission, vp_payload.as_ref());
                 if !pex_result.valid {
                     pex_result
                         .errors
@@ -1847,7 +1821,9 @@ pub fn verify_oid4vp_offline(
 /// return `ChainStatus::Invalid` on any real credential.  This is intentional — the
 /// function is designed for testing JSON parsing, error paths, and `VerificationResult`
 /// shape without a running database or Tauri runtime.
-pub fn verify_emrtd_offline(credential_data_json: &str) -> crate::error::AppResult<VerificationResult> {
+pub fn verify_emrtd_offline(
+    credential_data_json: &str,
+) -> crate::error::AppResult<VerificationResult> {
     let payload: EmrtdPayload = serde_json::from_str(credential_data_json)
         .map_err(|e| AppError::Verification(format!("Invalid eMRTD payload JSON: {}", e)))?;
 
@@ -1869,9 +1845,7 @@ pub fn verify_emrtd_offline(credential_data_json: &str) -> crate::error::AppResu
         let num = dg_name
             .trim_start_matches("DG")
             .parse::<u8>()
-            .map_err(|_| {
-                AppError::Verification(format!("Invalid data group name: {}", dg_name))
-            })?;
+            .map_err(|_| AppError::Verification(format!("Invalid data group name: {}", dg_name)))?;
         if num == 0 {
             return Err(AppError::Verification(format!(
                 "Invalid data group name: {} (DG0 is not defined in ICAO 9303)",
@@ -1954,15 +1928,16 @@ pub fn verify_emrtd_offline(credential_data_json: &str) -> crate::error::AppResu
 /// Accepts the same JSON shape as `verify_credential` for `credential_type == "dtc"`.
 /// Unlike the Tauri command path, this function is synchronous and requires no
 /// app state, making it suitable for unit and integration tests.
-pub fn verify_dtc_offline(credential_data_json: &str) -> crate::error::AppResult<VerificationResult> {
+pub fn verify_dtc_offline(
+    credential_data_json: &str,
+) -> crate::error::AppResult<VerificationResult> {
     let raw = parse_json_input(credential_data_json, "DTC")?;
     let payload = build_dtc_verify_payload(&raw)?;
     let verify_json = serde_json::to_string(&payload)?;
     let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
         .map_err(|e| AppError::Verification(format!("DTC verification failed: {}", e)))?;
-    let value: Value = serde_json::from_str(&verify_result).map_err(|e| {
-        AppError::Verification(format!("Invalid DTC verify response: {}", e))
-    })?;
+    let value: Value = serde_json::from_str(&verify_result)
+        .map_err(|e| AppError::Verification(format!("Invalid DTC verify response: {}", e)))?;
 
     let is_valid = value
         .get("is_valid")
@@ -2105,7 +2080,9 @@ pub async fn verify_open_badge_offline(
         .as_ref()
         .map(open_badge_claims_from_normalized)
         .unwrap_or_else(|| serde_json::json!({}));
-    let issuer = normalized.as_ref().and_then(open_badge_issuer_from_normalized);
+    let issuer = normalized
+        .as_ref()
+        .and_then(open_badge_issuer_from_normalized);
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
@@ -2174,7 +2151,10 @@ async fn verify_oid4vp_online(
     });
 
     let mut req_builder = client
-        .post(format!("{}/v1/verification/verify", api_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/v1/verification/verify",
+            api_url.trim_end_matches('/')
+        ))
         .json(&body);
 
     if let Some(token) = api_token {
@@ -2194,9 +2174,10 @@ async fn verify_oid4vp_online(
         )));
     }
 
-    let api_result: Value = response.json().await.map_err(|e| {
-        AppError::Verification(format!("Invalid JSON from credentials API: {}", e))
-    })?;
+    let api_result: Value = response
+        .json()
+        .await
+        .map_err(|e| AppError::Verification(format!("Invalid JSON from credentials API: {}", e)))?;
 
     let valid = api_result
         .get("valid")
@@ -2267,10 +2248,7 @@ fn extract_claims_from_vp(vp_token: &str) -> (Option<String>, Value) {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let vp = payload
-        .get("vp")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
+    let vp = payload.get("vp").cloned().unwrap_or(serde_json::json!({}));
 
     let vc_list = vp
         .get("verifiableCredential")

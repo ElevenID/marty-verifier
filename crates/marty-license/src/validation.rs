@@ -44,8 +44,7 @@ pub fn validate_claims(claims: &LicenseClaims) -> Result<(), LicenseError> {
         && claims.plan_tier.is_none()
     {
         return Err(LicenseError::InvalidClaims(
-            "License must include features, entitled products, or a plan tier"
-                .to_string(),
+            "License must include features, entitled products, or a plan tier".to_string(),
         ));
     }
 
@@ -59,7 +58,10 @@ mod tests {
     use chrono::Utc;
 
     use super::validate_claims;
-    use crate::{claims::{products, LicenseClaims, PlanTier}, LicenseError};
+    use crate::{
+        claims::{products, LicenseClaims, PlanTier},
+        LicenseError,
+    };
 
     fn sample_claims() -> LicenseClaims {
         let now = Utc::now().timestamp();

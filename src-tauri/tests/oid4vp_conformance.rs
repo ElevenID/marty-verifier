@@ -23,9 +23,7 @@
 
 #![cfg(feature = "oid4vp")]
 
-use marty_verifier::commands::verification::{
-    verify_oid4vp_offline, VerificationStatus,
-};
+use marty_verifier::commands::verification::{verify_oid4vp_offline, VerificationStatus};
 
 // ── Shared fixture corpus ─────────────────────────────────────────────────────
 
@@ -163,7 +161,11 @@ fn offline_result_verification_id_is_non_empty() {
     let result = verify_oid4vp_offline(&data, VERIFIER_ID, VERIFIER_ID).unwrap();
     assert!(!result.verification_id.is_empty());
     // Rough UUID format: 8-4-4-4-12 hex digits
-    assert_eq!(result.verification_id.len(), 36, "Expect UUID format (36 chars)");
+    assert_eq!(
+        result.verification_id.len(),
+        36,
+        "Expect UUID format (36 chars)"
+    );
 }
 
 // ── §3  Rejection Cases ───────────────────────────────────────────────────────
@@ -188,9 +190,12 @@ fn wrong_nonce_in_credential_data_returns_invalid() {
 #[test]
 fn wrong_verifier_id_audience_mismatch_returns_invalid() {
     let data = credential_data(STATIC_VP_TOKEN, NONCE);
-    let result =
-        verify_oid4vp_offline(&data, "https://wrong.verifier.example.com", "https://wrong.verifier.example.com")
-            .expect("Audience mismatch should still parse; engine should return Invalid");
+    let result = verify_oid4vp_offline(
+        &data,
+        "https://wrong.verifier.example.com",
+        "https://wrong.verifier.example.com",
+    )
+    .expect("Audience mismatch should still parse; engine should return Invalid");
     assert_eq!(
         result.status,
         VerificationStatus::Invalid,
@@ -233,7 +238,12 @@ fn single_segment_not_jwt_returns_invalid() {
 /// `Valid` (structural check passes).
 #[test]
 fn with_matching_pd_and_ps_result_is_valid() {
-    let data = credential_data_with_pd(STATIC_VP_TOKEN, NONCE, PRESENTATION_DEFINITION_JSON, PRESENTATION_SUBMISSION_JSON);
+    let data = credential_data_with_pd(
+        STATIC_VP_TOKEN,
+        NONCE,
+        PRESENTATION_DEFINITION_JSON,
+        PRESENTATION_SUBMISSION_JSON,
+    );
     let result = verify_oid4vp_offline(&data, VERIFIER_ID, VERIFIER_ID)
         .expect("PD+PS structural check should not error");
     assert_eq!(
@@ -258,8 +268,7 @@ fn without_pd_and_ps_structural_check_is_skipped() {
 #[test]
 fn mismatched_ps_definition_id_produces_invalid() {
     // Patch the submission's definition_id to something wrong
-    let mut ps: serde_json::Value =
-        serde_json::from_str(PRESENTATION_SUBMISSION_JSON).unwrap();
+    let mut ps: serde_json::Value = serde_json::from_str(PRESENTATION_SUBMISSION_JSON).unwrap();
     ps["definition_id"] = serde_json::json!("wrong-definition-id");
 
     let data = serde_json::json!({

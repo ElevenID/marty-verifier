@@ -97,10 +97,7 @@ impl ProfileSyncProvider {
     ///
     /// # Arguments
     /// * `device_id` - Device identifier
-    pub async fn fetch_device_config(
-        &self,
-        device_id: &str,
-    ) -> Result<DeviceConfig, SyncError> {
+    pub async fn fetch_device_config(&self, device_id: &str) -> Result<DeviceConfig, SyncError> {
         let url = format!("{}/api/v1/devices/{}/config", self.endpoint, device_id);
 
         let response = self
@@ -160,10 +157,7 @@ impl ProfileSyncProvider {
     }
 
     /// Fetch lanes for a deployment profile
-    pub async fn fetch_lanes(
-        &self,
-        profile_id: &str,
-    ) -> Result<Vec<Lane>, SyncError> {
+    pub async fn fetch_lanes(&self, profile_id: &str) -> Result<Vec<Lane>, SyncError> {
         let url = format!(
             "{}/api/v1/identity/deployment-profiles/{}/lanes",
             self.endpoint, profile_id
@@ -221,7 +215,10 @@ mod tests {
         let result1 = ProfileSyncProvider::should_apply_update(device_id, 50);
         let result2 = ProfileSyncProvider::should_apply_update(device_id, 50);
 
-        assert_eq!(result1, result2, "Rollout calculation should be deterministic");
+        assert_eq!(
+            result1, result2,
+            "Rollout calculation should be deterministic"
+        );
 
         // Test edge cases
         assert!(

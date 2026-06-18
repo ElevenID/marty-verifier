@@ -757,7 +757,7 @@ impl SecureStorage {
                 let ux_config_json: String = row.get(5)?;
                 let update_policy_json: String = row.get(6)?;
                 let network_mode_str: String = row.get(3)?;
-                
+
                 let ux_config: crate::UXConfig = serde_json::from_str(&ux_config_json)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 let update_policy: crate::UpdatePolicy = serde_json::from_str(&update_policy_json)
@@ -903,7 +903,9 @@ impl SecureStorage {
         );
 
         match result {
-            Ok((Some(device_id), profile_id, lane_id)) => Ok(Some((device_id, profile_id, lane_id))),
+            Ok((Some(device_id), profile_id, lane_id)) => {
+                Ok(Some((device_id, profile_id, lane_id)))
+            }
             Ok((None, _, _)) => Ok(None),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
@@ -976,10 +978,7 @@ impl SecureStorage {
                 "SELECT policy_json FROM presentation_policies WHERE deployment_profile_id = ?",
                 vec![profile_id],
             ),
-            None => (
-                "SELECT policy_json FROM presentation_policies",
-                vec![],
-            ),
+            None => ("SELECT policy_json FROM presentation_policies", vec![]),
         };
 
         let mut stmt = conn.prepare(query)?;
@@ -1034,7 +1033,10 @@ impl SecureStorage {
 /// Implement PolicyStorage trait from marty-sync
 #[cfg_attr(test, allow(unused))]
 impl marty_sync::PolicyStorage for SecureStorage {
-    async fn store(&self, policies: &[crate::PresentationPolicy]) -> Result<(), marty_sync::SyncError> {
+    async fn store(
+        &self,
+        policies: &[crate::PresentationPolicy],
+    ) -> Result<(), marty_sync::SyncError> {
         for policy in policies {
             self.store_presentation_policy(policy, None)
                 .await
@@ -1049,7 +1051,10 @@ impl marty_sync::PolicyStorage for SecureStorage {
             .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
     }
 
-    async fn get_by_id(&self, id: &str) -> Result<Option<crate::PresentationPolicy>, marty_sync::SyncError> {
+    async fn get_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::PresentationPolicy>, marty_sync::SyncError> {
         self.get_presentation_policy(id)
             .await
             .map_err(|e| marty_sync::SyncError::StorageError(e.to_string()))
@@ -1076,9 +1081,7 @@ fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {
             |row| row.get(0),
         )
         .optional()?;
-    Ok(version
-        .and_then(|v| v.parse::<i32>().ok())
-        .unwrap_or(0))
+    Ok(version.and_then(|v| v.parse::<i32>().ok()).unwrap_or(0))
 }
 
 fn migrate_schema(conn: &Connection, current_version: i32) -> Result<(), StorageError> {

@@ -1,8 +1,8 @@
 //! Profile and lane sync commands for verifier
 
+use marty_sync::{DeploymentProfile, Lane, ProfileSyncProvider};
 use std::sync::Arc;
 use tauri::State;
-use marty_sync::{ProfileSyncProvider, DeploymentProfile, Lane};
 
 use crate::error::AppResult;
 use crate::runtime_config::RuntimeConfig;
@@ -14,10 +14,7 @@ pub async fn sync_device_config(
     device_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<DeviceConfigSyncResult> {
-    sync_device_config_impl(
-        state.storage.clone(),
-        state.runtime_config.clone(),
-    ).await
+    sync_device_config_impl(state.storage.clone(), state.runtime_config.clone()).await
 }
 
 /// Internal implementation shared by command and startup sync
@@ -26,32 +23,38 @@ pub async fn sync_device_config_impl(
     runtime_config: RuntimeConfig,
 ) -> AppResult<DeviceConfigSyncResult> {
     // Get device ID from runtime config
-    let device_id = runtime_config.get_device_id().await
+    let device_id = runtime_config
+        .get_device_id()
+        .await
         .ok_or_else(|| crate::error::AppError::Config("Device ID not configured".into()))?;
-    
+
     tracing::info!(device_id, "Syncing device configuration");
 
     // Get API endpoint and license JWT from config
     // TODO: Pass these as parameters once config is available in startup context
-    let endpoint = std::env::var("MARTY_API_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:8000".to_string());
-    
+    let endpoint =
+        std::env::var("MARTY_API_ENDPOINT").unwrap_or_else(|_| "http://localhost:8000".to_string());
+
     // Validate endpoint URL
-    let _parsed = url::Url::parse(&endpoint)
-        .map_err(|e| crate::error::AppError::Config(format!("Invalid MARTY_API_ENDPOINT URL: {e}")))?;
-    
-    let license_jwt = std::env::var("MARTY_LICENSE_JWT")
-        .unwrap_or_default();
+    let _parsed = url::Url::parse(&endpoint).map_err(|e| {
+        crate::error::AppError::Config(format!("Invalid MARTY_API_ENDPOINT URL: {e}"))
+    })?;
+
+    let license_jwt = std::env::var("MARTY_LICENSE_JWT").unwrap_or_default();
 
     // Fetch device configuration
     let provider = ProfileSyncProvider::new(endpoint, license_jwt);
-    let device_config = provider.fetch_device_config(&device_id).await
+    let device_config = provider
+        .fetch_device_config(&device_id)
+        .await
         .map_err(|e| crate::error::AppError::Sync(e))?;
 
     // Store deployment profile if present
     let profile_id = if let Some(profile) = &device_config.deployment_profile {
         store_deployment_profile(&storage, profile).await?;
-        runtime_config.apply_deployment_profile(profile.clone()).await;
+        runtime_config
+            .apply_deployment_profile(profile.clone())
+            .await;
         Some(profile.id.clone())
     } else {
         None
@@ -67,7 +70,13 @@ pub async fn sync_device_config_impl(
     };
 
     // Update device config record
-    store_device_config(&storage, &device_id, profile_id.as_deref(), lane_id.as_deref()).await?;
+    store_device_config(
+        &storage,
+        &device_id,
+        profile_id.as_deref(),
+        lane_id.as_deref(),
+    )
+    .await?;
 
     tracing::info!(
         device_id,
@@ -87,12 +96,12 @@ pub async fn sync_device_config_impl(
 
 /// Get current runtime configuration snapshot
 #[tauri::command]
-pub async fn get_runtime_config(
-    state: State<'_, AppState>,
-) -> AppResult<serde_json::Value> {
+pub async fn get_runtime_config(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
     let snapshot = state.runtime_config.snapshot().await;
-    Ok(serde_json::to_value(snapshot)
-        .map_err(|e| crate::error::AppError::Config(e.to_string()))?)
+    Ok(
+        serde_json::to_value(snapshot)
+            .map_err(|e| crate::error::AppError::Config(e.to_string()))?,
+    )
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -112,15 +121,16 @@ async fn store_deployment_profile(
     storage: &Arc<marty_app_storage::SecureStorage>,
     profile: &DeploymentProfile,
 ) -> AppResult<()> {
-    storage.store_deployment_profile(profile).await
+    storage
+        .store_deployment_profile(profile)
+        .await
         .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
-async fn store_lane(
-    storage: &Arc<marty_app_storage::SecureStorage>,
-    lane: &Lane,
-) -> AppResult<()> {
-    storage.store_lane(lane).await
+async fn store_lane(storage: &Arc<marty_app_storage::SecureStorage>, lane: &Lane) -> AppResult<()> {
+    storage
+        .store_lane(lane)
+        .await
         .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
@@ -130,6 +140,8 @@ async fn store_device_config(
     profile_id: Option<&str>,
     lane_id: Option<&str>,
 ) -> AppResult<()> {
-    storage.store_device_config(device_id, profile_id, lane_id).await
+    storage
+        .store_device_config(device_id, profile_id, lane_id)
+        .await
         .map_err(|e| crate::error::AppError::Config(e.to_string()))
 }

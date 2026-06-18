@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use marty_license::LicenseManager;
 use marty_app_storage::SecureStorage;
+use marty_license::LicenseManager;
 use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use marty_sync::SyncEngine;
 
@@ -68,8 +68,9 @@ impl AppState {
         let storage = Arc::new(SecureStorage::new(&config.data_dir)?);
 
         // Initialize core secure storage (used by license manager and sync engine)
-        let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir)
-            .map_err(|e| crate::error::AppError::Config(format!("Core storage init failed: {}", e)))?);
+        let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir).map_err(|e| {
+            crate::error::AppError::Config(format!("Core storage init failed: {}", e))
+        })?);
 
         // Initialize license manager
         let license = Arc::new(LicenseManager::new(
@@ -78,10 +79,7 @@ impl AppState {
         )?);
 
         // Initialize sync engine
-        let sync_engine = Arc::new(SyncEngine::new(
-            core_storage,
-            config.sync_config.clone(),
-        )?);
+        let sync_engine = Arc::new(SyncEngine::new(core_storage, config.sync_config.clone())?);
 
         // Detect hardware
         let hardware = Arc::new(HardwareDetector::new());
@@ -127,16 +125,24 @@ impl AppState {
                 // Load the deployment profile
                 let profile_id_str = profile_id.as_deref().unwrap_or("");
                 let lane_id_str = lane_id.as_deref().unwrap_or("");
-                if let Some(profile) = self.storage.get_deployment_profile(profile_id_str).await
-                    .map_err(|e| crate::error::AppError::Config(e.to_string()))? 
+                if let Some(profile) = self
+                    .storage
+                    .get_deployment_profile(profile_id_str)
+                    .await
+                    .map_err(|e| crate::error::AppError::Config(e.to_string()))?
                 {
-                    self.runtime_config.apply_deployment_profile(profile.clone()).await;
+                    self.runtime_config
+                        .apply_deployment_profile(profile.clone())
+                        .await;
                     tracing::info!(profile_id = %profile.id, "Restored deployment profile");
 
                     // Load the lane
-                    let lanes = self.storage.get_lanes_for_profile(profile_id_str).await
+                    let lanes = self
+                        .storage
+                        .get_lanes_for_profile(profile_id_str)
+                        .await
                         .map_err(|e| crate::error::AppError::Config(e.to_string()))?;
-                    
+
                     if let Some(lane) = lanes.into_iter().find(|l| l.id.as_str() == lane_id_str) {
                         self.runtime_config.apply_lane(lane.clone()).await;
                         tracing::info!(lane_id = %lane.id, "Restored lane configuration");

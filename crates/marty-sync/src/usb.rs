@@ -65,7 +65,14 @@ pub struct CertificateEntry {
 /// Import trust anchors from USB package
 pub async fn import_from_usb(
     path: &Path,
-) -> Result<(Vec<TrustAnchor>, Vec<OpenBadgeVerificationMethod>, UsbImportResult), SyncError> {
+) -> Result<
+    (
+        Vec<TrustAnchor>,
+        Vec<OpenBadgeVerificationMethod>,
+        UsbImportResult,
+    ),
+    SyncError,
+> {
     tracing::info!(path = ?path, "Importing trust anchors from USB");
 
     // Check path exists
@@ -200,10 +207,22 @@ fn parse_open_badge_method(
         .and_then(|v| v.as_str())
         .ok_or_else(|| SyncError::Parse("Open Badge method missing id".to_string()))?;
 
-    let controller = value.get("controller").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let issuer = value.get("issuer").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let kid = value.get("kid").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let status = value.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let controller = value
+        .get("controller")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let issuer = value
+        .get("issuer")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let kid = value
+        .get("kid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let not_before = value
         .get("not_before")
         .or_else(|| value.get("notBefore"))
@@ -243,7 +262,7 @@ fn verify_package_signature(
     package: &TrustAnchorPackage,
 ) -> Result<bool, SyncError> {
     use base64::Engine;
-    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
     // ── Load the trusted public key ─────────────────────────────────
     let pub_key_path = std::env::var("USB_SIGNING_PUBLIC_KEY_PATH").ok();
@@ -258,9 +277,7 @@ fn verify_package_signature(
         const EMBEDDED_PUBKEY: &str = env!("USB_SIGNING_PUBLIC_KEY", "Set USB_SIGNING_PUBLIC_KEY at compile time or use USB_SIGNING_PUBLIC_KEY_PATH at runtime");
         base64::engine::general_purpose::STANDARD
             .decode(EMBEDDED_PUBKEY)
-            .map_err(|e| SyncError::UsbImport(format!(
-                "Invalid embedded public key: {e}"
-            )))?
+            .map_err(|e| SyncError::UsbImport(format!("Invalid embedded public key: {e}")))?
     };
 
     let pub_key_array: [u8; 32] = pub_key_bytes

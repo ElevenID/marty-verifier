@@ -129,14 +129,22 @@ async fn no_context_field_returns_error() {
     })
     .to_string();
     let result = verify_open_badge_offline(&json).await;
-    assert!(result.is_err(), "Expected Err for missing @context, got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Expected Err for missing @context, got: {:?}",
+        result
+    );
 }
 
 /// A JSON array is not a badge object → `Err`.
 #[tokio::test]
 async fn json_array_returns_error() {
     let result = verify_open_badge_offline(r#"[{"type":"Assertion"}]"#).await;
-    assert!(result.is_err(), "Expected Err for JSON array, got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Expected Err for JSON array, got: {:?}",
+        result
+    );
 }
 
 // ── §3  OBv2 hosted-badge happy path — raw credential ────────────────────────
@@ -154,10 +162,7 @@ async fn ob2_raw_hosted_assertion_is_valid() {
         result.status,
         VerificationStatus::Valid,
         "Hosted OBv2 assertion should be Valid; errors: {:?}",
-        result
-            .open_badge_details
-            .as_ref()
-            .map(|d| &d.errors)
+        result.open_badge_details.as_ref().map(|d| &d.errors)
     );
 }
 
@@ -199,7 +204,10 @@ async fn ob2_result_shape() {
         !result.verification_id.is_empty(),
         "verification_id must not be empty"
     );
-    assert!(result.open_badge_details.is_some(), "open_badge_details must be Some");
+    assert!(
+        result.open_badge_details.is_some(),
+        "open_badge_details must be Some"
+    );
     assert!(result.emrtd_details.is_none(), "emrtd_details must be None");
     assert!(result.dtc_details.is_none(), "dtc_details must be None");
 }
@@ -219,7 +227,9 @@ async fn ob2_trust_chain_offline_verified() {
 async fn ob2_version_label_is_two_point_zero() {
     let json = ob2_hosted_assertion().to_string();
     let result = verify_open_badge_offline(&json).await.unwrap();
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     assert_eq!(
         details.version, "2.0",
         "OBv2 version label must be '2.0', got: {}",
@@ -260,10 +270,7 @@ async fn ob2_wrong_context_uri_is_unknown_version() {
 #[tokio::test]
 async fn ob2_missing_context_is_unknown_version() {
     let mut assertion = ob2_hosted_assertion();
-    assertion
-        .as_object_mut()
-        .unwrap()
-        .remove("@context");
+    assertion.as_object_mut().unwrap().remove("@context");
     let result = verify_open_badge_offline(&assertion.to_string()).await;
     assert!(
         result.is_err(),
@@ -303,7 +310,9 @@ async fn ob2_missing_type_returns_invalid() {
         .expect("verify_open_badge_offline failed for missing-type assertion");
 
     assert_eq!(result.status, VerificationStatus::Invalid);
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     let has_type_error = details
         .errors
         .iter()
@@ -339,7 +348,9 @@ async fn ob2_badge_without_issuer_is_invalid() {
         .expect("verify_open_badge_offline failed");
 
     assert_eq!(result.status, VerificationStatus::Invalid);
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     let has_issuer_error = details
         .errors
         .iter()
@@ -396,7 +407,9 @@ async fn ob2_offline_warning_present() {
 async fn ob2_hosted_assertion_carries_crypto_warning() {
     let json = ob2_hosted_assertion().to_string();
     let result = verify_open_badge_offline(&json).await.unwrap();
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     let has_hosted_warning = details
         .warnings
         .iter()
@@ -469,7 +482,9 @@ async fn ob3_credential_wrapper_takes_v3_path() {
         "OBv3 without proof must be Invalid"
     );
     assert_eq!(result.credential_type, "open-badge");
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     assert_eq!(details.version, "3.0", "Version label must be '3.0'");
     let has_proof_error = details
         .errors
@@ -495,8 +510,8 @@ async fn ob3_credential_wrapper_takes_v3_path() {
 ///
 /// Returns `(private_jwk_json, public_jwk_json, public_key_bytes)`.
 fn ed25519_jwk_pair() -> (serde_json::Value, serde_json::Value, Vec<u8>) {
-    use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
+    use base64::Engine as _;
     use marty_crypto::keygen::{generate_keypair, KeyType};
 
     let key = generate_keypair(KeyType::Ed25519).expect("Ed25519 key gen");
@@ -558,15 +573,17 @@ fn issue_minimal_ob3_credential(
         }
     });
 
-    let issued_json =
-        issue_ob3_json(&issue_req.to_string()).expect("issue_ob3_json failed");
-    let issued: serde_json::Value =
-        serde_json::from_str(&issued_json).expect("parse issue result");
+    let issued_json = issue_ob3_json(&issue_req.to_string()).expect("issue_ob3_json failed");
+    let issued: serde_json::Value = serde_json::from_str(&issued_json).expect("parse issue result");
     issued["credential"].clone()
 }
 
 /// Build a `JsonWebKey2020` verification-method document for the document store.
-fn json_web_key_vm_doc(vm_id: &str, controller: &str, public_jwk: &serde_json::Value) -> serde_json::Value {
+fn json_web_key_vm_doc(
+    vm_id: &str,
+    controller: &str,
+    public_jwk: &serde_json::Value,
+) -> serde_json::Value {
     serde_json::json!({
         "id": vm_id,
         "type": "JsonWebKey2020",
@@ -622,7 +639,9 @@ async fn ob3_signed_credential_version_label_is_three_point_zero() {
         .await
         .expect("verify_open_badge_offline failed");
 
-    let details = result.open_badge_details.expect("open_badge_details must be Some");
+    let details = result
+        .open_badge_details
+        .expect("open_badge_details must be Some");
     assert_eq!(details.version, "3.0");
 }
 

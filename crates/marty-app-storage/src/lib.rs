@@ -18,7 +18,7 @@ pub use models::*;
 pub use database::{OfflineQueueStatus, VerificationHistoryEntry};
 
 /// Re-export sync types to avoid duplication
-pub use marty_sync::{DeploymentProfile, Lane, NetworkMode, UpdatePolicy, UXConfig};
+pub use marty_sync::{DeploymentProfile, Lane, NetworkMode, UXConfig, UpdatePolicy};
 
 /// Re-export policy types
 pub use marty_verification::policy::PresentationPolicy;

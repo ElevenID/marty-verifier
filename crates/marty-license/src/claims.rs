@@ -111,7 +111,6 @@ pub struct LicenseClaims {
     pub grace_period_days: i64,
 
     // --- Unified licensing fields (Phase 1) ---
-
     /// Subscription plan tier
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_tier: Option<PlanTier>,
@@ -224,7 +223,11 @@ impl LicenseClaims {
             Some(&n) => n,
             None => {
                 // System tier defaults to unlimited, others default to 1
-                if self.plan_tier.as_ref().is_some_and(|t| *t == PlanTier::System) {
+                if self
+                    .plan_tier
+                    .as_ref()
+                    .is_some_and(|t| *t == PlanTier::System)
+                {
                     0
                 } else {
                     1
@@ -265,9 +268,7 @@ mod tests {
                 products::VERIFIER.to_string(),
                 products::DOCUMENT_SIGNER.to_string(),
             ],
-            max_instances: HashMap::from([
-                (products::VERIFIER.to_string(), 10),
-            ]),
+            max_instances: HashMap::from([(products::VERIFIER.to_string(), 10)]),
             registry_access: true,
             api_calls_limit: 0,
         }

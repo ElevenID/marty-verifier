@@ -28,7 +28,7 @@ fn main() {
     // Clone license manager for async setup
     let license_for_setup = app_state.license.clone();
     let config_public_key = app_state.config.blocking_read().license_public_key.clone();
-    
+
     // Clone storage and runtime config for profile sync
     let storage_for_sync = app_state.storage.clone();
     let runtime_config_for_sync = app_state.runtime_config.clone();
@@ -77,14 +77,16 @@ fn main() {
                     }
                 });
             }
-            
+
             // Sync device configuration on startup
             tauri::async_runtime::spawn(async move {
                 tracing::info!("Syncing device configuration on startup");
                 match commands::profile_sync::sync_device_config_impl(
                     storage_for_sync,
                     runtime_config_for_sync,
-                ).await {
+                )
+                .await
+                {
                     Ok(result) => {
                         tracing::info!(
                             profile_id = ?result.profile_id,

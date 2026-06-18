@@ -29,7 +29,9 @@
 //!   §11 DTC with all-empty dates — no temporal error, only signature missing
 //!   §12 trust_chain fields correct for offline DTC
 
-use marty_verifier::commands::verification::{verify_dtc_offline, RevocationStatus, VerificationStatus};
+use marty_verifier::commands::verification::{
+    verify_dtc_offline, RevocationStatus, VerificationStatus,
+};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -92,7 +94,11 @@ fn json_array_returns_error() {
 #[test]
 fn empty_object_returns_ok_invalid() {
     let result = verify_dtc_offline("{}");
-    assert!(result.is_ok(), "Expected Ok for empty object, got: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Expected Ok for empty object, got: {:?}",
+        result
+    );
     let r = result.unwrap();
     assert_eq!(r.credential_type, "dtc");
     assert_eq!(r.status, VerificationStatus::Invalid);
@@ -106,10 +112,16 @@ fn minimal_dtc_result_shape() {
     let result = verify_dtc_offline(&minimal_dtc_json()).expect("verify_dtc_offline failed");
 
     assert_eq!(result.credential_type, "dtc");
-    assert!(!result.verification_id.is_empty(), "verification_id must not be empty");
+    assert!(
+        !result.verification_id.is_empty(),
+        "verification_id must not be empty"
+    );
     assert!(result.dtc_details.is_some(), "dtc_details must be Some");
     assert!(result.emrtd_details.is_none(), "emrtd_details must be None");
-    assert!(result.open_badge_details.is_none(), "open_badge_details must be None");
+    assert!(
+        result.open_badge_details.is_none(),
+        "open_badge_details must be None"
+    );
 }
 
 /// `trust_chain.chain_type` must be "x509" for DTC.
@@ -167,7 +179,10 @@ fn signature_check_present_and_failed_for_unsigned() {
         .find(|c| c.check_name == "Signature")
         .expect("Signature check must be present in dtc_details.checks");
 
-    assert!(!sig_check.passed, "Signature check must be failed for unsigned DTC");
+    assert!(
+        !sig_check.passed,
+        "Signature check must be failed for unsigned DTC"
+    );
 }
 
 /// `dtc_details.errors` must be non-empty for an unsigned DTC.
@@ -241,7 +256,11 @@ fn expired_dtc_valid_until_is_invalid() {
     assert!(
         expired_check.is_some(),
         "Expected a failed TemporalValidation check for expired DTC; checks: {:?}",
-        details.checks.iter().map(|c| &c.check_name).collect::<Vec<_>>()
+        details
+            .checks
+            .iter()
+            .map(|c| &c.check_name)
+            .collect::<Vec<_>>()
     );
 
     let has_expiry_error = details.errors.iter().any(|e| e.contains("expir"));
@@ -317,15 +336,20 @@ fn dtc_type_surfaces_in_details() {
         })
         .to_string();
 
-        let result = verify_dtc_offline(&json)
-            .unwrap_or_else(|e| panic!("verify_dtc_offline failed for dtc_type={}: {}", dtc_type_val, e));
+        let result = verify_dtc_offline(&json).unwrap_or_else(|e| {
+            panic!(
+                "verify_dtc_offline failed for dtc_type={}: {}",
+                dtc_type_val, e
+            )
+        });
         let details = result.dtc_details.expect("dtc_details must be Some");
 
         assert_eq!(
             details.dtc_type,
             Some(dtc_type_val),
             "dtc_details.dtc_type should be Some({}) but got {:?}",
-            dtc_type_val, details.dtc_type
+            dtc_type_val,
+            details.dtc_type
         );
     }
 }
@@ -346,7 +370,9 @@ fn issuing_authority_surfaces_in_issuer_info() {
     .to_string();
 
     let result = verify_dtc_offline(&json).expect("verify_dtc_offline failed");
-    let issuer = result.issuer.expect("result.issuer must be Some when issuing_authority is set");
+    let issuer = result
+        .issuer
+        .expect("result.issuer must be Some when issuing_authority is set");
     assert_eq!(
         issuer.name.as_deref(),
         Some(authority),
@@ -397,7 +423,8 @@ fn wrapped_dtc_data_format_accepted() {
     })
     .to_string();
 
-    let result = verify_dtc_offline(&wrapped).expect("verify_dtc_offline failed for wrapped format");
+    let result =
+        verify_dtc_offline(&wrapped).expect("verify_dtc_offline failed for wrapped format");
     assert_eq!(result.credential_type, "dtc");
     assert!(result.dtc_details.is_some());
 }
@@ -461,7 +488,11 @@ fn type4_without_profile_fails_type_check() {
     assert!(
         type_check.map(|c| !c.passed).unwrap_or(false),
         "Type1Profile check must be present and failed; checks: {:?}",
-        details.checks.iter().map(|c| (&c.check_name, c.passed)).collect::<Vec<_>>()
+        details
+            .checks
+            .iter()
+            .map(|c| (&c.check_name, c.passed))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -488,7 +519,11 @@ fn type5_without_profile_fails_type_check() {
     assert!(
         type_check.map(|c| !c.passed).unwrap_or(false),
         "Type2Profile check must be present and failed; checks: {:?}",
-        details.checks.iter().map(|c| (&c.check_name, c.passed)).collect::<Vec<_>>()
+        details
+            .checks
+            .iter()
+            .map(|c| (&c.check_name, c.passed))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -516,7 +551,11 @@ fn no_dates_no_temporal_error() {
     assert!(
         !has_temporal_failure,
         "No temporal failure expected when dates are absent; checks: {:?}",
-        details.checks.iter().map(|c| (&c.check_name, c.passed)).collect::<Vec<_>>()
+        details
+            .checks
+            .iter()
+            .map(|c| (&c.check_name, c.passed))
+            .collect::<Vec<_>>()
     );
 }
 
