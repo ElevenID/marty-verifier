@@ -7,6 +7,7 @@ mod engine;
 mod error;
 mod policy;
 mod profile_sync;
+mod signing_key;
 mod sources;
 mod usb;
 

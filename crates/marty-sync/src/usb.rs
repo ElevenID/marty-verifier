@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::SyncError;
+use crate::{error::SyncError, signing_key::decode_signing_public_key};
 use marty_secure_storage::{OpenBadgeKeySource, OpenBadgeVerificationMethod, TrustAnchor};
 
 /// USB import result
@@ -261,7 +261,6 @@ fn verify_package_signature(
     raw_json: &str,
     package: &TrustAnchorPackage,
 ) -> Result<bool, SyncError> {
-    use base64::Engine;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
     // ── Load the trusted public key ─────────────────────────────────
@@ -269,15 +268,12 @@ fn verify_package_signature(
     let pub_key_bytes: Vec<u8> = if let Some(ref p) = pub_key_path {
         let raw = std::fs::read_to_string(p)
             .map_err(|e| SyncError::UsbImport(format!("Cannot read public key {p}: {e}")))?;
-        base64::engine::general_purpose::STANDARD
-            .decode(raw.trim())
-            .map_err(|e| SyncError::UsbImport(format!("Invalid base64 in public key: {e}")))?
+        decode_signing_public_key(&raw)?
     } else {
         // Fallback: built-in public key
-        const EMBEDDED_PUBKEY: &str = env!("USB_SIGNING_PUBLIC_KEY", "Set USB_SIGNING_PUBLIC_KEY at compile time or use USB_SIGNING_PUBLIC_KEY_PATH at runtime");
-        base64::engine::general_purpose::STANDARD
-            .decode(EMBEDDED_PUBKEY)
-            .map_err(|e| SyncError::UsbImport(format!("Invalid embedded public key: {e}")))?
+        let embedded_pubkey = option_env!("USB_SIGNING_PUBLIC_KEY")
+            .unwrap_or(include_str!("../../../marty-verifier.key.pub"));
+        decode_signing_public_key(embedded_pubkey)?
     };
 
     let pub_key_array: [u8; 32] = pub_key_bytes
@@ -287,6 +283,7 @@ fn verify_package_signature(
         .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 public key: {e}")))?;
 
     // ── Decode the signature from the package ───────────────────────
+    use base64::Engine;
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&package.signature)
         .map_err(|e| SyncError::UsbImport(format!("Invalid signature base64: {e}")))?;
