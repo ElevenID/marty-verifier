@@ -30,15 +30,11 @@ use marty_verifier::commands::verification::{verify_oid4vp_offline, Verification
 const VERIFIER_ID: &str = "https://verifier.example.com";
 const NONCE: &str = "n-0S6_WzA2Mj";
 
-const STATIC_VP_TOKEN: &str = include_str!(
-    "../../../marty-integration-tests/tests/integration/fixtures/conformance/vp_token_jwt.txt"
-);
-const PRESENTATION_DEFINITION_JSON: &str = include_str!(
-    "../../../marty-integration-tests/tests/integration/fixtures/conformance/presentation_definition.json"
-);
-const PRESENTATION_SUBMISSION_JSON: &str = include_str!(
-    "../../../marty-integration-tests/tests/integration/fixtures/conformance/presentation_submission.json"
-);
+const STATIC_VP_TOKEN: &str = include_str!("fixtures/conformance/vp_token_jwt.txt");
+const PRESENTATION_DEFINITION_JSON: &str =
+    include_str!("fixtures/conformance/presentation_definition.json");
+const PRESENTATION_SUBMISSION_JSON: &str =
+    include_str!("fixtures/conformance/presentation_submission.json");
 
 /// Build a `credential_data` JSON string in the format `verify_credential` accepts.
 fn credential_data(vp_token: &str, nonce: &str) -> String {
