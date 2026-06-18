@@ -67,9 +67,9 @@ pub async fn verify_face_match(
 
     #[cfg(not(feature = "biometrics"))]
     {
-        return Err(AppError::FeatureNotLicensed(
+        Err(AppError::FeatureNotLicensed(
             "biometrics feature not enabled".to_string(),
-        ));
+        ))
     }
 
     #[cfg(feature = "biometrics")]
