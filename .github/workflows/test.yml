@@ -13,15 +13,15 @@ jobs:
   test-rust:
     name: Rust Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./marty-verifier
     
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Git auth for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       
@@ -33,7 +33,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            marty-verifier/target/
+            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./marty-verifier/ui
+        working-directory: ui
     
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +75,7 @@ jobs:
           node-version: '20'
       
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 8
       
@@ -103,7 +103,7 @@ jobs:
         if: always()
         with:
           name: vitest-results
-          path: marty-verifier/ui/test-results/vitest-results.json
+          path: ui/test-results/vitest-results.json
           retention-days: 7
   
   test-frontend-e2e:
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./marty-verifier/ui
+        working-directory: ui
     
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +122,7 @@ jobs:
           node-version: '20'
       
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 8
       
@@ -156,8 +156,8 @@ jobs:
         with:
           name: playwright-results
           path: |
-            marty-verifier/ui/test-results/playwright-results.json
-            marty-verifier/ui/test-results/playwright-report/
+            ui/test-results/playwright-results.json
+            ui/test-results/playwright-report/
           retention-days: 7
       
       - name: Upload screenshots on failure
@@ -165,5 +165,5 @@ jobs:
         if: failure()
         with:
           name: playwright-screenshots
-          path: marty-verifier/ui/test-results/artifacts/
+          path: ui/test-results/artifacts/
           retention-days: 7

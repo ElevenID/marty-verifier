@@ -147,7 +147,7 @@ jobs:
 
       - name: Generate SBOM
         run: |
-          cargo cyclonedx --format json --output-cdx marty-verifier-sbom.json
+          cargo cyclonedx --format json --override-filename marty-verifier-sbom
 
       - name: Download release assets
         uses: robinraju/release-downloader@v1

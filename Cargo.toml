@@ -88,13 +88,3 @@ codegen-units = 1
 panic = "abort"
 strip = true
 opt-level = "z"
-
-# Patch marty-core git deps to local checkout during development.
-# Remove this section once changes are pushed to the main branch.
-[patch."https://github.com/ElevenID/marty-core.git"]
-marty-biometrics = { path = "../marty-core/marty-biometrics" }
-marty-crypto = { path = "../marty-core/marty-crypto" }
-marty-verification = { path = "../marty-core/marty-verification" }
-marty-secure-storage = { path = "../marty-core/marty-secure-storage" }
-marty-types = { path = "../marty-core/marty-types" }
-marty-oid4vci = { path = "../marty-core/marty-oid4vci" }
