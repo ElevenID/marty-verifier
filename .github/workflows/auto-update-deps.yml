@@ -23,6 +23,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure Git auth for private repos
+        uses: ./.github/actions/configure-private-git-auth
+        with:
+          token: ${{ secrets.MARTY_CORE_TOKEN }}
+
       - name: Get marty-core version
         id: version
         run: |

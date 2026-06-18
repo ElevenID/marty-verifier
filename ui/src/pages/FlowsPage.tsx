@@ -23,7 +23,6 @@ import {
   ListItem,
   ListItemText,
   Stack,
-  TextField,
   Typography,
   Alert,
   Tab,
@@ -36,7 +35,7 @@ import {
   PlayArrow as PlayIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { useFlowStore, Flow, FlowExecution } from '@/store/flow-store';
+import { useFlowStore, Flow } from '@/store/flow-store';
 import { FlowForm } from '@/components/FlowForm';
 import { FlowExecutionList } from '@/components/FlowExecutionList';
 
@@ -49,7 +48,6 @@ export const FlowsPage: React.FC = () => {
     executions,
     executionsLoading,
     loadFlows,
-    loadFlow,
     loadExecutions,
     deleteFlow,
     setSelectedFlow,
@@ -201,6 +199,7 @@ export const FlowsPage: React.FC = () => {
                           <IconButton
                             edge="end"
                             size="small"
+                            aria-label={`Start execution for ${flow.name}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleStartExecution(flow);
@@ -212,6 +211,7 @@ export const FlowsPage: React.FC = () => {
                           <IconButton
                             edge="end"
                             size="small"
+                            aria-label={`Edit ${flow.name}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleEditFlow(flow);
@@ -222,6 +222,7 @@ export const FlowsPage: React.FC = () => {
                           <IconButton
                             edge="end"
                             size="small"
+                            aria-label={`Delete ${flow.name}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteFlow(flow);
@@ -233,6 +234,8 @@ export const FlowsPage: React.FC = () => {
                       }
                     >
                       <ListItemText
+                        primaryTypographyProps={{ component: 'div' }}
+                        secondaryTypographyProps={{ component: 'div' }}
                         primary={
                           <Stack direction="row" spacing={1} alignItems="center">
                             <Typography variant="body1">{flow.name}</Typography>
@@ -369,7 +372,6 @@ export const FlowsPage: React.FC = () => {
                   <FlowExecutionList
                     executions={executions}
                     loading={executionsLoading}
-                    flowId={selectedFlow.id}
                   />
                 )}
               </CardContent>

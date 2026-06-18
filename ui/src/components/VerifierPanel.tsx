@@ -187,6 +187,10 @@ export default function VerifierPanel({
     retainAuditClip,
     auditClipTtlSeconds,
     sessionId,
+    performFaceMatch,
+    referenceImage,
+    probeImage,
+    faceThreshold,
   ]);
 
   const allStepsCompleted = challenge ? activeStepIndex >= challenge.steps.length : false;
@@ -248,6 +252,10 @@ export default function VerifierPanel({
         retain_audit_clip: retainAuditClip,
         audit_clip_ttl_seconds: auditClipTtlSeconds,
         session_id: sessionId,
+        perform_face_match: performFaceMatch,
+        reference_image: performFaceMatch ? referenceImage : undefined,
+        probe_image: performFaceMatch ? probeImage : undefined,
+        face_threshold: performFaceMatch ? faceThreshold : undefined,
         policy: {
           required_claims: ['given_name', 'family_name'],
           allow_expired_grace: false,

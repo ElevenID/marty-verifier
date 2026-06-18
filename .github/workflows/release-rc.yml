@@ -39,6 +39,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure Git auth for private repos
+        uses: ./.github/actions/configure-private-git-auth
+        with:
+          token: ${{ secrets.MARTY_CORE_TOKEN }}
+
       - name: Get version from tag
         id: version
         shell: bash
@@ -125,6 +130,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Configure Git auth for private repos
+        uses: ./.github/actions/configure-private-git-auth
+        with:
+          token: ${{ secrets.MARTY_CORE_TOKEN }}
 
       - name: Get version from tag
         id: version

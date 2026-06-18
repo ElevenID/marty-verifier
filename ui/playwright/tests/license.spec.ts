@@ -110,7 +110,7 @@ test.describe('License Installation', () => {
     await expect(page.getByText(/please enter a license key/i)).toBeVisible();
   });
 
-  test('should validate and install license', async ({ page, mockTauri }) => {
+  test('should validate and install license', async ({ page }) => {
     // Enter license
     const validJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.test.signature';
     await page.getByLabel(/license key/i).fill(validJwt);

@@ -1,0 +1,28 @@
+name: Configure private Git authentication
+description: Configure Cargo to fetch private ElevenID Git dependencies.
+
+inputs:
+  token:
+    description: GitHub token with read access to ElevenID private dependencies.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Git and Cargo
+      shell: bash
+      env:
+        MARTY_CORE_TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$MARTY_CORE_TOKEN" ]; then
+          echo "::error::Set MARTY_CORE_TOKEN to a token with read access to ElevenID/marty-core."
+          exit 1
+        fi
+
+        git config --global url."https://x-access-token:${MARTY_CORE_TOKEN}@github.com/ElevenID/".insteadOf "https://github.com/ElevenID/"
+
+        mkdir -p "$HOME/.cargo"
+        cat > "$HOME/.cargo/config.toml" <<'EOF'
+        [net]
+        git-fetch-with-cli = true
+        EOF

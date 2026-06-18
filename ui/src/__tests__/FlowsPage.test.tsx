@@ -141,8 +141,7 @@ describe('FlowsPage', () => {
       </BrowserRouter>
     );
 
-    // Click on first flow
-    const flowItem = screen.getByText('Pre-Boarding Flow').closest('li');
+    const flowItem = screen.getByText('Pre-Boarding Flow').closest('[role="button"]');
     expect(flowItem).not.toBeNull();
 
     await user.click(flowItem!);
@@ -162,10 +161,8 @@ describe('FlowsPage', () => {
     const createButton = screen.getByRole('button', { name: /create flow/i });
     await user.click(createButton);
 
-    // Check that dialog opened
-    await waitFor(() => {
-      expect(screen.getByText('Create Flow')).toBeInTheDocument();
-    });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Create Flow' })).toBeInTheDocument();
   });
 
   it('should show confirmation dialog before deleting flow', async () => {
@@ -177,17 +174,11 @@ describe('FlowsPage', () => {
       </BrowserRouter>
     );
 
-    // Find and click delete button for first flow
-    const flowItem = screen.getByText('Pre-Boarding Flow').closest('li');
-    const deleteButton = within(flowItem!).getByRole('button', { name: '' }); // Delete icon button
+    const deleteButton = screen.getByRole('button', { name: /delete pre-boarding flow/i });
+    await user.click(deleteButton);
 
-    // This would need more specific selector in practice
-    // For now, we test the dialog appears
-    // await user.click(deleteButton);
-
-    // await waitFor(() => {
-    //   expect(screen.getByText(/confirm delete/i)).toBeInTheDocument();
-    // });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Confirm Delete' })).toBeInTheDocument();
   });
 
   it('should start execution when play button clicked', async () => {
@@ -199,11 +190,12 @@ describe('FlowsPage', () => {
       </BrowserRouter>
     );
 
-    // This would click the play button icon
-    // In practice, would need data-testid or better selector
-    // await user.click(playButton);
+    const playButton = screen.getByRole('button', {
+      name: /start execution for pre-boarding flow/i,
+    });
+    await user.click(playButton);
 
-    // expect(mockStartExecution).toHaveBeenCalledWith('flow-1');
+    expect(mockStartExecution).toHaveBeenCalledWith('flow-1');
   });
 
   it('should display error message when loading fails', async () => {
@@ -279,7 +271,7 @@ describe('FlowsPage', () => {
     );
 
     // Check flow details are displayed
-    expect(screen.getByText('Pre-Boarding Flow')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Pre-Boarding Flow' })).toBeInTheDocument();
     expect(screen.getByText('Pre-boarding clearance flow')).toBeInTheDocument();
     expect(screen.getByText('manual')).toBeInTheDocument();
   });

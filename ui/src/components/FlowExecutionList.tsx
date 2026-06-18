@@ -36,13 +36,11 @@ import { useState } from 'react';
 interface FlowExecutionListProps {
   executions: FlowExecution[];
   loading: boolean;
-  flowId: string;
 }
 
 export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
   executions,
   loading,
-  flowId,
 }) => {
   const [selectedExecution, setSelectedExecution] = useState<FlowExecution | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -66,8 +64,8 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
     return colors[status] || 'default';
   };
 
-  const getStatusIcon = (status: FlowExecution['status']) => {
-    const icons: Record<FlowExecution['status'], React.ReactNode> = {
+  const getStatusIcon = (status: FlowExecution['status']): React.ReactElement => {
+    const icons: Record<FlowExecution['status'], React.ReactElement> = {
       created: <PendingIcon fontSize="small" />,
       running: <CircularProgress size={16} />,
       awaiting_approval: <PendingIcon fontSize="small" />,

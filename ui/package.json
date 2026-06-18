@@ -10,6 +10,7 @@
     "obfuscate": "javascript-obfuscator dist/assets/*.js --output dist/assets/",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "type-check": "tsc --noEmit",
     "tauri": "tauri",
     "test": "vitest",
     "test:unit": "vitest run",

@@ -88,7 +88,7 @@ test.describe('Settings Modification', () => {
     await expect(localOnlySwitch).toBeChecked();
   });
 
-  test('should save settings successfully', async ({ page, mockTauri }) => {
+  test('should save settings successfully', async ({ page }) => {
     // Make a change
     await page.getByLabel(/kiosk mode/i).click();
     

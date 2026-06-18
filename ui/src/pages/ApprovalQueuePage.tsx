@@ -18,7 +18,6 @@ import {
   DialogContent,
   DialogActions,
   Grid,
-  IconButton,
   Stack,
   TextField,
   Typography,
@@ -27,7 +26,6 @@ import {
 import {
   CheckCircle as ApproveIcon,
   Cancel as RejectIcon,
-  Visibility as ViewIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { useFlowStore, FlowExecution } from '@/store/flow-store';
