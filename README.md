@@ -334,4 +334,4 @@ Users can disable auto-updates in Settings.
 
 ## License
 
-Proprietary - Requires valid license for operation.
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).

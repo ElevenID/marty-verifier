@@ -12,7 +12,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Marty Team"]
-license = "Proprietary"
+license = "AGPL-3.0-only"
 repository = "https://github.com/ElevenID/marty-verifier"
 
 [workspace.dependencies]

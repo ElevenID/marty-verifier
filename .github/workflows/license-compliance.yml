@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: License Compliance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM UTC
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'LICENSE'
+      - 'README.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'LICENSE'
+      - 'README.md'
+
+jobs:
+  metadata-consistency:
+    name: License Metadata Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check license metadata consistency
+        run: |
+          set -euo pipefail
+          FAIL=0
+
+          # Root Cargo.toml must declare AGPL-3.0-only
+          CARGO_LICENSE=$(grep '^license' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/".*//')
+          if [ -z "$CARGO_LICENSE" ]; then
+            echo "FAIL: Cargo.toml is missing a license field"
+            FAIL=1
+          elif [ "$CARGO_LICENSE" != "AGPL-3.0-only" ]; then
+            echo "FAIL: Expected AGPL-3.0-only, got $CARGO_LICENSE"
+            FAIL=1
+          else
+            echo "OK: Cargo.toml license = $CARGO_LICENSE"
+          fi
+
+          # LICENSE file must exist
+          if [ ! -f "LICENSE" ]; then
+            echo "FAIL: LICENSE file is missing"
+            FAIL=1
+          else
+            echo "OK: LICENSE present"
+          fi
+
+          # README.md must contain a License section
+          if ! grep -q "^## License" README.md; then
+            echo "FAIL: README.md is missing a ## License section"
+            FAIL=1
+          else
+            echo "OK: README.md has License section"
+          fi
+
+          exit $FAIL
+
+  dependency-license-inventory:
+    name: Dependency License Inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-license
+        run: cargo install cargo-license --locked
+
+      - name: Generate dependency license inventory
+        run: cargo license --json > dependency-licenses.json
+
+      - name: Upload license inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-licenses
+          path: dependency-licenses.json
+
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx --format json --output-cdx sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
