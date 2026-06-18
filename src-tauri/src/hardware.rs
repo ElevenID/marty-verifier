@@ -74,24 +74,14 @@ impl HardwareDetector {
 
     /// Detect available hardware capabilities
     fn detect_capabilities() -> HardwareCapabilities {
-        let mut caps = HardwareCapabilities::default();
-
-        // Detect NFC reader
-        caps.has_nfc = Self::detect_nfc();
-
-        // Detect BLE
-        caps.has_ble = Self::detect_ble();
-
-        // Detect TPM
-        caps.has_tpm = Self::detect_tpm();
-
-        // Detect biometric sensor
-        caps.has_biometric_sensor = Self::detect_biometric();
-
-        // Detect USB scanner
-        caps.has_usb_scanner = Self::detect_usb_scanner();
-
-        caps
+        HardwareCapabilities {
+            has_nfc: Self::detect_nfc(),
+            has_ble: Self::detect_ble(),
+            has_tpm: Self::detect_tpm(),
+            has_biometric_sensor: Self::detect_biometric(),
+            has_usb_scanner: Self::detect_usb_scanner(),
+            ..Default::default()
+        }
     }
 
     /// Detect NFC reader (ISO 14443)

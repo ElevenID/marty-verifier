@@ -584,12 +584,12 @@ async fn run_face_match(request: &VerifyRequest) -> AppResult<FaceMatchPayload> 
             .await
             .map_err(|e| AppError::Verification(e.to_string()))?;
 
-        return Ok(FaceMatchPayload {
+        Ok(FaceMatchPayload {
             verified: result.verified,
             similarity: result.similarity,
             threshold: result.threshold,
             provider: result.provider,
-        });
+        })
     }
 
     #[cfg(not(feature = "biometrics"))]
@@ -867,7 +867,7 @@ pub async fn verify_credential(
             Err(e) => {
                 result
                     .warnings
-                    .push(format!("Face match unavailable: {}", e.to_string()));
+                    .push(format!("Face match unavailable: {}", e));
             }
         }
     }
@@ -1438,6 +1438,7 @@ fn open_badge_version_label(version: OpenBadgesVersion) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_open_badge_result(
     request: &VerifyRequest,
     version: OpenBadgesVersion,
@@ -2493,7 +2494,7 @@ async fn verify_emrtd_payload(
     }
 
     // Build CSCA registry from secure storage
-    let registry = build_csca_registry(&state).await?;
+    let registry = build_csca_registry(state).await?;
 
     // NFC path: route through reader abstraction to exercise chip I/O flow.
     let verification = if request.use_nfc {

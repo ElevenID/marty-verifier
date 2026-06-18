@@ -92,14 +92,14 @@ pub async fn verify_face_match(
             .await
             .map_err(|e| AppError::Verification(e.to_string()))?;
 
-        return Ok(FaceMatchResponse {
+        Ok(FaceMatchResponse {
             verified: result.verified,
             similarity: result.similarity,
             threshold: result.threshold,
             provider: result.provider,
             reference_quality: result.reference_quality,
             probe_quality: result.probe_quality,
-        });
+        })
     }
 }
 

@@ -179,11 +179,9 @@ fn build_update_endpoint(base_url: &str, channel: &str) -> AppResult<Url> {
 /// Check if device is eligible for update based on deployment profile rollout policy
 fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> bool {
     // Get runtime config snapshot
-    let snapshot = match tokio::task::block_in_place(|| {
+    let snapshot = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(state.runtime_config.snapshot())
-    }) {
-        snapshot => snapshot,
-    };
+    });
 
     // Get device ID
     let device_id = match snapshot.device_id {

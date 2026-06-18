@@ -162,16 +162,18 @@ pub struct OpenBadgeTrustConfig {
 ///   - Development and testing environments
 ///   - Demos and proof-of-concept scenarios
 ///   - Initial onboarding when building a trust list
+///
 ///   **Never use FailOpen in production** as it allows any issuer's credentials to be
 ///   accepted without trust verification.
 ///
 /// - **Selective**: Allows a hybrid approach where certain issuers (domains, DIDs) are
 ///   explicitly trusted while others are rejected. Useful for organizations with
 ///   multiple trusted partners.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenBadgeTrustPolicy {
     /// Reject credentials from unknown/untrusted keys (most secure, recommended for production)
+    #[default]
     FailClosed,
     /// Allow credentials from unknown keys (insecure, for development only)
     FailOpen,
@@ -191,11 +193,12 @@ pub struct LivenessRetentionConfig {
 }
 
 /// PAD provider selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PadProviderType {
     SelfHosted,
     Commercial,
+    #[default]
     Mock,
 }
 
@@ -278,12 +281,6 @@ impl Default for OpenBadgeTrustConfig {
     }
 }
 
-impl Default for OpenBadgeTrustPolicy {
-    fn default() -> Self {
-        OpenBadgeTrustPolicy::FailClosed
-    }
-}
-
 impl Default for LivenessRetentionConfig {
     fn default() -> Self {
         Self {
@@ -291,12 +288,6 @@ impl Default for LivenessRetentionConfig {
             max_audit_clip_ttl_seconds: 120,
             encrypt_temp_media: true,
         }
-    }
-}
-
-impl Default for PadProviderType {
-    fn default() -> Self {
-        PadProviderType::Mock
     }
 }
 

@@ -48,7 +48,7 @@ pub async fn sync_device_config_impl(
     let device_config = provider
         .fetch_device_config(&device_id)
         .await
-        .map_err(|e| crate::error::AppError::Sync(e))?;
+        .map_err(crate::error::AppError::Sync)?;
 
     // Store deployment profile if present
     let profile_id = if let Some(profile) = &device_config.deployment_profile {
@@ -99,10 +99,7 @@ pub async fn sync_device_config_impl(
 #[tauri::command]
 pub async fn get_runtime_config(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
     let snapshot = state.runtime_config.snapshot().await;
-    Ok(
-        serde_json::to_value(snapshot)
-            .map_err(|e| crate::error::AppError::Config(e.to_string()))?,
-    )
+    serde_json::to_value(snapshot).map_err(|e| crate::error::AppError::Config(e.to_string()))
 }
 
 #[derive(Debug, serde::Serialize)]
