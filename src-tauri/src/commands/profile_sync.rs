@@ -14,6 +14,7 @@ pub async fn sync_device_config(
     device_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<DeviceConfigSyncResult> {
+    state.runtime_config.set_device_id(device_id).await;
     sync_device_config_impl(state.storage.clone(), state.runtime_config.clone()).await
 }
 

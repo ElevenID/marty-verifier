@@ -10,7 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 #[cfg(feature = "biometrics")]
-use marty_biometrics::{BiometricProvider, FaceVerificationRequest, FaceVerifier};
+use marty_biometrics::{FaceVerificationRequest, FaceVerifier};
 
 #[derive(Debug, Deserialize)]
 pub struct FaceMatchRequest {

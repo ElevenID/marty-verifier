@@ -255,6 +255,7 @@ mod tests {
             offline_cache_ttl_hours: 48,
             biometric_required: true,
             audit_all_events: true,
+            default_presentation_policy_id: None,
         };
 
         config.apply_deployment_profile(profile).await;

@@ -155,6 +155,9 @@ mod tests {
             verifications_total: 0,
             verifications_remaining: None,
             update_channels: Vec::new(),
+            plan_tier: None,
+            entitled_products: Vec::new(),
+            registry_access: false,
         };
 
         assert!(!status.valid);
@@ -177,6 +180,9 @@ mod tests {
             verifications_total: 100,
             verifications_remaining: Some(400),
             update_channels: vec!["beta".to_string()],
+            plan_tier: Some("institution".to_string()),
+            entitled_products: vec!["verifier".to_string()],
+            registry_access: false,
         };
 
         assert!(status.valid);

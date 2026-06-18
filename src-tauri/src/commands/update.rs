@@ -253,6 +253,11 @@ mod tests {
             org_name: None,
             update_channels: channels.into_iter().map(|c| c.to_string()).collect(),
             grace_period_days: 30,
+            plan_tier: None,
+            entitled_products: vec![marty_license::products::VERIFIER.to_string()],
+            max_instances: std::collections::HashMap::new(),
+            registry_access: false,
+            api_calls_limit: 0,
         }
     }
 
