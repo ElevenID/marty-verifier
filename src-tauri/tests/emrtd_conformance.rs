@@ -155,7 +155,7 @@ fn garbled_der_returns_error() {
 #[test]
 fn truncated_der_returns_error() {
     // A valid-looking DER prefix — SEQUENCE tag + long-form length prefix, but truncated.
-    let truncated = BASE64.encode(&[0x30, 0x82, 0x01, 0xFF, 0x30, 0x0A]);
+    let truncated = BASE64.encode([0x30, 0x82, 0x01, 0xFF, 0x30, 0x0A]);
     let payload = emrtd_payload(&truncated, &[], None);
     let result = verify_emrtd_offline(&payload);
     assert!(result.is_err(), "Expected Err for truncated DER");
@@ -253,13 +253,12 @@ fn tampered_dg1_still_returns_ok_result() {
     let result = verify_emrtd_offline(&payload);
     // The function must not panic; it returns Ok with a non-Valid status
     // or returns Err due to hash mismatch — either is acceptable.
-    match result {
-        Ok(r) => assert_ne!(
+    if let Ok(r) = result {
+        assert_ne!(
             r.status,
             VerificationStatus::Valid,
             "Tampered DG1 should not yield Valid status"
-        ),
-        Err(_) => {} // Error is also acceptable for tampered content
+        );
     }
 }
 
@@ -390,9 +389,8 @@ fn sod_signature_fails_after_mutation() {
     // After mutation the verification might return Err (parse failure) or
     // Ok(false) depending on where the bit landed.  It must not return Ok(true).
     let result = verify_sod_signature(&sod_der);
-    match result {
-        Ok(valid) => assert!(!valid, "Mutated SOD signature must not verify"),
-        Err(_) => {} // Err is also acceptable — the DER is corrupted
+    if let Ok(valid) = result {
+        assert!(!valid, "Mutated SOD signature must not verify");
     }
 }
 
