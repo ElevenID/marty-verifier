@@ -1,22 +1,15 @@
 import { create } from 'zustand';
 import {
-  LicenseStatus,
   SyncStatus,
   HardwareTier,
   HardwareCapabilities,
   VerificationResult,
-  getLicenseStatus,
   getSyncStatus,
   getHardwareTier,
   detectHardware,
 } from '@/services/tauri-api';
 
 interface AppState {
-  // License state
-  license: LicenseStatus | null;
-  licenseLoading: boolean;
-  licenseError: string | null;
-
   // Sync state
   sync: SyncStatus | null;
   syncLoading: boolean;
@@ -34,7 +27,6 @@ interface AppState {
   verificationInProgress: boolean;
 
   // Actions
-  loadLicenseStatus: () => Promise<void>;
   loadSyncStatus: () => Promise<void>;
   loadHardwareInfo: () => Promise<void>;
   setOnlineStatus: (online: boolean) => void;
@@ -45,10 +37,6 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Initial state
-  license: null,
-  licenseLoading: false,
-  licenseError: null,
-
   sync: null,
   syncLoading: false,
   syncError: null,
@@ -62,19 +50,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   verificationInProgress: false,
 
   // Actions
-  loadLicenseStatus: async () => {
-    set({ licenseLoading: true, licenseError: null });
-    try {
-      const license = await getLicenseStatus();
-      set({ license, licenseLoading: false });
-    } catch (error) {
-      set({
-        licenseError: error instanceof Error ? error.message : 'Failed to load license',
-        licenseLoading: false,
-      });
-    }
-  },
-
   loadSyncStatus: async () => {
     set({ syncLoading: true, syncError: null });
     try {
@@ -113,9 +88,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   initialize: async () => {
-    const { loadLicenseStatus, loadSyncStatus, loadHardwareInfo } = get();
+    const { loadSyncStatus, loadHardwareInfo } = get();
     await Promise.all([
-      loadLicenseStatus(),
       loadSyncStatus(),
       loadHardwareInfo(),
     ]);

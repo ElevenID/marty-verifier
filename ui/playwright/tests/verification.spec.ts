@@ -3,7 +3,7 @@
  * Tests the main verification workflow including credential type selection,
  * QR scanning, and result display.
  */
-import { test, expect, defaultLicenseStatus } from '../fixtures';
+import { test, expect } from '../fixtures';
 
 test.describe('Verification Page', () => {
   test.beforeEach(async ({ page, mockTauri }) => {
@@ -35,23 +35,6 @@ test.describe('Verification Page', () => {
     await expect(mdlButton).toHaveAttribute('aria-pressed', 'false');
   });
 
-  test('should disable unlicensed credential types', async ({ page, mockTauri }) => {
-    // Mock license with only mdl feature
-    await mockTauri({
-      get_license_status: {
-        ...defaultLicenseStatus,
-        features: ['mdl'],
-      },
-    });
-    await page.reload();
-
-    // MDL should be enabled
-    await expect(page.getByRole('button', { name: /mdl/i })).toBeEnabled();
-    
-    // eMRTD should be disabled
-    await expect(page.getByRole('button', { name: /emrtd/i })).toBeDisabled();
-  });
-
   test('should show scan button when ready', async ({ page }) => {
     await expect(page.getByTestId('scan-button')).toBeVisible();
     await expect(page.getByTestId('scan-button')).toHaveText(/scan/i);
@@ -60,18 +43,6 @@ test.describe('Verification Page', () => {
   test('should display hardware tier information', async ({ page }) => {
     await expect(page.getByText(/hardware tier/i)).toBeVisible();
     await expect(page.getByText(/simple/i)).toBeVisible();
-  });
-
-  test('should show license warning when license is near expiry', async ({ page, mockTauri }) => {
-    await mockTauri({
-      get_license_status: {
-        ...defaultLicenseStatus,
-        days_until_expiry: 10,
-      },
-    });
-    await page.reload();
-
-    await expect(page.getByTestId('license-warning-banner')).toBeVisible();
   });
 
   test('should show offline banner when disconnected', async ({ page, mockTauri }) => {

@@ -5,9 +5,6 @@ use thiserror::Error;
 /// Main application error type
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("License error: {0}")]
-    License(#[from] marty_license::LicenseError),
-
     #[error("Storage error: {0}")]
     Storage(#[from] marty_app_storage::StorageError),
 
@@ -27,8 +24,11 @@ pub enum AppError {
     #[error("Update error: {0}")]
     Update(String),
 
-    #[error("Feature not licensed: {0}")]
-    FeatureNotLicensed(String),
+    #[error("Capability not available: {capability}{reason_suffix}", reason_suffix = reason.as_ref().map(|value| format!(": {value}")).unwrap_or_default())]
+    EntitlementDenied {
+        capability: String,
+        reason: Option<String>,
+    },
 
     #[error("Hardware tier insufficient: required {required}, available {available}")]
     InsufficientHardware { required: String, available: String },

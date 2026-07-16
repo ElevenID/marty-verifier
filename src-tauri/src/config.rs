@@ -17,9 +17,6 @@ pub struct AppConfig {
     /// Data directory for secure storage
     pub data_dir: PathBuf,
 
-    /// Ed25519 public key for license validation (PEM encoded)
-    pub license_public_key: String,
-
     /// Liveness retention and media handling
     #[serde(default)]
     pub liveness_retention: LivenessRetentionConfig,
@@ -219,7 +216,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
-            license_public_key: String::new(),
             liveness_retention: LivenessRetentionConfig::default(),
             pad_config: PadProviderConfig::default(),
             sync_config: SyncConfig::default(),

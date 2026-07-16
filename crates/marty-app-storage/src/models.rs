@@ -100,18 +100,6 @@ pub struct AuditLogEntry {
     pub created_at: DateTime<Utc>,
 }
 
-/// License state
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LicenseState {
-    pub license_jwt: Option<String>,
-    pub validated_at: Option<DateTime<Utc>>,
-    pub hardware_fingerprint: Option<String>,
-    pub verifications_today: i32,
-    pub verifications_date: Option<String>,
-    pub verifications_total: i64,
-    pub grace_period_started: Option<DateTime<Utc>>,
-}
-
 /// Sync state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncState {

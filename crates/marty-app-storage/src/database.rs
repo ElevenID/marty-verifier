@@ -465,72 +465,6 @@ impl SecureStorage {
         Ok(count)
     }
 
-    /// Get license state
-    pub async fn get_license_state(&self) -> Result<Option<LicenseState>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let result = conn.query_row(
-            r#"
-            SELECT license_jwt, validated_at, hardware_fingerprint, 
-                   verifications_today, verifications_date, verifications_total, grace_period_started
-            FROM license_state WHERE id = 'current'
-            "#,
-            [],
-            |row| {
-                Ok(LicenseState {
-                    license_jwt: row.get(0)?,
-                    validated_at: row.get::<_, Option<String>>(1)?.and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    }),
-                    hardware_fingerprint: row.get(2)?,
-                    verifications_today: row.get(3)?,
-                    verifications_date: row.get(4)?,
-                    verifications_total: row.get(5)?,
-                    grace_period_started: row.get::<_, Option<String>>(6)?.and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    }),
-                })
-            },
-        );
-
-        match result {
-            Ok(state) => Ok(Some(state)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Update license state
-    pub async fn update_license_state(&self, state: &LicenseState) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
-
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO license_state 
-                (id, license_jwt, validated_at, hardware_fingerprint, 
-                 verifications_today, verifications_date, verifications_total, grace_period_started, updated_at)
-            VALUES ('current', ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![
-                state.license_jwt,
-                state.validated_at.map(|dt| dt.to_rfc3339()),
-                state.hardware_fingerprint,
-                state.verifications_today,
-                state.verifications_date,
-                state.verifications_total,
-                state.grace_period_started.map(|dt| dt.to_rfc3339()),
-                now,
-            ],
-        )?;
-
-        Ok(())
-    }
-
     /// Get sync state
     pub async fn get_sync_state(&self) -> Result<Option<SyncState>, StorageError> {
         let conn = self.conn.lock().await;
@@ -1089,24 +1023,6 @@ fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {
 }
 
 fn migrate_schema(conn: &Connection, current_version: i32) -> Result<(), StorageError> {
-    if current_version < 2 && !column_exists(conn, "license_state", "verifications_total")? {
-        conn.execute(
-            "ALTER TABLE license_state ADD COLUMN verifications_total INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-
+    let _ = (conn, current_version);
     Ok(())
-}
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, StorageError> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
-        if name == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

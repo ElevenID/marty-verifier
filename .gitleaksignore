@@ -1,0 +1,5 @@
+﻿# Exact reviewed false positives from the pre-publication full-history audit.
+# Each entry binds one finding to its commit, path, rule, and line; new findings still fail.
+
+3358a6afd0f811081a2ed30beb69bc58458fed6e:src-tauri/tests/fixtures/conformance/vp_token_jwt.txt:generic-api-key:1
+3358a6afd0f811081a2ed30beb69bc58458fed6e:src-tauri/tests/fixtures/conformance/vp_token_jwt.txt:jwt:1

@@ -14,7 +14,6 @@ describe('AppStore', () => {
       const { useAppStore } = await import('@/store/app-store');
       const state = useAppStore.getState();
 
-      expect(state.license).toBeNull();
       expect(state.sync).toBeNull();
       expect(state.hardwareTier).toBeNull();
       expect(state.hardwareCapabilities).toBeNull();
@@ -65,50 +64,6 @@ describe('AppStore', () => {
   });
 
   describe('Async Actions', () => {
-    it('should load license status from Tauri', async () => {
-      const mockLicense = {
-        valid: true,
-        org_id: 'tauri-org',
-        features: ['mdl'],
-        expires_at: '2025-12-31T00:00:00Z',
-        days_until_expiry: 30,
-        grace_period_active: false,
-        grace_period_days: null,
-        hardware_bound: false,
-        deployment_mode: 'development',
-        max_verifications_total: 500,
-        verifications_total: 0,
-        verifications_remaining: 500,
-        update_channels: ['dev'],
-      };
-
-      mockTauriCommands({
-        get_license_status: mockLicense,
-      });
-
-      const { useAppStore } = await import('@/store/app-store');
-      await useAppStore.getState().loadLicenseStatus();
-
-      const state = useAppStore.getState();
-      expect(state.license).toEqual(mockLicense);
-      expect(state.licenseLoading).toBe(false);
-      expect(state.licenseError).toBeNull();
-    });
-
-    it('should handle license loading error', async () => {
-      mockTauriCommands({
-        get_license_status: { __error: 'License expired' },
-      });
-
-      const { useAppStore } = await import('@/store/app-store');
-      await useAppStore.getState().loadLicenseStatus();
-
-      const state = useAppStore.getState();
-      expect(state.license).toBeNull();
-      expect(state.licenseLoading).toBe(false);
-      expect(state.licenseError).toBeTruthy();
-    });
-
     it('should load sync status from Tauri', async () => {
       const mockSync = {
         last_sync: '2025-12-19T10:00:00Z',
@@ -139,22 +94,6 @@ describe('AppStore', () => {
     });
 
     it('should initialize all state', async () => {
-      const mockLicense = {
-        valid: true,
-        org_id: 'test-org',
-        features: ['mdl'],
-        expires_at: '2025-12-31T00:00:00Z',
-        days_until_expiry: 30,
-        grace_period_active: false,
-        grace_period_days: null,
-        hardware_bound: false,
-        deployment_mode: 'development',
-        max_verifications_total: 500,
-        verifications_total: 0,
-        verifications_remaining: 500,
-        update_channels: ['dev'],
-      };
-
       const mockSync = {
         last_sync: '2025-12-19T10:00:00Z',
         hours_since_sync: 1,
@@ -172,7 +111,6 @@ describe('AppStore', () => {
       };
 
       mockTauriCommands({
-        get_license_status: mockLicense,
         get_sync_status: mockSync,
         get_hardware_tier: 'Complex',
         detect_hardware: {
@@ -188,7 +126,6 @@ describe('AppStore', () => {
       await useAppStore.getState().initialize();
 
       const state = useAppStore.getState();
-      expect(state.license).toEqual(mockLicense);
       expect(state.sync).toEqual(mockSync);
       expect(state.hardwareTier).toBe('Complex');
       expect(state.hardwareCapabilities?.has_camera).toBe(true);

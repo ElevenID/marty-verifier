@@ -1,0 +1,12 @@
+[package]
+name = "marty-entitlements"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Provider-neutral entitlement extension point for Marty Verifier"
+
+[dependencies]
+serde.workspace = true

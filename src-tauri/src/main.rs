@@ -25,10 +25,6 @@ fn main() {
     // Initialize app state
     let app_state = AppState::new().expect("Failed to initialize application state");
 
-    // Clone license manager for async setup
-    let license_for_setup = app_state.license.clone();
-    let config_public_key = app_state.config.blocking_read().license_public_key.clone();
-
     // Clone storage and runtime config for profile sync
     let storage_for_sync = app_state.storage.clone();
     let runtime_config_for_sync = app_state.runtime_config.clone();
@@ -46,37 +42,6 @@ fn main() {
                     tracing::warn!("Failed to restore runtime config from storage: {}", e);
                 }
             });
-
-            // Auto-install dev license on startup (debug builds only)
-            #[cfg(debug_assertions)]
-            if config_public_key.is_empty() {
-                tauri::async_runtime::spawn(async move {
-                    // Check if license already valid
-                    if let Ok(status) = license_for_setup.get_status().await {
-                        if status.valid {
-                            tracing::info!("License already active");
-                            return;
-                        }
-                    }
-
-                    // Generate and install dev license
-                    let dev_license = generate_dev_license_jwt();
-                    tracing::info!("Installing development license");
-
-                    match license_for_setup.validate_license(&dev_license).await {
-                        Ok(result) => {
-                            tracing::info!(
-                                org_id = ?result.org_id,
-                                features = ?result.features,
-                                "Development license activated"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to install dev license: {}", e);
-                        }
-                    }
-                });
-            }
 
             // Sync device configuration on startup
             tauri::async_runtime::spawn(async move {
@@ -102,10 +67,6 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // License commands
-            commands::license::validate_license,
-            commands::license::get_license_status,
-            commands::license::get_licensed_features,
             // Verification commands
             commands::verification::issue_liveness_challenge,
             commands::verification::verify_credential,
@@ -135,23 +96,4 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// Generate a development JWT license
-fn generate_dev_license_jwt() -> String {
-    use base64::Engine;
-
-    let now = chrono::Utc::now().timestamp();
-    let exp = now + 365 * 24 * 60 * 60; // 1 year
-
-    let header = r#"{"alg":"EdDSA","typ":"JWT"}"#;
-    let claims = format!(
-        r#"{{"iss":"marty-license-issuer","sub":"dev-org-001","iat":{},"exp":{},"jti":"dev-license-auto","features":["mdl","emrtd","oid4vp","sd-jwt","dtc","open-badge","usb-sync","reporting","biometrics"],"deployment_mode":"development","max_verifications_total":100000,"org_name":"Development License","update_channels":["stable","beta","dev"],"grace_period_days":90}}"#,
-        now, exp
-    );
-
-    let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header);
-    let claims_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&claims);
-
-    format!("{}.{}.dev_signature", header_b64, claims_b64)
 }

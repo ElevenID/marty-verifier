@@ -26,7 +26,7 @@ const credentialTypes = [
 
 export default function VerificationPage() {
   const [credentialType, setCredentialType] = useState('mdl');
-  const { license, hardwareTier } = useAppStore();
+  const { hardwareTier } = useAppStore();
 
   const handleTypeChange = (
     _event: React.MouseEvent<HTMLElement>,
@@ -59,22 +59,16 @@ export default function VerificationPage() {
           aria-label="credential type"
           fullWidth
         >
-          {credentialTypes.map((type) => {
-            const isLicensed = license?.features.some(
-              (f) => f === '*' || f === type.value || type.value.startsWith(f)
-            );
-            return (
+          {credentialTypes.map((type) => (
               <ToggleButton
                 key={type.value}
                 value={type.value}
-                disabled={!isLicensed}
                 aria-label={type.label}
               >
                 {type.icon}
                 <Box sx={{ ml: 1 }}>{type.label}</Box>
               </ToggleButton>
-            );
-          })}
+          ))}
         </ToggleButtonGroup>
       </Box>
 

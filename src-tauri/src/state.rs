@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use marty_app_storage::SecureStorage;
-use marty_license::LicenseManager;
+use marty_entitlements::{AllowAllEntitlementProvider, EntitlementProvider};
 use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use marty_sync::SyncEngine;
 
@@ -34,8 +34,8 @@ pub struct AppState {
     /// Secure storage for credentials, events, and trust anchors
     pub storage: Arc<SecureStorage>,
 
-    /// License manager for feature validation
-    pub license: Arc<LicenseManager>,
+    /// Provider-neutral policy for optional compiled capabilities.
+    pub entitlements: Arc<dyn EntitlementProvider>,
 
     /// Sync engine for trust anchor updates
     pub sync_engine: Arc<SyncEngine>,
@@ -67,16 +67,15 @@ impl AppState {
         // Initialize secure storage (app-level: verification events, trust anchors)
         let storage = Arc::new(SecureStorage::new(&config.data_dir)?);
 
-        // Initialize core secure storage (used by license manager and sync engine)
+        // Initialize core secure storage used by the sync engine.
         let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir).map_err(|e| {
             crate::error::AppError::Config(format!("Core storage init failed: {}", e))
         })?);
 
-        // Initialize license manager
-        let license = Arc::new(LicenseManager::new(
-            core_storage.clone(),
-            config.license_public_key.clone(),
-        )?);
+        // The open-source distribution enables every capability compiled into it.
+        // Private downstream distributions can supply another provider.
+        let entitlements: Arc<dyn EntitlementProvider> =
+            Arc::new(AllowAllEntitlementProvider);
 
         // Initialize sync engine
         let sync_engine = Arc::new(SyncEngine::new(core_storage, config.sync_config.clone())?);
@@ -97,7 +96,7 @@ impl AppState {
         let state = Self {
             config: RwLock::new(config),
             storage,
-            license,
+            entitlements,
             sync_engine,
             runtime_config: RuntimeConfig::new(),
             hardware,
@@ -165,13 +164,14 @@ impl AppState {
         Ok(())
     }
 
-    /// Check if a feature is licensed and hardware supports it
+    /// Check if a compiled feature is enabled and the hardware supports it.
     pub async fn check_feature(&self, feature: &str) -> AppResult<()> {
-        // Check license
-        if !self.license.is_feature_licensed(feature).await? {
-            return Err(crate::error::AppError::FeatureNotLicensed(
-                feature.to_string(),
-            ));
+        let decision = self.entitlements.check(feature);
+        if !decision.allowed {
+            return Err(crate::error::AppError::EntitlementDenied {
+                capability: feature.to_string(),
+                reason: decision.reason,
+            });
         }
 
         // Check hardware tier requirements

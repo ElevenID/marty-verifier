@@ -51,7 +51,7 @@ pub async fn verify_face_match(
     request: FaceMatchRequest,
     state: State<'_, AppState>,
 ) -> AppResult<FaceMatchResponse> {
-    // License + hardware gate
+    // Capability + hardware gate
     state.check_feature("biometrics").await?;
 
     // Liveness challenge validation (if requested)
@@ -67,9 +67,10 @@ pub async fn verify_face_match(
 
     #[cfg(not(feature = "biometrics"))]
     {
-        Err(AppError::FeatureNotLicensed(
-            "biometrics feature not enabled".to_string(),
-        ))
+        Err(AppError::EntitlementDenied {
+            capability: "biometrics".to_string(),
+            reason: Some("biometrics was not compiled into this build".to_string()),
+        })
     }
 
     #[cfg(feature = "biometrics")]

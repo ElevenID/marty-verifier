@@ -10,22 +10,6 @@ import { invoke } from '@tauri-apps/api/core';
 // Types
 // =============================================================================
 
-export interface LicenseStatus {
-  valid: boolean;
-  org_id: string | null;
-  expires_at: string | null;
-  days_until_expiry: number | null;
-  features: string[];
-  hardware_bound: boolean;
-  grace_period_active: boolean;
-  grace_period_days: number | null;
-  deployment_mode: string | null;
-  max_verifications_total: number | null;
-  verifications_total: number;
-  verifications_remaining: number | null;
-  update_channels: string[];
-}
-
 export interface VerifyRequest {
   credential_type: string;
   credential_data: string;
@@ -184,7 +168,6 @@ export interface OfflineQueueStatus {
 
 export interface AppConfig {
   data_dir: string;
-  license_public_key: string;
   liveness_retention: LivenessRetentionConfig;
   sync_config: SyncConfig;
   reporting_config: ReportingConfig;
@@ -318,22 +301,6 @@ export interface IssueLivenessChallengeRequest {
   allow_network_fallback?: boolean;
   accessibility_mode?: boolean;
   ttl_seconds?: number;
-}
-
-// =============================================================================
-// License Commands
-// =============================================================================
-
-export async function validateLicense(licenseData: string): Promise<LicenseStatus> {
-  return invoke('validate_license', { licenseData });
-}
-
-export async function getLicenseStatus(): Promise<LicenseStatus> {
-  return invoke('get_license_status');
-}
-
-export async function getLicensedFeatures(): Promise<string[]> {
-  return invoke('get_licensed_features');
 }
 
 // =============================================================================

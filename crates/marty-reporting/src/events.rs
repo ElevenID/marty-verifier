@@ -18,7 +18,7 @@ pub struct VerificationEvent {
     pub device_id: Option<String>,
     /// Hardware tier
     pub hardware_tier: Option<String>,
-    /// License organization ID
+    /// Organization identifier supplied by the deployment, if any.
     pub org_id: Option<String>,
 }
 
@@ -30,8 +30,6 @@ pub enum EventPayload {
     Verification(VerificationPayload),
     /// Sync event
     Sync(SyncPayload),
-    /// License event
-    License(LicensePayload),
     /// Error event
     Error(ErrorPayload),
 }
@@ -72,23 +70,6 @@ pub struct SyncPayload {
     pub duration_seconds: f64,
     /// Error message if failed
     pub error: Option<String>,
-}
-
-/// License event payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LicensePayload {
-    /// Event subtype (validated, expired, grace_period, limit_exceeded)
-    pub subtype: String,
-    /// License expiration date
-    pub expires_at: Option<String>,
-    /// Days until expiry
-    pub days_until_expiry: Option<i64>,
-    /// Total verifications
-    pub verifications_total: Option<u64>,
-    /// Max total verifications
-    pub max_verifications_total: Option<u64>,
-    /// Remaining verifications
-    pub verifications_remaining: Option<u64>,
 }
 
 /// Error event payload

@@ -97,7 +97,7 @@ export default function VerifierPanel({
   const [probeImage, setProbeImage] = useState('');
   const [faceThreshold, setFaceThreshold] = useState(0.75);
   const [sessionId] = useState<string>(() => crypto.randomUUID());
-  const { setLastVerification, setVerificationInProgress, license } = useAppStore();
+  const { setLastVerification, setVerificationInProgress } = useAppStore();
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -302,23 +302,6 @@ export default function VerifierPanel({
     setStepRemainingMs(0);
     setChallengeExpiresAt(null);
   };
-
-  // Check if credential type is licensed
-  const isLicensed = license?.features.some(
-    (f) => f === '*' || f === selectedType || selectedType.startsWith(f)
-  );
-
-  if (!isLicensed) {
-    return (
-      <Card>
-        <CardContent>
-          <Alert severity="error">
-            {selectedType.toUpperCase()} verification is not licensed.
-          </Alert>
-        </CardContent>
-      </Card>
-    );
-  }
 
   if (result) {
     return (

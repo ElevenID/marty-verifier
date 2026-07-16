@@ -8,7 +8,7 @@ use reqwest::Client;
 pub struct PolicySyncProvider {
     client: Client,
     endpoint: String,
-    license_jwt: String,
+    access_token: String,
 }
 
 impl PolicySyncProvider {
@@ -16,12 +16,12 @@ impl PolicySyncProvider {
     ///
     /// # Arguments
     /// * `endpoint` - Backend API endpoint (e.g., "https://api.example.com")
-    /// * `license_jwt` - License JWT for authentication
-    pub fn new(endpoint: String, license_jwt: String) -> Self {
+    /// * `access_token` - Optional bearer token for authentication
+    pub fn new(endpoint: String, access_token: String) -> Self {
         Self {
             client: Client::new(),
             endpoint,
-            license_jwt,
+            access_token,
         }
     }
 
@@ -58,7 +58,7 @@ impl PolicySyncProvider {
         let response = self
             .client
             .get(&url)
-            .bearer_auth(&self.license_jwt)
+            .bearer_auth(&self.access_token)
             .send()
             .await
             .map_err(|e| SyncError::NetworkError(e.to_string()))?;
@@ -91,7 +91,7 @@ impl PolicySyncProvider {
         let response = self
             .client
             .get(&url)
-            .bearer_auth(&self.license_jwt)
+            .bearer_auth(&self.access_token)
             .header("If-Modified-Since", since)
             .send()
             .await
@@ -118,7 +118,7 @@ impl PolicySyncProvider {
 
         self.client
             .head(&url)
-            .bearer_auth(&self.license_jwt)
+            .bearer_auth(&self.access_token)
             .send()
             .await
             .map(|r| r.status().is_success())

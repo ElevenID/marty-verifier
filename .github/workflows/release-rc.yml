@@ -35,14 +35,10 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
 
-      - name: Configure Git auth for private repos
-        uses: ./.github/actions/configure-private-git-auth
-        with:
-          token: ${{ secrets.MARTY_CORE_TOKEN }}
 
       - name: Get version from tag
         id: version
@@ -53,18 +49,20 @@ jobs:
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: ${{ matrix.target }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
           cache: 'pnpm'
@@ -84,40 +82,16 @@ jobs:
         working-directory: ui
         run: pnpm build
 
-      - name: Import macOS certificate
-        if: matrix.os == 'macos-latest'
-        env:
-          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          if [ -n "$APPLE_CERTIFICATE_P12" ]; then
-            echo "$APPLE_CERTIFICATE_P12" | base64 --decode > certificate.p12
-            security create-keychain -p actions build.keychain
-            security default-keychain -s build.keychain
-            security unlock-keychain -p actions build.keychain
-            security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions build.keychain
-            rm certificate.p12
-          else
-            echo "Warning: APPLE_CERTIFICATE_P12 not set, skipping code signing"
-          fi
-
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: 'Marty Verifier ${{ steps.version.outputs.version }} (RC)'
-          releaseBody: 'Release Candidate - See changelog for details'
+          releaseBody: 'Release Candidate - see changelog for details. macOS artifacts are unsigned and are not Apple-notarized; verify SHA256SUMS and GitHub build provenance before use.'
           releaseDraft: false
           prerelease: true
           args: --target ${{ matrix.target }}
@@ -127,14 +101,10 @@ jobs:
     needs: build-tauri
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
 
-      - name: Configure Git auth for private repos
-        uses: ./.github/actions/configure-private-git-auth
-        with:
-          token: ${{ secrets.MARTY_CORE_TOKEN }}
 
       - name: Get version from tag
         id: version
@@ -144,8 +114,10 @@ jobs:
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
         run: |
@@ -160,23 +132,34 @@ jobs:
           cargo cyclonedx --format json --override-filename marty-verifier-sbom
 
       - name: Download release assets
-        uses: robinraju/release-downloader@v1
+        uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f
         with:
           tag: ${{ steps.version.outputs.tag }}
           fileName: '*'
           out-file-path: 'release-assets'
 
+      - name: Generate checksums
+        working-directory: release-assets
+        run: |
+          find . -maxdepth 1 -type f ! -name '*.sig' -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > ../SHA256SUMS
+
       - name: Generate attestations for release artifacts
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018
         with:
-          subject-path: 'release-assets/*.tar.gz'
+          subject-path: |
+            release-assets/*
+            SHA256SUMS
 
       - name: Update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Marty Verifier ${{ steps.version.outputs.version }} (RC)
           body_path: RELEASE_NOTES.md
-          files: marty-verifier-sbom.json
+          files: |
+            marty-verifier-sbom.json
+            SHA256SUMS
           prerelease: true
           generate_release_notes: true

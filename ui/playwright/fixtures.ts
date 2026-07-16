@@ -5,22 +5,6 @@
 import { test as base, expect, Page } from '@playwright/test';
 
 // Types for Tauri mock state
-export interface LicenseStatus {
-  valid: boolean;
-  org_id: string | null;
-  features: string[];
-  expires_at: string | null;
-  days_until_expiry: number | null;
-  grace_period_active: boolean;
-  grace_period_days: number | null;
-  hardware_bound: boolean;
-  deployment_mode: string | null;
-  max_verifications_total: number | null;
-  verifications_total: number;
-  verifications_remaining: number | null;
-  update_channels: string[];
-}
-
 export interface SyncStatus {
   last_sync: string | null;
   hours_since_sync: number | null;
@@ -47,22 +31,6 @@ export interface HardwareCapabilities {
 }
 
 // Default mock values
-export const defaultLicenseStatus: LicenseStatus = {
-  valid: true,
-  org_id: 'test-org',
-  features: ['mdl', 'oid4vp', 'emrtd'],
-  expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-  days_until_expiry: 30,
-  grace_period_active: false,
-  grace_period_days: null,
-  hardware_bound: false,
-  deployment_mode: 'development',
-  max_verifications_total: 1000,
-  verifications_total: 5,
-  verifications_remaining: 995,
-  update_channels: ['stable'],
-};
-
 export const defaultSyncStatus: SyncStatus = {
   last_sync: new Date().toISOString(),
   hours_since_sync: 1,
@@ -90,7 +58,6 @@ export const defaultHardwareCapabilities: HardwareCapabilities = {
 
 // Mock command responses
 export interface MockCommands {
-  get_license_status?: LicenseStatus;
   get_sync_status?: SyncStatus;
   get_hardware_tier?: string;
   detect_hardware?: HardwareCapabilities;
@@ -108,7 +75,6 @@ export interface TestFixtures {
  */
 async function injectTauriMock(page: Page, commands: MockCommands = {}) {
   const mockCommands = {
-    get_license_status: defaultLicenseStatus,
     get_sync_status: defaultSyncStatus,
     get_hardware_tier: 'simple',
     detect_hardware: defaultHardwareCapabilities,

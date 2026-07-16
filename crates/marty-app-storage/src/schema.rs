@@ -125,20 +125,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created
 CREATE INDEX IF NOT EXISTS idx_audit_log_event_type 
     ON audit_log(event_type);
 
--- License state
-CREATE TABLE IF NOT EXISTS license_state (
-    id TEXT PRIMARY KEY DEFAULT 'current',
-    license_jwt TEXT,
-    validated_at TEXT,
-    hardware_fingerprint TEXT,
-    verifications_today INTEGER NOT NULL DEFAULT 0,
-    verifications_date TEXT,
-    verifications_total INTEGER NOT NULL DEFAULT 0,
-    grace_period_started TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 -- Sync state
 CREATE TABLE IF NOT EXISTS sync_state (
     id TEXT PRIMARY KEY DEFAULT 'current',

@@ -31,7 +31,7 @@ pub async fn sync_device_config_impl(
 
     tracing::info!(device_id, "Syncing device configuration");
 
-    // Get API endpoint and license JWT from config
+    // Get the API endpoint and optional provider-neutral access token.
     // TODO: Pass these as parameters once config is available in startup context
     let endpoint =
         std::env::var("MARTY_API_ENDPOINT").unwrap_or_else(|_| "http://localhost:8000".to_string());
@@ -41,10 +41,10 @@ pub async fn sync_device_config_impl(
         crate::error::AppError::Config(format!("Invalid MARTY_API_ENDPOINT URL: {e}"))
     })?;
 
-    let license_jwt = std::env::var("MARTY_LICENSE_JWT").unwrap_or_default();
+    let access_token = std::env::var("MARTY_SYNC_ACCESS_TOKEN").unwrap_or_default();
 
     // Fetch device configuration
-    let provider = ProfileSyncProvider::new(endpoint, license_jwt);
+    let provider = ProfileSyncProvider::new(endpoint, access_token);
     let device_config = provider
         .fetch_device_config(&device_id)
         .await

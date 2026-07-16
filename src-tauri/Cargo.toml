@@ -51,7 +51,7 @@ directories = "5.0"
 
 # Internal crates
 marty-app-storage.workspace = true
-marty-license.workspace = true
+marty-entitlements.workspace = true
 marty-secure-storage.workspace = true
 marty-sync.workspace = true
 

@@ -38,7 +38,6 @@
     "targets": ["app"],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "signingIdentity": "Apple Development: burdettadam@gmail.com (FVNR8ERDKZ)",
       "entitlements": "entitlements.plist"
     },
     "windows": {

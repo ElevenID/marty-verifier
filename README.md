@@ -7,7 +7,7 @@ An on-site credential verification kiosk built with Tauri, designed for edge che
 - **Offline-First**: Operates without network for 72+ hours with local trust anchor cache
 - **Multi-Credential Support**: mDL (ISO 18013-5), eMRTD (ICAO 9303), OID4VP, SD-JWT, DTC, Open Badges
 - **Secure Storage**: SQLCipher encrypted database with platform keychain integration
-- **Cryptographic Licensing**: JWT licenses with Ed25519 signatures and hardware binding
+- **Open-Source Capabilities**: Every capability compiled into the OSS build is available without a license key
 - **Trust Anchor Sync**: AAMVA DTS, ICAO PKD sources with USB import for air-gapped environments
 - **Hardware Tiers**: Simple (camera only) and Complex (NFC, BLE, biometrics, TPM) kiosks
 - **Optional Reporting**: Queue-and-forward reporting with local-only mode option
@@ -26,7 +26,7 @@ marty-verifier/
 │   └── Cargo.toml
 ├── crates/
 │   ├── marty-secure-storage/   # SQLCipher + keychain
-│   ├── marty-license/          # JWT license validation
+│   ├── marty-entitlements/     # Provider-neutral capability extension
 │   ├── marty-sync/             # Trust anchor synchronization
 │   ├── marty-biometrics/       # Face verification (optional)
 │   └── marty-reporting/        # Event reporting (optional)
@@ -50,12 +50,12 @@ marty-verifier/
 - Camera + NFC + BLE
 - Full mDL + eMRTD support
 - Face matching biometrics
-- TPM-bound licenses
+- Optional TPM-backed key storage
 
 ## Building
 
 ### Prerequisites
-- Rust 1.75+
+- Rust 1.87+
 - Node.js 20+
 - pnpm 8+
 
@@ -142,35 +142,18 @@ Configuration is stored in the app data directory:
 }
 ```
 
-## License Management
+## Entitlement extension
 
-Licenses are cryptographic JWT tokens signed with Ed25519. License claims include:
-
-- Organization ID
-- Licensed features
-- Expiration date
-- Hardware binding (optional)
-- Total verification limits
-- Update channels
-- Grace period
-
-### Installing a License
-
-1. Navigate to License page in the UI
-2. Paste the JWT license token
-3. Click "Validate & Install"
-
-The license is validated against:
-- Signature verification (Ed25519)
-- Expiration date
-- Hardware fingerprint (if hardware-bound)
-- Total verification counts
+The open-source distribution uses `AllowAllEntitlementProvider`: compiled
+capabilities are available without registration or a license key. The
+`marty-entitlements` interface is a provider-neutral integration point for
+downstream distributions that need their own policy decisions.
 
 ## Updates
 
-Updates are distributed via the Tauri updater plugin and gated by license update channels.
-Configure the update base URL and public key in the app config, and ensure licenses include
-the allowed `update_channels` (for example: `stable`, `beta`, `dev`).
+Updates are distributed via the Tauri updater plugin. Configure the update base
+URL, signing public key, and default channel in the app configuration. Requested
+channels are validated before they are incorporated into an update URL.
 
 ## Trust Anchor Sync
 
@@ -228,11 +211,10 @@ For environments without network access:
 - PII fields encrypted with separate key
 - Searchable indexes use BLAKE3 hashes
 
-### License Protection
+### Update protection
 
-- Ed25519 signatures prevent tampering
-- Hardware binding prevents license transfer
-- Grace period allows temporary offline operation
+- Tauri update manifests and installers are verified with the configured public key
+- Release artifacts include checksums, signatures, SBOMs, and build provenance
 
 ### Code Protection
 
@@ -272,11 +254,12 @@ pnpm lint
 Marty Verifier uses an automated release pipeline with:
 
 - **RC (Release Candidate) testing** before stable releases
-- **Code signing** for macOS and Windows
+- **Unsigned macOS builds** with checksums and GitHub build provenance
+- **Updater signing** for cryptographic update verification (independent of Apple signing)
 - **Auto-updater** for seamless updates
 - **Multi-platform builds** (macOS x86_64/arm64, Windows x64, Linux AppImage/deb)
 
-See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for certificate setup instructions.
+See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for the release trust model and platform limitations.
 
 ### Release Process
 
@@ -319,12 +302,13 @@ Users can disable auto-updates in Settings.
 
 **macOS:**
 - DMG installer from GitHub Releases
-- Code signed and notarized
+- Unsigned and not Apple-notarized; macOS Gatekeeper may require explicit user approval
+- SHA-256 checksums, SBOM, and GitHub build-provenance attestation are published with each release
 - Supports macOS 10.15+
 
 **Windows:**
 - NSIS installer (.exe) from GitHub Releases
-- Code signed with EV certificate
+- SHA-256 checksums, SBOM, and GitHub build-provenance attestation are published with each release
 - Supports Windows 10+
 
 **Linux:**

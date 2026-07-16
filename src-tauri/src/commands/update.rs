@@ -19,7 +19,7 @@ pub struct UpdateInfo {
     pub eligible_for_rollout: bool,
 }
 
-/// Check for updates using the licensed update channel.
+/// Check for updates using the requested or configured channel.
 #[tauri::command]
 pub async fn check_for_updates(
     channel: Option<String>,
@@ -38,8 +38,7 @@ pub async fn check_for_updates(
         ));
     }
 
-    let claims = state.license.get_claims().await?;
-    let channel = resolve_update_channel(channel, &update_config.default_channel, &claims)?;
+    let channel = resolve_update_channel(channel, &update_config.default_channel)?;
     let endpoint = build_update_endpoint(&update_config.base_url, &channel)?;
 
     let updater = app
@@ -70,7 +69,7 @@ pub async fn check_for_updates(
     }))
 }
 
-/// Download and install the latest update in the licensed channel.
+/// Download and install the latest update in the requested or configured channel.
 #[tauri::command]
 pub async fn download_and_install_update(
     channel: Option<String>,
@@ -89,8 +88,7 @@ pub async fn download_and_install_update(
         ));
     }
 
-    let claims = state.license.get_claims().await?;
-    let channel = resolve_update_channel(channel, &update_config.default_channel, &claims)?;
+    let channel = resolve_update_channel(channel, &update_config.default_channel)?;
     let endpoint = build_update_endpoint(&update_config.base_url, &channel)?;
 
     let updater = app
@@ -130,35 +128,16 @@ pub async fn download_and_install_update(
 fn resolve_update_channel(
     requested: Option<String>,
     preferred: &str,
-    claims: &marty_license::LicenseClaims,
 ) -> Result<String, AppError> {
-    if claims.update_channels.is_empty() {
-        return Err(AppError::License(
-            marty_license::LicenseError::UpdateChannelNotAllowed(
-                "no update channels available".to_string(),
-            ),
-        ));
+    let channel = requested.unwrap_or_else(|| preferred.to_string());
+    if channel.is_empty()
+        || !channel
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
+    {
+        return Err(AppError::Update("Invalid update channel".to_string()));
     }
-
-    if let Some(requested) = requested {
-        if claims.allows_update_channel(&requested) {
-            return Ok(requested);
-        }
-        return Err(AppError::License(
-            marty_license::LicenseError::UpdateChannelNotAllowed(requested),
-        ));
-    }
-
-    if claims.allows_update_channel(preferred) {
-        return Ok(preferred.to_string());
-    }
-
-    Ok(claims
-        .update_channels
-        .iter()
-        .find(|channel| *channel != "*")
-        .cloned()
-        .unwrap_or_else(|| preferred.to_string()))
+    Ok(channel)
 }
 
 fn build_update_endpoint(base_url: &str, channel: &str) -> AppResult<Url> {
@@ -232,52 +211,22 @@ fn check_rollout_eligibility(state: &State<AppState>, update_version: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-
-    fn sample_claims(channels: Vec<&str>) -> marty_license::LicenseClaims {
-        let now = Utc::now().timestamp();
-        marty_license::LicenseClaims {
-            iss: "marty-license-issuer".to_string(),
-            sub: "org-123".to_string(),
-            iat: now,
-            exp: now + 86400,
-            nbf: None,
-            jti: Some("license-abc".to_string()),
-            features: vec!["mdl".to_string()],
-            deployment_mode: None,
-            max_verifications_total: 100,
-            hardware_binding: None,
-            hardware_tier: None,
-            org_name: None,
-            update_channels: channels.into_iter().map(|c| c.to_string()).collect(),
-            grace_period_days: 30,
-            plan_tier: None,
-            entitled_products: vec![marty_license::products::VERIFIER.to_string()],
-            max_instances: std::collections::HashMap::new(),
-            registry_access: false,
-            api_calls_limit: 0,
-        }
-    }
-
     #[test]
     fn resolve_update_channel_prefers_requested() {
-        let claims = sample_claims(vec!["stable", "beta"]);
-        let channel = resolve_update_channel(Some("beta".to_string()), "stable", &claims).unwrap();
+        let channel = resolve_update_channel(Some("beta".to_string()), "stable").unwrap();
         assert_eq!(channel, "beta");
     }
 
     #[test]
-    fn resolve_update_channel_rejects_unlicensed() {
-        let claims = sample_claims(vec!["stable"]);
-        let err = resolve_update_channel(Some("beta".to_string()), "stable", &claims).unwrap_err();
-        assert!(err.to_string().contains("Update channel not allowed"));
+    fn resolve_update_channel_rejects_unsafe_values() {
+        let err = resolve_update_channel(Some("../private".to_string()), "stable").unwrap_err();
+        assert!(err.to_string().contains("Invalid update channel"));
     }
 
     #[test]
-    fn resolve_update_channel_falls_back_to_allowed() {
-        let claims = sample_claims(vec!["beta"]);
-        let channel = resolve_update_channel(None, "stable", &claims).unwrap();
-        assert_eq!(channel, "beta");
+    fn resolve_update_channel_uses_configured_default() {
+        let channel = resolve_update_channel(None, "stable").unwrap();
+        assert_eq!(channel, "stable");
     }
 
     #[test]
