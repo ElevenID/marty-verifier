@@ -115,13 +115,13 @@ impl RuntimeConfig {
             .unwrap_or(24)
     }
 
-    /// Check if biometric verification is required
-    pub async fn is_biometric_required(&self) -> bool {
+    /// Check if biometric authentication is required for the verifier operator.
+    pub async fn is_operator_biometric_authentication_required(&self) -> bool {
         let inner = self.inner.read().await;
         inner
             .deployment_profile
             .as_ref()
-            .map(|p| p.biometric_required)
+            .map(|p| p.operator_biometric_authentication_required)
             .unwrap_or(false)
     }
 
@@ -172,7 +172,7 @@ pub struct ConfigSnapshot {
     pub network_mode: String,
     pub active_policy_id: Option<String>,
     pub offline_cache_ttl_hours: u32,
-    pub biometric_required: bool,
+    pub operator_biometric_authentication_required: bool,
     pub ux_language: String,
     pub ux_theme: String,
 }
@@ -211,7 +211,9 @@ impl RuntimeConfig {
             network_mode,
             active_policy_id: inner.active_policy_id.clone(),
             offline_cache_ttl_hours: self.get_offline_cache_ttl_hours().await,
-            biometric_required: self.is_biometric_required().await,
+            operator_biometric_authentication_required: self
+                .is_operator_biometric_authentication_required()
+                .await,
             ux_language,
             ux_theme,
         }
@@ -253,7 +255,7 @@ mod tests {
                 rollout_ring: None,
             },
             offline_cache_ttl_hours: 48,
-            biometric_required: true,
+            operator_biometric_authentication_required: true,
             audit_all_events: true,
             default_presentation_policy_id: None,
         };
@@ -266,7 +268,7 @@ mod tests {
             Some("profile-1".to_string())
         );
         assert_eq!(config.get_offline_cache_ttl_hours().await, 48);
-        assert!(config.is_biometric_required().await);
+        assert!(config.is_operator_biometric_authentication_required().await);
 
         let ux = config.get_ux_config().await.unwrap();
         assert_eq!(ux.language, "fr");

@@ -15,7 +15,8 @@ pub struct DeploymentProfile {
     pub ux_config: UXConfig,
     pub update_policy: UpdatePolicy,
     pub offline_cache_ttl_hours: u32,
-    pub biometric_required: bool,
+    #[serde(alias = "biometric_required")]
+    pub operator_biometric_authentication_required: bool,
     pub audit_all_events: bool,
     #[serde(default)]
     pub default_presentation_policy_id: Option<String>,

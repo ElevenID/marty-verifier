@@ -729,7 +729,11 @@ impl SecureStorage {
                 ux_config_json,
                 update_policy_json,
                 profile.offline_cache_ttl_hours as i64,
-                if profile.biometric_required { 1 } else { 0 },
+                if profile.operator_biometric_authentication_required {
+                    1
+                } else {
+                    0
+                },
                 if profile.audit_all_events { 1 } else { 0 },
                 now,
                 now,
@@ -778,7 +782,7 @@ impl SecureStorage {
                     ux_config,
                     update_policy,
                     offline_cache_ttl_hours: row.get::<_, i64>(7)? as u32,
-                    biometric_required: row.get::<_, i32>(8)? != 0,
+                    operator_biometric_authentication_required: row.get::<_, i32>(8)? != 0,
                     audit_all_events: row.get::<_, i32>(9)? != 0,
                     default_presentation_policy_id: None, // Not stored in DB
                 })

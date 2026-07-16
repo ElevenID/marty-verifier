@@ -25,7 +25,7 @@ interface DeploymentProfile {
     rollout_ring?: string;
   };
   offline_cache_ttl_hours: number;
-  biometric_required: boolean;
+  operator_biometric_authentication_required: boolean;
 }
 
 interface Lane {
