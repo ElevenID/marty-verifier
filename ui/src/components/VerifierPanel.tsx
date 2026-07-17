@@ -92,6 +92,7 @@ export default function VerifierPanel({
   const [stepDeadline, setStepDeadline] = useState<number | null>(null);
   const [stepRemainingMs, setStepRemainingMs] = useState<number>(0);
   const [challengeExpiresAt, setChallengeExpiresAt] = useState<number | null>(null);
+  const [challengeRemainingMs, setChallengeRemainingMs] = useState<number | null>(null);
   const [performFaceMatch, setPerformFaceMatch] = useState(false);
   const [referenceImage, setReferenceImage] = useState('');
   const [probeImage, setProbeImage] = useState('');
@@ -126,7 +127,9 @@ export default function VerifierPanel({
         setActiveStepIndex(0);
         const firstStep = activeChallenge.steps[0];
         setStepDeadline(Date.now() + (firstStep.time_limit_ms ?? 5000));
-        setChallengeExpiresAt(Date.parse(activeChallenge.expires_at));
+        const expiresAt = Date.parse(activeChallenge.expires_at);
+        setChallengeExpiresAt(expiresAt);
+        setChallengeRemainingMs(Math.max(0, expiresAt - Date.now()));
       }
 
       setScanning(false);
@@ -220,8 +223,7 @@ export default function VerifierPanel({
   useEffect(() => {
     if (!challengeExpiresAt) return;
     const id = window.setInterval(() => {
-      // Trigger re-render for expiry display
-      setChallengeExpiresAt((current) => current);
+      setChallengeRemainingMs(Math.max(0, challengeExpiresAt - Date.now()));
     }, 1000);
     return () => window.clearInterval(id);
   }, [challengeExpiresAt]);
@@ -301,6 +303,7 @@ export default function VerifierPanel({
     setStepDeadline(null);
     setStepRemainingMs(0);
     setChallengeExpiresAt(null);
+    setChallengeRemainingMs(null);
   };
 
   if (result) {
@@ -494,8 +497,8 @@ export default function VerifierPanel({
                 <Typography variant="body2" color="text.secondary" gutterBottom>
                   Session: {sessionId} · Challenge ID: {challenge.challenge_id} · Mode:{' '}
                   {challenge.preferred_mode} · Expires in:{' '}
-                  {challengeExpiresAt
-                    ? `${Math.max(0, Math.round((challengeExpiresAt - Date.now()) / 1000))}s`
+                  {challengeRemainingMs !== null
+                    ? `${Math.round(challengeRemainingMs / 1000)}s`
                     : 'n/a'}
                 </Typography>
                 <Divider sx={{ my: 1 }} />
