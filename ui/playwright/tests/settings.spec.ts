@@ -121,13 +121,13 @@ test.describe('Settings Navigation', () => {
     await expect(page.getByRole('heading', { name: /credential verification/i })).toBeVisible();
   });
 
-  test('should navigate from settings to license', async ({ page, mockTauri }) => {
+  test('should navigate from settings to flows', async ({ page, mockTauri }) => {
     await mockTauri();
     await page.goto('/#/settings');
 
-    await page.locator('[data-testid="nav-license"]:visible').click();
+    await page.locator('[data-testid="nav-flows"]:visible').click();
     
-    await expect(page).toHaveURL(/#\/license$/);
+    await expect(page).toHaveURL(/#\/flows$/);
   });
 
   test('should navigate from settings to sync', async ({ page, mockTauri }) => {
