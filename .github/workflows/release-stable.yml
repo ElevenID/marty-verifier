@@ -161,15 +161,15 @@ jobs:
 
       - name: Validate signing artifacts exist
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           MISSING=0
-          for sig_file in \
-            "release-assets/Marty-Verifier_${VERSION}_x64.app.tar.gz.sig" \
-            "release-assets/Marty-Verifier_${VERSION}_aarch64.app.tar.gz.sig" \
-            "release-assets/marty-verifier_${VERSION}_amd64.AppImage.tar.gz.sig" \
-            "release-assets/Marty-Verifier_${VERSION}_x64-setup.nsis.zip.sig"; do
-            if [ ! -f "$sig_file" ]; then
-              echo "::error::Missing signature file: $sig_file"
+          for pattern in \
+            '*_x64.app.tar.gz.sig' \
+            '*_aarch64.app.tar.gz.sig' \
+            '*_amd64.AppImage.tar.gz.sig' \
+            '*_x64-setup.nsis.zip.sig'; do
+            mapfile -t matches < <(find release-assets -maxdepth 1 -type f -name "$pattern")
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected one signing artifact matching $pattern, found ${#matches[@]}"
               echo "Ensure TAURI_SIGNING_PRIVATE_KEY is configured in repository secrets."
               MISSING=1
             fi
@@ -187,11 +187,31 @@ jobs:
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          # Read signatures from .sig files produced by tauri-action
-          SIG_DARWIN_X64=$(cat "release-assets/Marty-Verifier_${VERSION}_x64.app.tar.gz.sig")
-          SIG_DARWIN_AARCH64=$(cat "release-assets/Marty-Verifier_${VERSION}_aarch64.app.tar.gz.sig")
-          SIG_LINUX_X64=$(cat "release-assets/marty-verifier_${VERSION}_amd64.AppImage.tar.gz.sig")
-          SIG_WINDOWS_X64=$(cat "release-assets/Marty-Verifier_${VERSION}_x64-setup.nsis.zip.sig")
+          resolve_sig() {
+            local pattern="$1"
+            local match
+            match=$(find release-assets -maxdepth 1 -type f -name "$pattern" -print -quit)
+            if [ -z "$match" ]; then
+              echo "::error::No signing artifact matches $pattern" >&2
+              exit 1
+            fi
+            printf '%s' "$match"
+          }
+
+          DARWIN_X64_SIG=$(resolve_sig '*_x64.app.tar.gz.sig')
+          DARWIN_AARCH64_SIG=$(resolve_sig '*_aarch64.app.tar.gz.sig')
+          LINUX_X64_SIG=$(resolve_sig '*_amd64.AppImage.tar.gz.sig')
+          WINDOWS_X64_SIG=$(resolve_sig '*_x64-setup.nsis.zip.sig')
+
+          SIG_DARWIN_X64=$(cat "$DARWIN_X64_SIG")
+          SIG_DARWIN_AARCH64=$(cat "$DARWIN_AARCH64_SIG")
+          SIG_LINUX_X64=$(cat "$LINUX_X64_SIG")
+          SIG_WINDOWS_X64=$(cat "$WINDOWS_X64_SIG")
+
+          URL_DARWIN_X64="${BASE_URL}/$(basename "${DARWIN_X64_SIG%.sig}")"
+          URL_DARWIN_AARCH64="${BASE_URL}/$(basename "${DARWIN_AARCH64_SIG%.sig}")"
+          URL_LINUX_X64="${BASE_URL}/$(basename "${LINUX_X64_SIG%.sig}")"
+          URL_WINDOWS_X64="${BASE_URL}/$(basename "${WINDOWS_X64_SIG%.sig}")"
 
           # Build manifest with real signatures using jq
           jq -n \
@@ -199,13 +219,13 @@ jobs:
             --arg notes "See full release notes at https://github.com/${REPO}/releases/tag/${TAG}" \
             --arg pub_date "$PUB_DATE" \
             --arg sig_darwin_x64 "$SIG_DARWIN_X64" \
-            --arg url_darwin_x64 "${BASE_URL}/Marty-Verifier_${VERSION}_x64.app.tar.gz" \
+            --arg url_darwin_x64 "$URL_DARWIN_X64" \
             --arg sig_darwin_aarch64 "$SIG_DARWIN_AARCH64" \
-            --arg url_darwin_aarch64 "${BASE_URL}/Marty-Verifier_${VERSION}_aarch64.app.tar.gz" \
+            --arg url_darwin_aarch64 "$URL_DARWIN_AARCH64" \
             --arg sig_linux_x64 "$SIG_LINUX_X64" \
-            --arg url_linux_x64 "${BASE_URL}/marty-verifier_${VERSION}_amd64.AppImage.tar.gz" \
+            --arg url_linux_x64 "$URL_LINUX_X64" \
             --arg sig_windows_x64 "$SIG_WINDOWS_X64" \
-            --arg url_windows_x64 "${BASE_URL}/Marty-Verifier_${VERSION}_x64-setup.nsis.zip" \
+            --arg url_windows_x64 "$URL_WINDOWS_X64" \
             '{
               version: $version,
               notes: $notes,
