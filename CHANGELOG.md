@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased] - 2026-07-17
 
+## [unreleased] - 2026-07-17
+
 ### Bug Fixes
 
 - **release**: Align Tauri API minor version ([5d20489](5d204898424de9dfd190c0dcd952dc9b9b08b65d))
