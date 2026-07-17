@@ -38,9 +38,13 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@mui/icons-material'],
+        manualChunks(id) {
+          if (id.includes('/node_modules/@mui/')) {
+            return 'mui';
+          }
+          if (id.includes('/node_modules/react') || id.includes('/node_modules/@remix-run/')) {
+            return 'vendor';
+          }
         },
       },
     },

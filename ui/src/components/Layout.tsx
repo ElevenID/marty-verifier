@@ -127,20 +127,22 @@ export default function Layout({ children }: LayoutProps) {
             {navItems.find((item) => item.path === location.pathname)?.label ?? 'Marty Verifier'}
           </Typography>
           <Box
-            sx={{
+            sx={[{
               width: 12,
               height: 12,
               borderRadius: '50%',
-              bgcolor: isOnline ? 'success.main' : 'warning.main',
-              mr: 1,
-            }}
+              mr: 1
+            }, isOnline ? {
+              bgcolor: 'success.main'
+            } : {
+              bgcolor: 'warning.main'
+            }]}
           />
           <Typography variant="body2">
             {isOnline ? 'Online' : 'Offline'}
           </Typography>
         </Toolbar>
       </AppBar>
-
       <Box
         component="nav"
         sx={{ width: { sm: DRAWER_WIDTH }, flexShrink: { sm: 0 } }}
@@ -168,7 +170,6 @@ export default function Layout({ children }: LayoutProps) {
           {drawer}
         </Drawer>
       </Box>
-
       <Box
         component="main"
         sx={{

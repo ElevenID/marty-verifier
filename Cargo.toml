@@ -36,7 +36,7 @@ rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 ring = "0.17"
 ed25519-dalek = { version = "2.1", features = ["serde"] }
 blake3 = "1.5"
-jsonwebtoken = "9.3"
+jsonwebtoken = "10.3"
 
 # Keychain
 keyring = "3.6"

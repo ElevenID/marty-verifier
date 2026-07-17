@@ -322,7 +322,7 @@ export default function VerifierPanel({
   return (
     <Card data-testid="verifier-panel">
       <CardContent>
-        <Stack spacing={3} alignItems="center">
+        <Stack spacing={3} sx={{ alignItems: 'center' }}>
           <Typography variant="h5">
             {selectedType.toUpperCase()} Verification
           </Typography>
@@ -391,7 +391,7 @@ export default function VerifierPanel({
               />
             </FormControl>
 
-            <Stack spacing={1} flex={1}>
+            <Stack spacing={1} sx={{ flex: 1 }}>
               <FormControlLabel
                 control={
                   <Checkbox
@@ -415,7 +415,7 @@ export default function VerifierPanel({
                 label="Audit clip TTL (seconds)"
                 value={auditClipTtlSeconds}
                 onChange={(e) => setAuditClipTtlSeconds(Number(e.target.value) || 0)}
-                inputProps={{ min: 5, max: 300 }}
+                slotProps={{ htmlInput: { min: 5, max: 300 } }}
               />
             </Stack>
           </Stack>
@@ -455,7 +455,7 @@ export default function VerifierPanel({
                 label="Face match threshold"
                 value={faceThreshold}
                 onChange={(e) => setFaceThreshold(Number(e.target.value) || 0)}
-                inputProps={{ step: 0.01, min: 0, max: 1 }}
+                slotProps={{ htmlInput: { step: 0.01, min: 0, max: 1 } }}
               />
             </Stack>
           )}
@@ -546,17 +546,23 @@ export default function VerifierPanel({
           )}
 
           <Box
-            sx={{
+            sx={[{
               width: 200,
               height: 200,
               border: '2px dashed',
-              borderColor: scanning ? 'primary.main' : 'grey.400',
               borderRadius: 2,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              bgcolor: scanning ? 'action.hover' : 'transparent',
-            }}
+              justifyContent: 'center'
+            }, scanning ? {
+              borderColor: 'primary.main'
+            } : {
+              borderColor: 'grey.400'
+            }, scanning ? {
+              bgcolor: 'action.hover'
+            } : {
+              bgcolor: 'transparent'
+            }]}
           >
             {scanning || verifying ? (
               <CircularProgress />
@@ -565,7 +571,7 @@ export default function VerifierPanel({
             )}
           </Box>
 
-          <Typography variant="body2" color="text.secondary" textAlign="center">
+          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
             {scanning
               ? 'Scanning QR code...'
               : verifying

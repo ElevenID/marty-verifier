@@ -21,6 +21,7 @@ import {
   IconButton,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   Stack,
   Typography,
@@ -145,7 +146,7 @@ export const FlowsPage: React.FC = () => {
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', p: 3 }}>
       {/* Header */}
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
+      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Flow Management</Typography>
         <Stack direction="row" spacing={2}>
           <Button
@@ -165,16 +166,19 @@ export const FlowsPage: React.FC = () => {
           </Button>
         </Stack>
       </Stack>
-
       {flowsError && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {flowsError}
         </Alert>
       )}
-
       <Grid container spacing={3} sx={{ flexGrow: 1, overflow: 'hidden' }}>
         {/* Flow List */}
-        <Grid item xs={12} md={4} sx={{ height: '100%', overflow: 'auto' }}>
+        <Grid
+          sx={{ height: '100%', overflow: 'auto' }}
+          size={{
+            xs: 12,
+            md: 4
+          }}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -183,7 +187,7 @@ export const FlowsPage: React.FC = () => {
               <Divider sx={{ mb: 2 }} />
               
               {flowsLoading ? (
-                <Box display="flex" justifyContent="center" py={4}>
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                   <CircularProgress />
                 </Box>
               ) : (
@@ -191,9 +195,7 @@ export const FlowsPage: React.FC = () => {
                   {flows.map((flow) => (
                     <ListItem
                       key={flow.id}
-                      button
-                      selected={selectedFlow?.id === flow.id}
-                      onClick={() => handleSelectFlow(flow)}
+                      disablePadding
                       secondaryAction={
                         <Stack direction="row" spacing={1}>
                           <IconButton
@@ -233,17 +235,20 @@ export const FlowsPage: React.FC = () => {
                         </Stack>
                       }
                     >
-                      <ListItemText
-                        primaryTypographyProps={{ component: 'div' }}
-                        secondaryTypographyProps={{ component: 'div' }}
+                      <ListItemButton
+                        selected={selectedFlow?.id === flow.id}
+                        onClick={() => handleSelectFlow(flow)}
+                      >
+                       <ListItemText
+                        slotProps={{ primary: { component: 'div' }, secondary: { component: 'div' } }}
                         primary={
-                          <Stack direction="row" spacing={1} alignItems="center">
+                          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                             <Typography variant="body1">{flow.name}</Typography>
                             {!flow.enabled && <Chip label="Disabled" size="small" />}
                           </Stack>
                         }
                         secondary={
-                          <Stack direction="row" spacing={1} mt={0.5}>
+                          <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
                             <Chip
                               label={getFlowTypeLabel(flow.flow_type)}
                               size="small"
@@ -256,7 +261,8 @@ export const FlowsPage: React.FC = () => {
                             />
                           </Stack>
                         }
-                      />
+                       />
+                      </ListItemButton>
                     </ListItem>
                   ))}
                 </List>
@@ -266,11 +272,16 @@ export const FlowsPage: React.FC = () => {
         </Grid>
 
         {/* Flow Details */}
-        <Grid item xs={12} md={8} sx={{ height: '100%', overflow: 'auto' }}>
+        <Grid
+          sx={{ height: '100%', overflow: 'auto' }}
+          size={{
+            xs: 12,
+            md: 8
+          }}>
           {selectedFlow ? (
             <Card>
               <CardContent>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+                <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h5">{selectedFlow.name}</Typography>
                   <Stack direction="row" spacing={1}>
                     <Chip
@@ -285,7 +296,7 @@ export const FlowsPage: React.FC = () => {
                 </Stack>
 
                 {selectedFlow.description && (
-                  <Typography variant="body2" color="text.secondary" mb={2}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                     {selectedFlow.description}
                   </Typography>
                 )}
@@ -347,7 +358,7 @@ export const FlowsPage: React.FC = () => {
                         <Typography variant="subtitle2" gutterBottom>
                           Deployment Profiles
                         </Typography>
-                        <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
                           {selectedFlow.deployment_profile_ids.map((id) => (
                             <Chip key={id} label={id} size="small" />
                           ))}
@@ -379,7 +390,7 @@ export const FlowsPage: React.FC = () => {
           ) : (
             <Card>
               <CardContent>
-                <Typography variant="body1" color="text.secondary" textAlign="center" py={8}>
+                <Typography variant="body1" color="text.secondary" sx={{ textAlign: 'center', py: 8 }}>
                   Select a flow to view details
                 </Typography>
               </CardContent>
@@ -387,7 +398,6 @@ export const FlowsPage: React.FC = () => {
           )}
         </Grid>
       </Grid>
-
       {/* Flow Form Dialog */}
       <Dialog open={formOpen} onClose={() => handleFormClose(false)} maxWidth="md" fullWidth>
         <DialogTitle>{editingFlow ? 'Edit Flow' : 'Create Flow'}</DialogTitle>
@@ -395,7 +405,6 @@ export const FlowsPage: React.FC = () => {
           <FlowForm flow={editingFlow} onClose={handleFormClose} />
         </DialogContent>
       </Dialog>
-
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)}>
         <DialogTitle>Confirm Delete</DialogTitle>

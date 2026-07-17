@@ -107,7 +107,7 @@ export const FlowForm: React.FC<FlowFormProps> = ({ flow, onClose }) => {
 
   return (
     <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-      <Stack spacing={3} mt={2}>
+      <Stack spacing={3} sx={{ mt: 2 }}>
         {error && <Alert severity="error">{error}</Alert>}
 
         <TextField
@@ -207,7 +207,7 @@ export const FlowForm: React.FC<FlowFormProps> = ({ flow, onClose }) => {
           label="Enabled"
         />
 
-        <Stack direction="row" spacing={2} justifyContent="flex-end">
+        <Stack direction="row" spacing={2} sx={{ justifyContent: 'flex-end' }}>
           <Button onClick={() => onClose(false)} disabled={loading}>
             Cancel
           </Button>
