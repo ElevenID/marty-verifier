@@ -35,7 +35,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "targets": ["app"],
+    "targets": "all",
+    "createUpdaterArtifacts": "v1Compatible",
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist"
