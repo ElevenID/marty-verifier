@@ -33,8 +33,8 @@ jobs:
           else
             TAG="${GITHUB_EVENT_CLIENT_PAYLOAD_TAG}"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_EVENT_INPUTS_MARTY_CORE_TAG: ${{ github.event.inputs.marty_core_tag }}
           GITHUB_EVENT_CLIENT_PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
@@ -70,9 +70,7 @@ jobs:
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           
           # Parse version components
-          MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
-          MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
           
           # Increment patch version
           NEW_PATCH=$((PATCH + 1))
@@ -94,7 +92,7 @@ jobs:
           rm -f package.json.bak
           cd ..
           
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
           echo "Updated version from $CURRENT_VERSION to $NEW_VERSION"
 
       - name: Commit and push changes
