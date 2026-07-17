@@ -28,10 +28,6 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const { hardwareTier, hardwareCapabilities } = useAppStore();
 
-  useEffect(() => {
-    loadConfig();
-  }, []);
-
   const loadConfig = async () => {
     try {
       const cfg = await getConfig();
@@ -42,6 +38,10 @@ export default function SettingsPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadConfig();
+  }, []);
 
   const handleSave = async () => {
     if (!config) return;

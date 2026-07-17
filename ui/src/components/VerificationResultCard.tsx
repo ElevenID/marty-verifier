@@ -64,7 +64,7 @@ export default function VerificationResultCard({ result }: VerificationResultCar
               {config.icon}
             </Box>
             <Box sx={{ flex: 1 }}>
-              <Typography variant="h5" fontWeight="bold">
+              <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
                 {config.label}
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -128,7 +128,7 @@ export default function VerificationResultCard({ result }: VerificationResultCar
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 Passport Verification Details
               </Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                 <Chip
                   label={`DSC Chain: ${result.emrtd_details.dsc_chain_status}`}
                   color={
@@ -175,7 +175,7 @@ export default function VerificationResultCard({ result }: VerificationResultCar
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 DTC Verification Checks
               </Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                 {result.dtc_details.checks.map((check) => (
                   <Chip
                     key={check.check_name}
@@ -250,7 +250,7 @@ export default function VerificationResultCard({ result }: VerificationResultCar
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 Liveness
               </Typography>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
                 <EyeIcon color={result.liveness.passed ? 'success' : 'error'} />
                 <Typography variant="body2">
                   {result.liveness.passed ? 'Passed' : 'Failed'} (score:{' '}
@@ -283,7 +283,7 @@ export default function VerificationResultCard({ result }: VerificationResultCar
               <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                 Face Match
               </Typography>
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                 <FaceIcon color={result.face_match.verified ? 'success' : 'error'} />
                 <Typography variant="body2">
                   {result.face_match.verified ? 'Matched' : 'No Match'} (score:{' '}

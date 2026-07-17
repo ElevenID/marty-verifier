@@ -119,9 +119,9 @@ export const ApprovalQueuePage: React.FC = () => {
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
+      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Approval Queue</Typography>
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
           <Chip
             label={`${approvalQueue.length} Pending`}
             color={approvalQueue.length > 0 ? 'warning' : 'default'}
@@ -136,40 +136,42 @@ export const ApprovalQueuePage: React.FC = () => {
           </Button>
         </Stack>
       </Stack>
-
       {approvalQueueError && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {approvalQueueError}
         </Alert>
       )}
-
       {/* Loading State */}
       {approvalQueueLoading && approvalQueue.length === 0 && (
-        <Box display="flex" justifyContent="center" py={8}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
           <CircularProgress />
         </Box>
       )}
-
       {/* Empty State */}
       {!approvalQueueLoading && approvalQueue.length === 0 && (
         <Card>
           <CardContent>
-            <Typography variant="body1" color="text.secondary" textAlign="center" py={8}>
+            <Typography variant="body1" color="text.secondary" sx={{ textAlign: 'center', py: 8 }}>
               No executions awaiting approval
             </Typography>
           </CardContent>
         </Card>
       )}
-
       {/* Approval Queue Grid */}
       {approvalQueue.length > 0 && (
         <Grid container spacing={3}>
           {approvalQueue.map((execution) => (
-            <Grid item xs={12} md={6} lg={4} key={execution.id}>
+            <Grid
+              key={execution.id}
+              size={{
+                xs: 12,
+                md: 6,
+                lg: 4
+              }}>
               <Card elevation={2}>
                 <CardContent>
                   <Stack spacing={2}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                    <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <Typography variant="h6">
                         Flow Execution
                       </Typography>
@@ -181,26 +183,26 @@ export const ApprovalQueuePage: React.FC = () => {
                     </Stack>
 
                     <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                         Execution ID
                       </Typography>
-                      <Typography variant="body2" fontFamily="monospace" noWrap>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace' }} noWrap>
                         {execution.id}
                       </Typography>
                     </Box>
 
                     <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                         Flow ID
                       </Typography>
-                      <Typography variant="body2" fontFamily="monospace" noWrap>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace' }} noWrap>
                         {execution.flow_id}
                       </Typography>
                     </Box>
 
                     {execution.current_step && (
                       <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                           Current Step
                         </Typography>
                         <Typography variant="body2">
@@ -210,7 +212,7 @@ export const ApprovalQueuePage: React.FC = () => {
                     )}
 
                     <Box>
-                      <Typography variant="caption" color="text.secondary" display="block">
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                         Started
                       </Typography>
                       <Typography variant="body2">
@@ -220,7 +222,7 @@ export const ApprovalQueuePage: React.FC = () => {
 
                     {Object.keys(execution.context_data).length > 0 && (
                       <Box>
-                        <Typography variant="caption" color="text.secondary" display="block">
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                           Context
                         </Typography>
                         <Box
@@ -263,7 +265,6 @@ export const ApprovalQueuePage: React.FC = () => {
           ))}
         </Grid>
       )}
-
       {/* Action Dialog */}
       <Dialog
         open={actionDialogOpen}
@@ -275,15 +276,15 @@ export const ApprovalQueuePage: React.FC = () => {
           {actionType === 'approve' ? 'Approve' : 'Reject'} Execution
         </DialogTitle>
         <DialogContent>
-          <Stack spacing={3} mt={1}>
+          <Stack spacing={3} sx={{ mt: 1 }}>
             {actionError && <Alert severity="error">{actionError}</Alert>}
 
             {selectedExecution && (
               <Box>
-                <Typography variant="caption" color="text.secondary" display="block">
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                   Execution ID
                 </Typography>
-                <Typography variant="body2" fontFamily="monospace">
+                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
                   {selectedExecution.id}
                 </Typography>
               </Box>

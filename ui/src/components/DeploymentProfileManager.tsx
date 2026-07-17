@@ -44,11 +44,6 @@ export const DeploymentProfileManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch profiles on mount
-  useEffect(() => {
-    fetchProfiles();
-  }, []);
-
   const fetchProfiles = async () => {
     setLoading(true);
     setError(null);
@@ -63,6 +58,11 @@ export const DeploymentProfileManager: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Fetch profiles on mount
+  useEffect(() => {
+    fetchProfiles();
+  }, []);
 
   const fetchLanes = async (profileId: string) => {
     try {

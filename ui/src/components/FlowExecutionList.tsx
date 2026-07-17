@@ -85,7 +85,7 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" py={4}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
         <CircularProgress />
       </Box>
     );
@@ -93,7 +93,7 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
 
   if (executions.length === 0) {
     return (
-      <Typography variant="body2" color="text.secondary" textAlign="center" py={4}>
+      <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
         No executions yet
       </Typography>
     );
@@ -128,7 +128,7 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
                 <TableCell>
                   {execution.current_step || '-'}
                   {execution.current_step && (
-                    <Typography variant="caption" color="text.secondary" display="block">
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                       Step {execution.current_step_index + 1}
                     </Typography>
                   )}
@@ -173,7 +173,7 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
                 <Typography variant="subtitle2" gutterBottom>
                   Execution ID
                 </Typography>
-                <Typography variant="body2" color="text.secondary" fontFamily="monospace">
+                <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
                   {selectedExecution.id}
                 </Typography>
               </Box>
@@ -204,7 +204,7 @@ export const FlowExecutionList: React.FC<FlowExecutionListProps> = ({
                   <Typography variant="subtitle2" gutterBottom color="error">
                     Error
                   </Typography>
-                  <Typography variant="body2" color="error" fontFamily="monospace">
+                  <Typography variant="body2" color="error" sx={{ fontFamily: 'monospace' }}>
                     {selectedExecution.error}
                   </Typography>
                 </Box>

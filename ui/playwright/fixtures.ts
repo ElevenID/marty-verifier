@@ -160,11 +160,11 @@ async function injectTauriMock(page: Page, commands: MockCommands = {}) {
 
 // Extended test with fixtures
 export const test = base.extend<TestFixtures>({
-  mockTauri: async ({ page }, use) => {
+  mockTauri: async ({ page }, applyFixture) => {
     const mock = async (commands: MockCommands = {}) => {
       await injectTauriMock(page, commands);
     };
-    await use(mock);
+    await applyFixture(mock);
   },
 });
 

@@ -95,7 +95,6 @@ export default function SyncPage() {
           Manage trust anchors and Open Badge verification keys for credential verification.
         </Typography>
       </Box>
-
       {/* Sync Status */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -118,7 +117,11 @@ export default function SyncPage() {
 
           {sync && (
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={3}>
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 3
+                }}>
                 <Box sx={{ textAlign: 'center' }}>
                   <CertIcon color="primary" sx={{ fontSize: 40 }} />
                   <Typography variant="h4">{sync.iaca_certificates}</Typography>
@@ -127,7 +130,11 @@ export default function SyncPage() {
                   </Typography>
                 </Box>
               </Grid>
-              <Grid item xs={12} sm={3}>
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 3
+                }}>
                 <Box sx={{ textAlign: 'center' }}>
                   <CertIcon color="secondary" sx={{ fontSize: 40 }} />
                   <Typography variant="h4">{sync.csca_certificates}</Typography>
@@ -136,7 +143,11 @@ export default function SyncPage() {
                   </Typography>
                 </Box>
               </Grid>
-              <Grid item xs={12} sm={3}>
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 3
+                }}>
                 <Box sx={{ textAlign: 'center' }}>
                   <CertIcon color="action" sx={{ fontSize: 40 }} />
                   <Typography variant="h4">{sync.dsc_certificates}</Typography>
@@ -145,7 +156,11 @@ export default function SyncPage() {
                   </Typography>
                 </Box>
               </Grid>
-              <Grid item xs={12} sm={3}>
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 3
+                }}>
                 <Box sx={{ textAlign: 'center' }}>
                   <CertIcon color="info" sx={{ fontSize: 40 }} />
                   <Typography variant="h4">{sync.open_badge_keys}</Typography>
@@ -195,7 +210,6 @@ export default function SyncPage() {
           </Stack>
         </CardContent>
       </Card>
-
       {/* Actions */}
       <Card>
         <CardContent>
