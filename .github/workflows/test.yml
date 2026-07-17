@@ -81,7 +81,7 @@ jobs:
       - name: Get pnpm store directory
         id: pnpm-cache
         shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+        run: echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       
       - name: Cache pnpm
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -128,7 +128,7 @@ jobs:
       - name: Get pnpm store directory
         id: pnpm-cache
         shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+        run: echo "STORE_PATH=$(pnpm store path)" >> "$GITHUB_OUTPUT"
       
       - name: Cache pnpm
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
