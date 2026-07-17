@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Marty Team"]
 license = "AGPL-3.0-only"
@@ -78,7 +78,7 @@ marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", tag = "v0.1.1"
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }
-marty-sync = { version = "0.1.0", path = "crates/marty-sync" }
+marty-sync = { version = "0.1.1", path = "crates/marty-sync" }
 marty-reporting = { path = "crates/marty-reporting" }
 marty-app-storage = { path = "crates/marty-app-storage" }
 
