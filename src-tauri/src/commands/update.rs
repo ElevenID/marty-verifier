@@ -125,10 +125,7 @@ pub async fn download_and_install_update(
     Ok(true)
 }
 
-fn resolve_update_channel(
-    requested: Option<String>,
-    preferred: &str,
-) -> Result<String, AppError> {
+fn resolve_update_channel(requested: Option<String>, preferred: &str) -> Result<String, AppError> {
     let channel = requested.unwrap_or_else(|| preferred.to_string());
     if channel.is_empty()
         || !channel

@@ -74,8 +74,7 @@ impl AppState {
 
         // The open-source distribution enables every capability compiled into it.
         // Private downstream distributions can supply another provider.
-        let entitlements: Arc<dyn EntitlementProvider> =
-            Arc::new(AllowAllEntitlementProvider);
+        let entitlements: Arc<dyn EntitlementProvider> = Arc::new(AllowAllEntitlementProvider);
 
         // Initialize sync engine
         let sync_engine = Arc::new(SyncEngine::new(core_storage, config.sync_config.clone())?);
