@@ -1,0 +1,14 @@
+version: 1
+dependencies:
+  - package: glib
+    ecosystem: rust
+    owner: ElevenID
+    upstream: https://github.com/gtk-rs/gtk-rs-core
+    current: "0.18.5"
+    target: tauri-supported-fixed-graph
+    status: temporary-exception
+    decision: replace
+    advisories: [GHSA-wrw7-89jp-8q8g]
+    tracking-issue: https://github.com/ElevenID/marty-verifier/issues/31
+    review-after: 2026-10-18
+    rationale: The latest Tauri Linux GTK/WebKit graph still selects glib 0.18; Linux support remains enabled without forking GTK.

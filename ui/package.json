@@ -1,6 +1,9 @@
 {
   "name": "marty-verifier-ui",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "version": "0.1.1",
   "type": "module",
   "scripts": {
