@@ -132,7 +132,8 @@ impl SecureStorage {
             "#,
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
+        let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map([sql_limit], |row| {
             Ok(VerificationHistoryEntry {
                 id: row.get(0)?,
                 credential_type: row.get(1)?,
@@ -177,8 +178,9 @@ impl SecureStorage {
     pub async fn get_queue_status(&self) -> Result<OfflineQueueStatus, StorageError> {
         let conn = self.conn.lock().await;
 
-        let pending_events: usize =
+        let pending_events: i64 =
             conn.query_row("SELECT COUNT(*) FROM offline_queue", [], |row| row.get(0))?;
+        let pending_events = usize::try_from(pending_events).unwrap_or_default();
 
         let oldest_event: Option<String> = conn
             .query_row("SELECT MIN(created_at) FROM offline_queue", [], |row| {
@@ -187,11 +189,12 @@ impl SecureStorage {
             .ok();
 
         // Estimate data size
-        let data_size_bytes: usize = conn.query_row(
+        let data_size_bytes: i64 = conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM offline_queue",
             [],
             |row| row.get(0),
         )?;
+        let data_size_bytes = usize::try_from(data_size_bytes).unwrap_or_default();
 
         // Get last sync times from sync_state
         let (last_sync_attempt, last_successful_sync): (Option<String>, Option<String>) = conn
@@ -385,9 +388,9 @@ impl SecureStorage {
     /// Count trusted Open Badge verification methods
     pub async fn count_open_badge_keys(&self) -> Result<usize, StorageError> {
         let conn = self.conn.lock().await;
-        let count: usize =
+        let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM open_badge_keys", [], |row| row.get(0))?;
-        Ok(count)
+        Ok(usize::try_from(count).unwrap_or_default())
     }
 
     /// Get latest Open Badge trust list sync timestamp
@@ -457,12 +460,12 @@ impl SecureStorage {
         anchor_type: TrustAnchorType,
     ) -> Result<usize, StorageError> {
         let conn = self.conn.lock().await;
-        let count: usize = conn.query_row(
+        let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM trust_anchors WHERE anchor_type = ?",
             [anchor_type.to_string()],
             |row| row.get(0),
         )?;
-        Ok(count)
+        Ok(usize::try_from(count).unwrap_or_default())
     }
 
     /// Get sync state
@@ -572,7 +575,8 @@ impl SecureStorage {
             "#,
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
+        let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map([sql_limit], |row| {
             let payload_str: String = row.get(2)?;
             Ok(OfflineQueueEntry {
                 id: row.get(0)?,
