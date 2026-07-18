@@ -92,3 +92,5 @@ opt-level = "z"
 [patch.crates-io]
 ssi-jwt = { git = "https://github.com/ElevenID/ssi-jwt-elevenid", rev = "957c8b0fbf3e4b967fe73c858a22b38e907b3023" }
 isomdl = { git = "https://github.com/ElevenID/isomdl-elevenid", rev = "069576a64580fc9923b65dcbdad0c2253c44296d" }
+# Temporary RUSTSEC-2024-0429 backport. Remove with Tauri's GTK4/WebKitGTK6 graph.
+glib = { git = "https://github.com/ElevenID/gtk-rs-core.git", rev = "e60f1885a5168cb823914130e6bdd0e89ec1787c" }

@@ -4,11 +4,11 @@ dependencies:
     ecosystem: rust
     owner: ElevenID
     upstream: https://github.com/gtk-rs/gtk-rs-core
-    current: "0.18.5"
-    target: tauri-supported-fixed-graph
+    current: "0.18.5+ElevenID.e60f188"
+    target: tauri-gtk4-webkitgtk6-stable-glib-0.20
     status: temporary-exception
-    decision: replace
+    decision: fork
     advisories: [GHSA-wrw7-89jp-8q8g]
     tracking-issue: https://github.com/ElevenID/marty-verifier/issues/31
-    review-after: 2026-10-18
-    rationale: The latest Tauri Linux GTK/WebKit graph still selects glib 0.18; Linux support remains enabled without forking GTK.
+    review-after: 2026-08-18
+    rationale: Tauri v2 Linux still selects glib 0.18. ElevenID pins only the two-line upstream VariantStrIter fix in https://github.com/ElevenID/gtk-rs-core/commit/e60f1885a5168cb823914130e6bdd0e89ec1787c; remove it when stable Tauri adopts GTK4/WebKitGTK6 and glib 0.20 or later.
