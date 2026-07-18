@@ -2633,16 +2633,6 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash 0.8.12",
- "allocator-api2",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
@@ -2655,6 +2645,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
 
 [[package]]
 name = "hashlink"
@@ -3910,7 +3905,7 @@ dependencies = [
 [[package]]
 name = "marty-biometrics"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -3926,7 +3921,7 @@ dependencies = [
 [[package]]
 name = "marty-crypto"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3979,7 +3974,7 @@ dependencies = [
 [[package]]
 name = "marty-oid4vci"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4022,7 +4017,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4066,7 +4061,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "chrono",
  "serde",
@@ -4077,7 +4072,7 @@ dependencies = [
 [[package]]
 name = "marty-verification"
 version = "0.1.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=a60b081b6206724e0121da561372c4bb759aec97#a60b081b6206724e0121da561372c4bb759aec97"
+source = "git+https://github.com/ElevenID/marty-core?rev=13101ffe4923d7dfa0ae1d329a5236ef7731c724#13101ffe4923d7dfa0ae1d329a5236ef7731c724"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4837,9 +4832,9 @@ dependencies = [
 
 [[package]]
 name = "ordered-float"
-version = "4.6.0"
+version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+checksum = "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e"
 dependencies = [
  "num-traits",
  "rand 0.8.7",
@@ -7095,14 +7090,14 @@ dependencies = [
 [[package]]
 name = "ssi-jwt"
 version = "0.6.0"
-source = "git+https://github.com/ElevenID/ssi-jwt-elevenid?rev=a65d3c79a971be0481f0990041e29140e3f8c408#a65d3c79a971be0481f0990041e29140e3f8c408"
+source = "git+https://github.com/ElevenID/ssi-jwt-elevenid?rev=957c8b0fbf3e4b967fe73c858a22b38e907b3023#957c8b0fbf3e4b967fe73c858a22b38e907b3023"
 dependencies = [
  "async-trait",
  "chrono",
- "hashbrown 0.14.5",
+ "hashbrown 0.17.1",
  "iref",
  "json-syntax",
- "ordered-float 4.6.0",
+ "ordered-float 5.3.0",
  "serde",
  "serde_json",
  "slab",
@@ -7111,7 +7106,7 @@ dependencies = [
  "ssi-crypto",
  "ssi-jwk",
  "ssi-jws",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
