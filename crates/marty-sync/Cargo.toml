@@ -26,7 +26,7 @@ marty-verification.workspace = true
 
 # Certificate parsing
 x509-cert = "0.2"
-der = { version = "0.7", features = ["std"] }
+der = { version = "0.8", features = ["std"] }
 base64 = "0.22"
 blake3 = "1.5"
 ed25519-dalek = { workspace = true }

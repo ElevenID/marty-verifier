@@ -1341,7 +1341,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 2.0.119",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4043,7 +4043,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chrono",
- "der 0.7.10",
+ "der 0.8.1",
  "ed25519-dalek",
  "marty-secure-storage",
  "marty-verification",
