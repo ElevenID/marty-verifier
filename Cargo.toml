@@ -60,7 +60,7 @@ base64 = "0.22"
 url = "2"
 
 # X.509 parsing
-x509-cert = "0.2"
+x509-cert = "0.3"
 
 # UUID
 uuid = { version = "1.11", features = ["v4", "serde"] }
