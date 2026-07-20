@@ -24,7 +24,7 @@ blake3.workspace = true
 directories.workspace = true
 
 # Encryption
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 rand = "0.8"
 base64 = "0.22"
 hex = "0.4"
