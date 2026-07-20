@@ -39,7 +39,7 @@ blake3 = "1.5"
 jsonwebtoken = "10.3"
 
 # Keychain
-keyring = "3.6"
+keyring = "4.1"
 
 # Platform
 directories = "5.0"
