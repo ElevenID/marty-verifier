@@ -42,7 +42,7 @@ jsonwebtoken = "10.3"
 keyring = "3.6"
 
 # Platform
-directories = "5.0"
+directories = "6.0"
 
 # Error handling
 thiserror = "2.0"
