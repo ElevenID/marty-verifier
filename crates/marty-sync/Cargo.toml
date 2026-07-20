@@ -25,7 +25,7 @@ marty-secure-storage.workspace = true
 marty-verification.workspace = true
 
 # Certificate parsing
-x509-cert = "0.2"
+x509-cert = "0.3"
 der = { version = "0.7", features = ["std"] }
 base64 = "0.22"
 blake3 = "1.5"
