@@ -47,7 +47,7 @@ ring.workspace = true
 url.workspace = true
 
 # Platform utilities
-directories = "5.0"
+directories = "6.0"
 
 # Internal crates
 marty-app-storage.workspace = true
