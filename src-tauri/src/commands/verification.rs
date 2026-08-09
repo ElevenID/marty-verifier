@@ -1,6 +1,6 @@
 //! Credential verification commands
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -962,8 +962,18 @@ async fn verify_open_badge_payload(
     let trust_config = state.config.read().await.open_badge_trust.clone();
     ensure_production_open_badge_policy(&trust_config.policy)?;
     let trusted_methods = state.storage.get_open_badge_keys().await?;
-    let store = build_trusted_open_badge_store(&trusted_methods);
     let mut warnings = Vec::new();
+    let (store, rejected_records) = build_trusted_open_badge_store(
+        &trusted_methods,
+        Utc::now(),
+        trust_config.stale_critical_hours,
+    );
+
+    if rejected_records > 0 {
+        warnings.push(format!(
+            "Rejected {rejected_records} Open Badge trust record(s) with invalid lifecycle or binding metadata"
+        ));
+    }
 
     if store.is_empty() {
         warnings.push("Open Badge trust store is empty".to_string());
@@ -1199,12 +1209,95 @@ fn build_open_badge_request(raw: &Value) -> AppResult<(OpenBadgesVersion, Value)
     }
 }
 
-fn build_trusted_open_badge_store(methods: &[OpenBadgeVerificationMethod]) -> DocumentStore {
+fn build_trusted_open_badge_store(
+    methods: &[OpenBadgeVerificationMethod],
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> (DocumentStore, usize) {
     let mut store = DocumentStore::new();
+    let mut ambiguous_ids = HashSet::new();
+    let mut rejected_records = 0;
+
     for method in methods {
-        store.insert(method.id.clone(), method.document.clone());
+        if !open_badge_trust_record_is_usable(method, now, stale_critical_hours) {
+            rejected_records += 1;
+            continue;
+        }
+
+        if ambiguous_ids.contains(&method.id) {
+            rejected_records += 1;
+        } else if store.remove(&method.id).is_some() {
+            ambiguous_ids.insert(method.id.clone());
+            rejected_records += 2;
+        } else {
+            store.insert(method.id.clone(), method.document.clone());
+        }
     }
-    store
+
+    (store, rejected_records)
+}
+
+fn open_badge_trust_record_is_usable(
+    method: &OpenBadgeVerificationMethod,
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> bool {
+    if method.status.as_deref() != Some("active") || method.synced_at > now {
+        return false;
+    }
+
+    let (Some(not_before), Some(not_after)) = (method.not_before, method.not_after) else {
+        return false;
+    };
+    if not_before > now || not_after <= now || not_before >= not_after {
+        return false;
+    }
+
+    let critical_age = Duration::hours(i64::from(stale_critical_hours));
+    if critical_age <= Duration::zero()
+        || now.signed_duration_since(method.synced_at) >= critical_age
+    {
+        return false;
+    }
+
+    let Some(document) = method.document.as_object() else {
+        return false;
+    };
+    if document.get("id").and_then(Value::as_str) != Some(method.id.as_str()) {
+        return false;
+    }
+
+    let Some(controller) = method.controller.as_deref() else {
+        return false;
+    };
+    if document.get("controller").and_then(Value::as_str) != Some(controller) {
+        return false;
+    }
+
+    !contains_private_jwk(&method.document)
+}
+
+fn contains_private_jwk(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, nested)| {
+            if key.starts_with("privateKey") || key == "secretKeyJwk" {
+                return true;
+            }
+
+            if key == "publicKeyJwk" {
+                return nested.as_object().is_none_or(|jwk| {
+                    matches!(jwk.get("kty").and_then(Value::as_str), Some("oct") | None)
+                        || ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]
+                            .iter()
+                            .any(|private| jwk.contains_key(*private))
+                });
+            }
+
+            contains_private_jwk(nested)
+        }),
+        Value::Array(items) => items.iter().any(contains_private_jwk),
+        _ => false,
+    }
 }
 
 fn extract_open_badge_method_id(request: &Value, version: OpenBadgesVersion) -> Option<String> {
@@ -2003,7 +2096,7 @@ pub async fn verify_open_badge_offline(
     let (version, mut req_value) = build_open_badge_request(&raw)?;
 
     // Empty store + explicit offline merge so embedded documents are accepted.
-    let mut store = build_trusted_open_badge_store(&[]);
+    let mut store = DocumentStore::new();
 
     let request_store = extract_open_badge_document_store(&req_value)?;
     merge_open_badge_offline_store(&mut store, &request_store);
@@ -2345,6 +2438,92 @@ mod tests {
         let (version, request) = build_open_badge_request(&ob3).expect("ob3 request");
         assert_eq!(version, OpenBadgesVersion::V3);
         assert!(request.get("credential").is_some());
+    }
+
+    fn active_open_badge_method(now: DateTime<Utc>) -> OpenBadgeVerificationMethod {
+        OpenBadgeVerificationMethod {
+            id: "did:example:issuer#key-1".to_string(),
+            document: json!({
+                "id": "did:example:issuer#key-1",
+                "type": "JsonWebKey2020",
+                "controller": "did:example:issuer",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": "11qYAYdk9JbF9h5H4fGxM7yJFMw9qkE3vZ8LxJ8rV5M"
+                }
+            }),
+            controller: Some("did:example:issuer".to_string()),
+            issuer: None,
+            kid: None,
+            not_before: Some(now - Duration::hours(1)),
+            not_after: Some(now + Duration::hours(1)),
+            status: Some("active".to_string()),
+            source: marty_app_storage::OpenBadgeKeySource::Sync,
+            synced_at: now - Duration::hours(1),
+        }
+    }
+
+    #[test]
+    fn production_open_badge_store_admits_only_active_in_window_records() {
+        let now = Utc::now();
+        let active = active_open_badge_method(now);
+        let (store, rejected) =
+            build_trusted_open_badge_store(std::slice::from_ref(&active), now, 48);
+        assert_eq!(store.len(), 1);
+        assert_eq!(rejected, 0);
+
+        let mut inactive = active.clone();
+        inactive.status = Some("revoked".to_string());
+        assert!(!open_badge_trust_record_is_usable(&inactive, now, 48));
+
+        let mut not_yet_valid = active.clone();
+        not_yet_valid.not_before = Some(now + Duration::seconds(1));
+        assert!(!open_badge_trust_record_is_usable(&not_yet_valid, now, 48));
+
+        let mut expired = active.clone();
+        expired.not_after = Some(now);
+        assert!(!open_badge_trust_record_is_usable(&expired, now, 48));
+
+        let mut critically_stale = active;
+        critically_stale.synced_at = now - Duration::hours(48);
+        assert!(!open_badge_trust_record_is_usable(
+            &critically_stale,
+            now,
+            48
+        ));
+    }
+
+    #[test]
+    fn production_open_badge_store_rejects_binding_conflicts_and_private_keys() {
+        let now = Utc::now();
+        let active = active_open_badge_method(now);
+
+        let mut wrong_id = active.clone();
+        wrong_id.document["id"] = json!("did:example:issuer#other-key");
+        assert!(!open_badge_trust_record_is_usable(&wrong_id, now, 48));
+
+        let mut wrong_controller = active.clone();
+        wrong_controller.document["controller"] = json!("did:example:other");
+        assert!(!open_badge_trust_record_is_usable(
+            &wrong_controller,
+            now,
+            48
+        ));
+
+        let mut private_key = active;
+        private_key.document["publicKeyJwk"]["d"] = json!("private-material");
+        assert!(!open_badge_trust_record_is_usable(&private_key, now, 48));
+    }
+
+    #[test]
+    fn production_open_badge_store_rejects_duplicate_method_ids() {
+        let now = Utc::now();
+        let method = active_open_badge_method(now);
+        let (store, rejected) = build_trusted_open_badge_store(&[method.clone(), method], now, 48);
+
+        assert!(store.is_empty());
+        assert_eq!(rejected, 2);
     }
 
     #[test]
