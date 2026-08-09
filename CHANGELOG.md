@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased] - 2026-07-17
 
+### Security
+
+- Fail closed when production Open Badge trust policy is unsafe or trust data is unavailable, critically stale, or future-dated, and exclude credential-supplied trust documents.
+- Exclude inactive, out-of-window, stale, future-dated, malformed, conflicting, duplicate, or private-key-bearing Open Badge trust records from production verification.
+
 ## [unreleased] - 2026-07-17
 
 ### Bug Fixes
