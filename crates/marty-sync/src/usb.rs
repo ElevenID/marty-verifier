@@ -158,6 +158,7 @@ pub(crate) async fn import_from_usb(path: &Path) -> Result<VerifiedTrustPackage,
     // Verify against the configured/embedded key and bind the signed key id to
     // that actual key before deriving any records.
     let trusted_public_key = load_trusted_signing_public_key()?;
+    let trusted_recovery_public_key = load_trusted_recovery_public_key()?;
     let verified_signature =
         verify_package_signature(&package_value, &package, &trusted_public_key)?;
 
@@ -165,7 +166,11 @@ pub(crate) async fn import_from_usb(path: &Path) -> Result<VerifiedTrustPackage,
     let expires_at = parse_required_timestamp(&package.expires_at, "package expires_at")?;
     let imported_at = Utc::now();
     validate_package_times(created_at, expires_at, imported_at)?;
-    validate_package_metadata(&package, &verified_signature.signer_key_id)?;
+    validate_package_metadata(
+        &package,
+        &verified_signature.signer_key_id,
+        &signer_key_id(&trusted_recovery_public_key),
+    )?;
 
     // Convert certificates to TrustAnchor format
     let mut anchors = Vec::new();
@@ -350,6 +355,7 @@ fn parse_strict_package(raw_json: &str) -> Result<(TrustAnchorPackage, Value), S
 fn validate_package_metadata(
     package: &TrustAnchorPackage,
     actual_signer_key_id: &str,
+    configured_recovery_key_id: &str,
 ) -> Result<(), SyncError> {
     validate_trust_domain(&package.trust_domain)?;
     if package.sequence == 0 || package.sequence > MAX_SAFE_JSON_INTEGER {
@@ -373,6 +379,9 @@ fn validate_package_metadata(
         "package recovery_signer_key_id",
         &package.recovery_signer_key_id,
     )?;
+    if package.recovery_signer_key_id != configured_recovery_key_id {
+        return Err(SyncError::SignatureVerification);
+    }
     if package.signer_key_id != actual_signer_key_id {
         return Err(SyncError::SignatureVerification);
     }
@@ -787,6 +796,24 @@ fn load_trusted_signing_public_key() -> Result<[u8; 32], SyncError> {
         .map_err(|_| SyncError::UsbImport("Public key must be 32 bytes".to_string()))
 }
 
+fn load_trusted_recovery_public_key() -> Result<[u8; 32], SyncError> {
+    let raw = if let Ok(path) = std::env::var("USB_RECOVERY_PUBLIC_KEY_PATH") {
+        std::fs::read_to_string(&path).map_err(|error| {
+            SyncError::UsbImport(format!("Cannot read recovery public key {path}: {error}"))
+        })?
+    } else if let Some(embedded) = option_env!("USB_RECOVERY_PUBLIC_KEY") {
+        embedded.to_string()
+    } else {
+        return Err(SyncError::UsbImport(
+            "USB recovery public key is not configured".to_string(),
+        ));
+    };
+    let bytes = decode_signing_public_key(&raw)?;
+    bytes
+        .try_into()
+        .map_err(|_| SyncError::UsbImport("USB recovery public key must be 32 bytes".to_string()))
+}
+
 fn signer_key_id(public_key: &[u8; 32]) -> String {
     format!("ed25519:{}", blake3::hash(public_key).to_hex())
 }
@@ -1015,8 +1042,10 @@ mod tests {
                 let raw = serde_json::to_string(&value).expect("package JSON");
                 let (package, _) = parse_strict_package(&raw).expect("strict package shape");
                 let declared_signer = package.signer_key_id.clone();
-                let error = validate_package_metadata(&package, &declared_signer)
-                    .expect_err("noncanonical signer policy id must fail");
+                let declared_recovery = package.recovery_signer_key_id.clone();
+                let error =
+                    validate_package_metadata(&package, &declared_signer, &declared_recovery)
+                        .expect_err("noncanonical signer policy id must fail");
                 assert!(error.to_string().contains("ed25519:"));
             }
         }
@@ -1025,7 +1054,15 @@ mod tests {
             .expect("canonical signer ids must remain valid");
         let package: TrustAnchorPackage = serde_json::from_value(value).unwrap();
         let declared_signer = package.signer_key_id.clone();
-        validate_package_metadata(&package, &declared_signer).expect("canonical signer policy ids");
+        let declared_recovery = package.recovery_signer_key_id.clone();
+        validate_package_metadata(&package, &declared_signer, &declared_recovery)
+            .expect("canonical signer policy ids");
+
+        let different_recovery = format!("ed25519:{}", "c".repeat(64));
+        assert!(matches!(
+            validate_package_metadata(&package, &declared_signer, &different_recovery),
+            Err(SyncError::SignatureVerification)
+        ));
     }
 
     #[test]
@@ -1061,8 +1098,12 @@ mod tests {
 
         let verified = verify_package_signature(&value, &package, &public_key)
             .expect("signature from pinned key");
-        validate_package_metadata(&package, &verified.signer_key_id)
-            .expect("declared signer matches pinned key");
+        validate_package_metadata(
+            &package,
+            &verified.signer_key_id,
+            &package.recovery_signer_key_id,
+        )
+        .expect("declared signer matches pinned key");
         assert_eq!(verified.signer_key_id, signer_key_id(&public_key));
         assert_eq!(verified.package_digest.len(), 64);
 
@@ -1073,7 +1114,11 @@ mod tests {
         let wrong_verified = verify_package_signature(&wrong_value, &wrong_package, &public_key)
             .expect("signature remains cryptographically valid");
         assert!(matches!(
-            validate_package_metadata(&wrong_package, &wrong_verified.signer_key_id),
+            validate_package_metadata(
+                &wrong_package,
+                &wrong_verified.signer_key_id,
+                &wrong_package.recovery_signer_key_id,
+            ),
             Err(SyncError::SignatureVerification)
         ));
 

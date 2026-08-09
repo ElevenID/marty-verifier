@@ -214,8 +214,12 @@ For environments without network access:
 `sync_config.usb_trust_domain` (default `usb:default`). The signature covers
 RFC 8785 JSON Canonicalization Scheme bytes, excluding only `signature`.
 The verifier derives `signer_key_id` from the actual configured or embedded
-Ed25519 public key, rejects a signed mismatch, and applies the complete package
-as one monotonic transaction. Every package must include
+Ed25519 public key and rejects a signed mismatch. The stable recovery identity
+is independently pinned by `USB_RECOVERY_PUBLIC_KEY_PATH` (or the compile-time
+public value `USB_RECOVERY_PUBLIC_KEY`), and every package's signed
+`recovery_signer_key_id` must match that key before any records are parsed or
+stored. The complete package is then applied as one monotonic transaction. Every
+package must include
 `next_signer_key_id` (an exact key id or `null`) and a non-empty
 `recovery_signer_key_id`; both fields are covered by the package signature.
 `signing_cert` is never a source of trust.
