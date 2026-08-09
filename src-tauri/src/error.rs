@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("Storage error: {0}")]
     Storage(#[from] marty_app_storage::StorageError),
 
+    #[error("Governed trust storage error: {0}")]
+    TrustStorage(#[from] marty_secure_storage::StorageError),
+
     #[error("Sync error: {0}")]
     Sync(#[from] marty_sync::SyncError),
 

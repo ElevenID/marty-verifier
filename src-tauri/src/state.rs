@@ -34,6 +34,9 @@ pub struct AppState {
     /// Secure storage for credentials, events, and trust anchors
     pub storage: Arc<SecureStorage>,
 
+    /// Governed trust-package storage shared with the sync engine
+    pub trust_storage: Arc<CoreSecureStorage>,
+
     /// Provider-neutral policy for optional compiled capabilities.
     pub entitlements: Arc<dyn EntitlementProvider>,
 
@@ -77,7 +80,10 @@ impl AppState {
         let entitlements: Arc<dyn EntitlementProvider> = Arc::new(AllowAllEntitlementProvider);
 
         // Initialize sync engine
-        let sync_engine = Arc::new(SyncEngine::new(core_storage, config.sync_config.clone())?);
+        let sync_engine = Arc::new(SyncEngine::new(
+            Arc::clone(&core_storage),
+            config.sync_config.clone(),
+        )?);
 
         // Detect hardware
         let hardware = Arc::new(HardwareDetector::new());
@@ -95,6 +101,7 @@ impl AppState {
         let state = Self {
             config: RwLock::new(config),
             storage,
+            trust_storage: core_storage,
             entitlements,
             sync_engine,
             runtime_config: RuntimeConfig::new(),
