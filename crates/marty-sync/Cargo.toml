@@ -15,6 +15,7 @@ icao = []   # ICAO PKD sync
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+ryu-js = "0.2"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true

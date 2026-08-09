@@ -177,30 +177,63 @@ For environments without network access:
 
 ```json
 {
+  "trust_domain": "usb:default",
+  "sequence": 42,
   "version": "1.0.0",
-  "created_at": "2024-01-15T12:00:00Z",
+  "created_at": "2026-08-08T12:00:00Z",
+  "expires_at": "2026-09-08T12:00:00Z",
+  "signer_key_id": "ed25519:<BLAKE3 digest of the pinned 32-byte public key>",
+  "next_signer_key_id": null,
+  "recovery_signer_key_id": "ed25519:<BLAKE3 digest of the offline recovery public key>",
+  "signing_cert": "informational-only",
   "signature": "base64-encoded-ed25519-signature",
-    "certificates": [
-      {
-        "type": "IACA",
-        "jurisdiction": "US-CA",
-        "subject": "...",
-        "certificate_pem": "..."
-      }
-    ],
-    "open_badge_verification_methods": [
-      {
-        "id": "did:example:issuer#key-1",
-        "type": "JsonWebKey2020",
-        "controller": "did:example:issuer",
-        "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "..." },
-        "status": "active",
-        "not_before": "2025-01-01T00:00:00Z",
-        "not_after": "2027-01-01T00:00:00Z"
-      }
-    ]
-  }
+  "iaca_certificates": [{
+    "jurisdiction": "US-CA",
+    "subject": "...",
+    "issuer": "...",
+    "serial": "...",
+    "not_before": "2026-01-01T00:00:00Z",
+    "not_after": "2027-01-01T00:00:00Z",
+    "certificate_der_b64": "..."
+  }],
+  "csca_certificates": [],
+  "dsc_certificates": [],
+  "open_badge_verification_methods": [{
+    "id": "did:example:issuer#key-1",
+    "type": "JsonWebKey2020",
+    "controller": "did:example:issuer",
+    "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "..." },
+    "status": "active",
+    "not_before": "2026-01-01T00:00:00Z",
+    "not_after": "2027-01-01T00:00:00Z"
+  }]
+}
 ```
+
+`trust_domain` must exactly match the verifier's out-of-band
+`sync_config.usb_trust_domain` (default `usb:default`). The signature covers
+RFC 8785 JSON Canonicalization Scheme bytes, excluding only `signature`.
+The verifier derives `signer_key_id` from the actual configured or embedded
+Ed25519 public key and rejects a signed mismatch. The stable recovery identity
+is independently pinned by `USB_RECOVERY_PUBLIC_KEY_PATH` (or the compile-time
+public value `USB_RECOVERY_PUBLIC_KEY`), and every package's signed
+`recovery_signer_key_id` must match that key before any records are parsed or
+stored. The complete package is then applied as one monotonic transaction. Every
+package must include
+`next_signer_key_id` (an exact key id or `null`) and a non-empty
+`recovery_signer_key_id`; both fields are covered by the package signature.
+`signing_cert` is never a source of trust.
+
+To rotate an operational key, the current signer first signs a higher-sequence
+package whose `next_signer_key_id` is the BLAKE3-derived id of the replacement
+public key. The operator then installs that already-authorized public key through
+`USB_SIGNING_PUBLIC_KEY_PATH`; a package signed by it activates the transition
+and consumes the old authorization. Merely changing the configured key does not
+authorize a transition. For recovery, install the stable offline recovery public
+key and import a higher-sequence recovery-signed package that authorizes a
+distinct next operational signer. The recovery key id cannot change after it is
+first committed, and an unauthorized signer or recovery change leaves all trust
+state untouched.
 
 ## Security
 
