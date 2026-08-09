@@ -299,10 +299,11 @@ impl SyncEngine {
         let package_version = package.provenance.package_version.clone();
         let applied = self
             .storage
-            .apply_trust_package(
+            .apply_trust_package_with_signer_policy(
                 &package.provenance,
                 &package.anchors,
                 &package.open_badge_methods,
+                &package.signer_policy,
             )
             .await?;
 
@@ -376,6 +377,10 @@ mod tests {
         open_badge_methods: Vec<OpenBadgeVerificationMethod>,
     ) -> VerifiedTrustPackage {
         VerifiedTrustPackage {
+            signer_policy: marty_secure_storage::TrustPackageSignerPolicy {
+                next_signer_key_id: None,
+                recovery_signer_key_id: format!("ed25519:{}", "f".repeat(64)),
+            },
             provenance: TrustPackageProvenance {
                 trust_domain: "usb:default".to_string(),
                 sequence,
@@ -558,5 +563,46 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(storage.get_open_badge_keys().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn signed_next_signer_is_activated_once_and_old_signer_fails_closed() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+        let next_signer = format!("ed25519:{}", "b".repeat(64));
+
+        let mut bootstrap = verified_package(
+            1,
+            created_at,
+            '4',
+            vec![trust_anchor(&[10, 11, 12], created_at)],
+            vec![],
+        );
+        bootstrap.signer_policy.next_signer_key_id = Some(next_signer.clone());
+        engine.apply_verified_package(bootstrap).await.unwrap();
+
+        let next_created_at = created_at + chrono::Duration::seconds(1);
+        let next_anchor = trust_anchor(&[13, 14, 15], next_created_at);
+        let mut activated =
+            verified_package(2, next_created_at, '5', vec![next_anchor.clone()], vec![]);
+        activated.provenance.signer_key_id = next_signer;
+        engine.apply_verified_package(activated).await.unwrap();
+
+        let old_created_at = created_at + chrono::Duration::seconds(2);
+        let old_signer = verified_package(3, old_created_at, '6', vec![], vec![]);
+        assert!(matches!(
+            engine.apply_verified_package(old_signer).await,
+            Err(SyncError::Storage(StorageError::TrustPackageSignerChange(
+                _
+            )))
+        ));
+        let anchors = storage
+            .get_trust_anchor_records(TrustAnchorType::Iaca, None)
+            .await
+            .unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].anchor.id, next_anchor.id);
     }
 }
