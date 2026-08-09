@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Reject duplicate-member, oversized, malformed, partially parsed, private-key-bearing, or future-dated USB trust packages before returning any derived records, and bind record freshness to the signed package timestamp.
+
 ## [0.1.0] - 2026-01-07
 
 ### Added

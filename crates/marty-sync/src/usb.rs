@@ -1,11 +1,24 @@
 //! USB import for air-gapped deployments
 
+use std::collections::HashSet;
+use std::fmt;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+use der::Decode;
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use x509_cert::Certificate;
 
 use crate::{error::SyncError, signing_key::decode_signing_public_key};
 use marty_secure_storage::{OpenBadgeKeySource, OpenBadgeVerificationMethod, TrustAnchor};
+
+const MAX_PACKAGE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PACKAGE_ENTRIES: usize = 4096;
+const MAX_CERTIFICATE_BYTES: usize = 128 * 1024;
+const MAX_IDENTIFIER_LEN: usize = 512;
+const MAX_PACKAGE_FUTURE_SKEW_SECONDS: i64 = 300;
 
 /// USB import result
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,17 +33,16 @@ pub struct UsbImportResult {
 
 /// USB trust anchor package format
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrustAnchorPackage {
     /// Package version
     pub version: String,
     /// Package creation timestamp
-    #[allow(dead_code)]
     pub created_at: String,
-    /// Signing certificate (PEM)
-    #[allow(dead_code)]
-    pub signing_cert: String,
+    /// Informational legacy certificate field. Trust comes only from the pinned key.
+    #[serde(rename = "signing_cert")]
+    pub _signing_cert: String,
     /// Package signature (base64)
-    #[allow(dead_code)]
     pub signature: String,
     /// IACA certificates (DER, base64 encoded)
     pub iaca_certificates: Vec<CertificateEntry>,
@@ -45,6 +57,7 @@ pub struct TrustAnchorPackage {
 
 /// Certificate entry in package
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CertificateEntry {
     /// Jurisdiction code
     pub jurisdiction: String,
@@ -55,11 +68,27 @@ pub struct CertificateEntry {
     /// Certificate serial
     pub serial: Option<String>,
     /// Not before date
-    pub not_before: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_declared_value")]
+    not_before: DeclaredValue,
     /// Not after date
-    pub not_after: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_declared_value")]
+    not_after: DeclaredValue,
     /// DER-encoded certificate (base64)
     pub certificate_der_b64: String,
+}
+
+#[derive(Debug, Default)]
+enum DeclaredValue {
+    #[default]
+    Missing,
+    Present(Value),
+}
+
+fn deserialize_declared_value<'de, D>(deserializer: D) -> Result<DeclaredValue, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(DeclaredValue::Present)
 }
 
 /// Import trust anchors from USB package
@@ -83,59 +112,73 @@ pub async fn import_from_usb(
         )));
     }
 
+    let package_size = std::fs::metadata(path)?.len();
+    if package_size == 0 || package_size > MAX_PACKAGE_BYTES {
+        return Err(SyncError::UsbImport(format!(
+            "Package must contain between 1 and {MAX_PACKAGE_BYTES} bytes"
+        )));
+    }
+
     // Read package file
     let package_json = std::fs::read_to_string(path)?;
 
-    // Parse package
-    let package: TrustAnchorPackage = serde_json::from_str(&package_json)
-        .map_err(|e| SyncError::UsbImport(format!("Invalid package format: {}", e)))?;
+    // Parse without permitting duplicate JSON members or schema drift.
+    let package = parse_strict_package(&package_json)?;
 
     // Verify package signature
     let signature_valid = verify_package_signature(&package_json, &package)?;
 
+    let created_at = parse_required_timestamp(&package.created_at, "package created_at")?;
+    validate_package_created_at(created_at, Utc::now())?;
+    validate_package_metadata(&package)?;
+
     // Convert certificates to TrustAnchor format
     let mut anchors = Vec::new();
-    let mut count = 0;
+    let mut anchor_ids = HashSet::new();
 
     // Process IACA certificates
     for cert in &package.iaca_certificates {
-        if let Ok(anchor) =
-            parse_certificate_entry(cert, marty_secure_storage::TrustAnchorType::Iaca)
-        {
-            anchors.push(anchor);
-            count += 1;
-        }
+        let anchor = parse_certificate_entry(
+            cert,
+            marty_secure_storage::TrustAnchorType::Iaca,
+            created_at,
+        )?;
+        insert_unique_anchor(&mut anchors, &mut anchor_ids, anchor)?;
     }
 
     // Process CSCA certificates
     for cert in &package.csca_certificates {
-        if let Ok(anchor) =
-            parse_certificate_entry(cert, marty_secure_storage::TrustAnchorType::Csca)
-        {
-            anchors.push(anchor);
-            count += 1;
-        }
+        let anchor = parse_certificate_entry(
+            cert,
+            marty_secure_storage::TrustAnchorType::Csca,
+            created_at,
+        )?;
+        insert_unique_anchor(&mut anchors, &mut anchor_ids, anchor)?;
     }
 
     // Process DSC certificates
     for cert in &package.dsc_certificates {
-        if let Ok(anchor) =
-            parse_certificate_entry(cert, marty_secure_storage::TrustAnchorType::Dsc)
-        {
-            anchors.push(anchor);
-            count += 1;
-        }
+        let anchor =
+            parse_certificate_entry(cert, marty_secure_storage::TrustAnchorType::Dsc, created_at)?;
+        insert_unique_anchor(&mut anchors, &mut anchor_ids, anchor)?;
     }
 
     // Convert Open Badge verification methods
     let mut open_badge_keys = Vec::new();
-    let mut open_badge_count = 0;
+    let mut method_ids = HashSet::new();
     for method in &package.open_badge_verification_methods {
-        if let Ok(entry) = parse_open_badge_method(method) {
-            open_badge_keys.push(entry);
-            open_badge_count += 1;
+        let entry = parse_open_badge_method(method, created_at)?;
+        if !method_ids.insert(entry.id.clone()) {
+            return Err(SyncError::Parse(format!(
+                "Duplicate Open Badge method id {}",
+                entry.id
+            )));
         }
+        open_badge_keys.push(entry);
     }
+
+    let count = anchors.len();
+    let open_badge_count = open_badge_keys.len();
 
     tracing::info!(
         count,
@@ -158,16 +201,204 @@ pub async fn import_from_usb(
     ))
 }
 
+struct StrictJson(Value);
+
+impl<'de> Deserialize<'de> for StrictJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonVisitor)
+    }
+}
+
+struct StrictJsonVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonVisitor {
+    type Value = StrictJson;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("JSON without duplicate object members")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(Value::Number)
+            .map(StrictJson)
+            .ok_or_else(|| E::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::String(value.to_string())))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(StrictJson(Value::Null))
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        StrictJson::deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(StrictJson(value)) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(StrictJson(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(de::Error::custom(format!(
+                    "duplicate JSON object member '{key}'"
+                )));
+            }
+            let StrictJson(value) = object.next_value()?;
+            values.insert(key, value);
+        }
+        Ok(StrictJson(Value::Object(values)))
+    }
+}
+
+fn parse_strict_package(raw_json: &str) -> Result<TrustAnchorPackage, SyncError> {
+    let mut deserializer = serde_json::Deserializer::from_str(raw_json);
+    let StrictJson(value) = StrictJson::deserialize(&mut deserializer)
+        .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
+    deserializer
+        .end()
+        .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
+    serde_json::from_value(value)
+        .map_err(|error| SyncError::UsbImport(format!("Invalid package schema: {error}")))
+}
+
+fn validate_package_metadata(package: &TrustAnchorPackage) -> Result<(), SyncError> {
+    validate_identifier("package version", &package.version)?;
+    let entries = package
+        .iaca_certificates
+        .len()
+        .checked_add(package.csca_certificates.len())
+        .and_then(|count| count.checked_add(package.dsc_certificates.len()))
+        .and_then(|count| count.checked_add(package.open_badge_verification_methods.len()))
+        .ok_or_else(|| SyncError::Parse("Package entry count overflow".to_string()))?;
+    if entries > MAX_PACKAGE_ENTRIES {
+        return Err(SyncError::Parse(format!(
+            "Package exceeds the {MAX_PACKAGE_ENTRIES}-entry limit"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_package_created_at(
+    created_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<(), SyncError> {
+    if created_at > now + chrono::Duration::seconds(MAX_PACKAGE_FUTURE_SKEW_SECONDS) {
+        return Err(SyncError::Parse(
+            "Package created_at is beyond the allowed clock skew".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_identifier(name: &str, value: &str) -> Result<(), SyncError> {
+    if value.is_empty()
+        || value.len() > MAX_IDENTIFIER_LEN
+        || value.trim() != value
+        || value.chars().any(char::is_control)
+    {
+        return Err(SyncError::Parse(format!(
+            "{name} must be a bounded non-empty value without surrounding whitespace"
+        )));
+    }
+    Ok(())
+}
+
+fn insert_unique_anchor(
+    anchors: &mut Vec<TrustAnchor>,
+    ids: &mut HashSet<String>,
+    anchor: TrustAnchor,
+) -> Result<(), SyncError> {
+    if !ids.insert(anchor.id.clone()) {
+        return Err(SyncError::Parse(format!(
+            "Duplicate certificate id {}",
+            anchor.id
+        )));
+    }
+    anchors.push(anchor);
+    Ok(())
+}
+
 fn parse_certificate_entry(
     entry: &CertificateEntry,
     anchor_type: marty_secure_storage::TrustAnchorType,
+    package_created_at: DateTime<Utc>,
 ) -> Result<TrustAnchor, SyncError> {
     use base64::Engine;
-    use chrono::Utc;
+
+    validate_identifier("certificate jurisdiction", &entry.jurisdiction)?;
+    for (name, value) in [
+        ("certificate subject", entry.subject.as_deref()),
+        ("certificate issuer", entry.issuer.as_deref()),
+        ("certificate serial", entry.serial.as_deref()),
+    ] {
+        if let Some(value) = value {
+            validate_identifier(name, value)?;
+        }
+    }
 
     let certificate_der = base64::engine::general_purpose::STANDARD
         .decode(&entry.certificate_der_b64)
         .map_err(|e| SyncError::Parse(format!("Invalid base64: {}", e)))?;
+    if certificate_der.is_empty() || certificate_der.len() > MAX_CERTIFICATE_BYTES {
+        return Err(SyncError::Certificate(format!(
+            "Certificate must contain between 1 and {MAX_CERTIFICATE_BYTES} DER bytes"
+        )));
+    }
+    Certificate::from_der(&certificate_der)
+        .map_err(|error| SyncError::Certificate(format!("Malformed certificate DER: {error}")))?;
+
+    let not_before = parse_declared_timestamp(&entry.not_before, "certificate not_before")?;
+    let not_after = parse_declared_timestamp(&entry.not_after, "certificate not_after")?;
+    if matches!((not_before, not_after), (Some(start), Some(end)) if start >= end) {
+        return Err(SyncError::Parse(
+            "Certificate not_before must be earlier than not_after".to_string(),
+        ));
+    }
 
     // Hash the certificate for ID
     let hash = blake3::hash(&certificate_der);
@@ -180,61 +411,62 @@ fn parse_certificate_entry(
         subject: entry.subject.clone(),
         issuer: entry.issuer.clone(),
         serial_number: entry.serial.clone(),
-        not_before: entry.not_before.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        }),
-        not_after: entry.not_after.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        }),
+        not_before,
+        not_after,
         certificate_der,
         certificate_hash: hash.to_hex().to_string(),
         source: marty_secure_storage::TrustAnchorSource::UsbImport,
-        synced_at: Utc::now(),
+        synced_at: package_created_at,
     })
 }
 
 fn parse_open_badge_method(
-    value: &serde_json::Value,
+    value: &Value,
+    package_created_at: DateTime<Utc>,
 ) -> Result<OpenBadgeVerificationMethod, SyncError> {
-    use chrono::Utc;
-
-    let id = value
+    let object = value
+        .as_object()
+        .ok_or_else(|| SyncError::Parse("Open Badge method must be an object".to_string()))?;
+    let id = object
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| SyncError::Parse("Open Badge method missing id".to_string()))?;
+    validate_identifier("Open Badge method id", id)?;
 
-    let controller = value
+    let controller = object
         .get("controller")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let issuer = value
-        .get("issuer")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let kid = value
-        .get("kid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let status = value
-        .get("status")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let not_before = value
-        .get("not_before")
-        .or_else(|| value.get("notBefore"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc));
-    let not_after = value
-        .get("not_after")
-        .or_else(|| value.get("notAfter"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc));
+    let Some(controller_value) = controller.as_deref() else {
+        return Err(SyncError::Parse(
+            "Open Badge method missing controller".to_string(),
+        ));
+    };
+    validate_identifier("Open Badge method controller", controller_value)?;
+    let issuer = optional_string(object.get("issuer"), "Open Badge method issuer")?;
+    let kid = optional_string(object.get("kid"), "Open Badge method kid")?;
+    let status = optional_string(object.get("status"), "Open Badge method status")?
+        .ok_or_else(|| SyncError::Parse("Open Badge method missing status".to_string()))?;
+    if !matches!(status.as_str(), "active" | "inactive" | "revoked") {
+        return Err(SyncError::Parse(
+            "Open Badge method status must be active, inactive, or revoked".to_string(),
+        ));
+    }
+    let not_before = parse_timestamp_alias(value, "not_before", "notBefore")?
+        .ok_or_else(|| SyncError::Parse("Open Badge method missing not_before".to_string()))?;
+    let not_after = parse_timestamp_alias(value, "not_after", "notAfter")?
+        .ok_or_else(|| SyncError::Parse("Open Badge method missing not_after".to_string()))?;
+    if not_before >= not_after {
+        return Err(SyncError::Parse(
+            "Open Badge method not_before must be earlier than not_after".to_string(),
+        ));
+    }
+    if contains_private_key_material(value) {
+        return Err(SyncError::Parse(format!(
+            "Open Badge method {id} contains private or symmetric key material"
+        )));
+    }
+    validate_open_badge_key_material(object)?;
 
     Ok(OpenBadgeVerificationMethod {
         id: id.to_string(),
@@ -242,12 +474,179 @@ fn parse_open_badge_method(
         controller,
         issuer,
         kid,
-        not_before,
-        not_after,
-        status,
+        not_before: Some(not_before),
+        not_after: Some(not_after),
+        status: Some(status),
         source: OpenBadgeKeySource::UsbImport,
-        synced_at: Utc::now(),
+        synced_at: package_created_at,
     })
+}
+
+fn validate_open_badge_key_material(
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), SyncError> {
+    let method_type = required_string(object.get("type"), "Open Badge method type")?;
+    match method_type {
+        "JsonWebKey2020" => validate_public_jwk(object),
+        "Ed25519VerificationKey2018" => {
+            required_string(
+                object.get("publicKeyBase58"),
+                "Ed25519VerificationKey2018 publicKeyBase58",
+            )?;
+            reject_unexpected_key_fields(object, "publicKeyBase58")
+        }
+        "Ed25519VerificationKey2020" | "Multikey" => {
+            let public_key = required_string(
+                object.get("publicKeyMultibase"),
+                "multibase verification key",
+            )?;
+            if !public_key.starts_with('z') {
+                return Err(SyncError::Parse(
+                    "Open Badge publicKeyMultibase must use base58btc multibase".to_string(),
+                ));
+            }
+            reject_unexpected_key_fields(object, "publicKeyMultibase")
+        }
+        _ => Err(SyncError::Parse(format!(
+            "Unsupported Open Badge verification method type {method_type}"
+        ))),
+    }
+}
+
+fn validate_public_jwk(object: &serde_json::Map<String, Value>) -> Result<(), SyncError> {
+    reject_unexpected_key_fields(object, "publicKeyJwk")?;
+    let jwk = object
+        .get("publicKeyJwk")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            SyncError::Parse("JsonWebKey2020 publicKeyJwk must be an object".to_string())
+        })?;
+    match required_string(jwk.get("kty"), "public JWK kty")? {
+        "OKP" => {
+            required_string(jwk.get("crv"), "public OKP JWK crv")?;
+            required_string(jwk.get("x"), "public OKP JWK x")?;
+        }
+        "EC" => {
+            required_string(jwk.get("crv"), "public EC JWK crv")?;
+            required_string(jwk.get("x"), "public EC JWK x")?;
+            required_string(jwk.get("y"), "public EC JWK y")?;
+        }
+        "RSA" => {
+            required_string(jwk.get("n"), "public RSA JWK n")?;
+            required_string(jwk.get("e"), "public RSA JWK e")?;
+        }
+        other => {
+            return Err(SyncError::Parse(format!(
+                "Unsupported public JWK kty {other}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn reject_unexpected_key_fields(
+    object: &serde_json::Map<String, Value>,
+    expected: &str,
+) -> Result<(), SyncError> {
+    const KEY_FIELDS: [&str; 4] = [
+        "publicKeyJwk",
+        "publicKeyBase58",
+        "publicKeyMultibase",
+        "publicKeyPem",
+    ];
+    if KEY_FIELDS
+        .iter()
+        .any(|field| *field != expected && object.contains_key(*field))
+    {
+        return Err(SyncError::Parse(format!(
+            "Open Badge method type permits only {expected} key material"
+        )));
+    }
+    Ok(())
+}
+
+fn required_string<'a>(value: Option<&'a Value>, name: &str) -> Result<&'a str, SyncError> {
+    let value = value
+        .and_then(Value::as_str)
+        .ok_or_else(|| SyncError::Parse(format!("{name} must be a string")))?;
+    validate_identifier(name, value)?;
+    Ok(value)
+}
+
+fn optional_string(value: Option<&Value>, name: &str) -> Result<Option<String>, SyncError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value
+        .as_str()
+        .ok_or_else(|| SyncError::Parse(format!("{name} must be a string when present")))?;
+    validate_identifier(name, value)?;
+    Ok(Some(value.to_string()))
+}
+
+fn parse_timestamp_alias(
+    value: &Value,
+    snake_case: &str,
+    camel_case: &str,
+) -> Result<Option<DateTime<Utc>>, SyncError> {
+    let snake = value.get(snake_case);
+    let camel = value.get(camel_case);
+    if snake.is_some() && camel.is_some() {
+        return Err(SyncError::Parse(format!(
+            "Open Badge method cannot contain both {snake_case} and {camel_case}"
+        )));
+    }
+    parse_optional_timestamp(snake.or(camel), &format!("Open Badge method {snake_case}"))
+}
+
+fn parse_optional_timestamp(
+    value: Option<&Value>,
+    name: &str,
+) -> Result<Option<DateTime<Utc>>, SyncError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| SyncError::Parse(format!("{name} must be an RFC 3339 string")))?;
+    parse_required_timestamp(text, name).map(Some)
+}
+
+fn parse_declared_timestamp(
+    value: &DeclaredValue,
+    name: &str,
+) -> Result<Option<DateTime<Utc>>, SyncError> {
+    match value {
+        DeclaredValue::Missing => Ok(None),
+        DeclaredValue::Present(value) => parse_optional_timestamp(Some(value), name),
+    }
+}
+
+fn parse_required_timestamp(value: &str, name: &str) -> Result<DateTime<Utc>, SyncError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|_| SyncError::Parse(format!("{name} must be RFC 3339")))
+}
+
+fn contains_private_key_material(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, nested)| {
+            if key.starts_with("privateKey") || key.starts_with("secretKey") {
+                return true;
+            }
+            if key == "publicKeyJwk" {
+                return nested.as_object().is_none_or(|jwk| {
+                    matches!(jwk.get("kty").and_then(Value::as_str), Some("oct") | None)
+                        || ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]
+                            .iter()
+                            .any(|private| jwk.contains_key(*private))
+                });
+            }
+            contains_private_key_material(nested)
+        }),
+        Value::Array(values) => values.iter().any(contains_private_key_material),
+        _ => false,
+    }
 }
 
 /// Verify the Ed25519 signature on a trust-anchor USB package.
@@ -311,5 +710,172 @@ fn verify_package_signature(
                 "Package signature verification failed — rejecting import".to_string(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine;
+    use chrono::TimeZone;
+    use serde_json::json;
+
+    use super::*;
+
+    fn minimal_package_json(extra: &str) -> String {
+        format!(
+            r#"{{
+                "version":"1.0.0",
+                "created_at":"2026-08-08T00:00:00Z",
+                "signing_cert":"informational-only",
+                "signature":"AA==",
+                "iaca_certificates":[],
+                "csca_certificates":[],
+                "dsc_certificates":[],
+                "open_badge_verification_methods":[]
+                {extra}
+            }}"#
+        )
+    }
+
+    fn public_method() -> Value {
+        json!({
+            "id": "did:example:issuer#key-1",
+            "type": "JsonWebKey2020",
+            "controller": "did:example:issuer",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "11qYAYdk9JwqPceJUchO3G0VQJq4aW8QjJwA8Yl5b4o"
+            },
+            "status": "active",
+            "not_before": "2026-01-01T00:00:00Z",
+            "not_after": "2027-01-01T00:00:00Z"
+        })
+    }
+
+    #[test]
+    fn strict_package_parser_rejects_duplicate_and_unknown_members() {
+        let duplicate = minimal_package_json(",\"version\":\"2.0.0\"");
+        let error = parse_strict_package(&duplicate).expect_err("duplicate member must fail");
+        assert!(error.to_string().contains("duplicate JSON object member"));
+
+        let unknown = minimal_package_json(",\"unexpected\":true");
+        let error = parse_strict_package(&unknown).expect_err("unknown member must fail");
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn future_package_time_is_rejected() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+        assert!(validate_package_created_at(now + chrono::Duration::minutes(5), now).is_ok());
+        assert!(validate_package_created_at(
+            now + chrono::Duration::minutes(5) + chrono::Duration::seconds(1),
+            now
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn malformed_declared_method_fields_fail_instead_of_becoming_absent() {
+        let created_at = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+        let mut malformed_time = public_method();
+        malformed_time["not_before"] = json!("not-a-time");
+        assert!(parse_open_badge_method(&malformed_time, created_at).is_err());
+
+        let mut null_time = public_method();
+        null_time["not_after"] = Value::Null;
+        assert!(parse_open_badge_method(&null_time, created_at).is_err());
+
+        let mut aliases = public_method();
+        aliases["notBefore"] = json!("2026-01-01T00:00:00Z");
+        assert!(parse_open_badge_method(&aliases, created_at).is_err());
+
+        for required in ["status", "not_before", "not_after"] {
+            let mut missing = public_method();
+            missing
+                .as_object_mut()
+                .expect("method object")
+                .remove(required);
+            assert!(parse_open_badge_method(&missing, created_at).is_err());
+        }
+    }
+
+    #[test]
+    fn private_method_material_is_rejected_and_signed_time_is_preserved() {
+        let created_at = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+        let method = parse_open_badge_method(&public_method(), created_at)
+            .expect("public method should parse");
+        assert_eq!(method.synced_at, created_at);
+
+        let mut private = public_method();
+        private["publicKeyJwk"]["d"] = json!("private");
+        assert!(parse_open_badge_method(&private, created_at).is_err());
+    }
+
+    #[test]
+    fn missing_unsupported_or_malformed_public_method_material_is_rejected() {
+        let created_at = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+
+        let mut missing = public_method();
+        missing
+            .as_object_mut()
+            .expect("method object")
+            .remove("publicKeyJwk");
+        assert!(parse_open_badge_method(&missing, created_at).is_err());
+
+        let mut unsupported = public_method();
+        unsupported["type"] = json!("UnknownVerificationMethod");
+        assert!(parse_open_badge_method(&unsupported, created_at).is_err());
+
+        let mut malformed = public_method();
+        malformed["publicKeyJwk"] = json!({ "kty": "OKP", "crv": "Ed25519" });
+        assert!(parse_open_badge_method(&malformed, created_at).is_err());
+
+        let mut conflicting = public_method();
+        conflicting["publicKeyMultibase"] = json!("z6Mkh...");
+        assert!(parse_open_badge_method(&conflicting, created_at).is_err());
+    }
+
+    #[test]
+    fn malformed_certificate_and_timestamp_are_rejected() {
+        let created_at = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+        let entry = CertificateEntry {
+            jurisdiction: "US-CO".to_string(),
+            subject: None,
+            issuer: None,
+            serial: None,
+            not_before: DeclaredValue::Present(json!("invalid")),
+            not_after: DeclaredValue::Missing,
+            certificate_der_b64: base64::engine::general_purpose::STANDARD.encode([0u8]),
+        };
+        assert!(parse_certificate_entry(
+            &entry,
+            marty_secure_storage::TrustAnchorType::Iaca,
+            created_at
+        )
+        .is_err());
+
+        let entry = CertificateEntry {
+            not_before: DeclaredValue::Present(Value::Null),
+            ..entry
+        };
+        assert!(parse_certificate_entry(
+            &entry,
+            marty_secure_storage::TrustAnchorType::Iaca,
+            created_at
+        )
+        .is_err());
+
+        let entry = CertificateEntry {
+            not_before: DeclaredValue::Missing,
+            ..entry
+        };
+        let error = parse_certificate_entry(
+            &entry,
+            marty_secure_storage::TrustAnchorType::Iaca,
+            created_at,
+        )
+        .expect_err("malformed DER must fail");
+        assert!(matches!(error, SyncError::Certificate(_)));
     }
 }
