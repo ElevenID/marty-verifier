@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Reject duplicate-member, oversized, malformed, partially parsed, private-key-bearing, or future-dated USB trust packages before returning any derived records, and bind record freshness to the signed package timestamp.
+- Bind each signed envelope to the configured trust domain and actual pinned-key identity, derive one RFC 8785 canonical package digest, require monotonic sequence and signed expiry, and commit all certificate/key records, package state, sync metadata, and minimized audit evidence through one atomic core storage operation.
 
 ## [0.1.0] - 2026-01-07
 

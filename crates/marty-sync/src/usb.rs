@@ -12,13 +12,18 @@ use serde_json::Value;
 use x509_cert::Certificate;
 
 use crate::{error::SyncError, signing_key::decode_signing_public_key};
-use marty_secure_storage::{OpenBadgeKeySource, OpenBadgeVerificationMethod, TrustAnchor};
+use marty_secure_storage::{
+    OpenBadgeKeySource, OpenBadgeVerificationMethod, TrustAnchor, TrustPackageProvenance,
+};
 
 const MAX_PACKAGE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PACKAGE_ENTRIES: usize = 4096;
 const MAX_CERTIFICATE_BYTES: usize = 128 * 1024;
 const MAX_IDENTIFIER_LEN: usize = 512;
+const MAX_TRUST_DOMAIN_LEN: usize = 128;
+const MAX_INFORMATIONAL_CERT_LEN: usize = 4096;
 const MAX_PACKAGE_FUTURE_SKEW_SECONDS: i64 = 300;
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// USB import result
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,10 +40,18 @@ pub struct UsbImportResult {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustAnchorPackage {
+    /// Configured trust domain whose complete active set this package replaces.
+    pub trust_domain: String,
+    /// Strictly increasing sequence within the configured trust domain.
+    pub sequence: u64,
     /// Package version
     pub version: String,
     /// Package creation timestamp
     pub created_at: String,
+    /// Signed package expiry timestamp.
+    pub expires_at: String,
+    /// Stable identifier derived from the actual pinned verification key.
+    pub signer_key_id: String,
     /// Informational legacy certificate field. Trust comes only from the pinned key.
     #[serde(rename = "signing_cert")]
     pub _signing_cert: String,
@@ -53,6 +66,18 @@ pub struct TrustAnchorPackage {
     /// Open Badge verification methods (trusted public keys)
     #[serde(default)]
     pub open_badge_verification_methods: Vec<serde_json::Value>,
+}
+
+/// Fully authenticated and strictly parsed package ready for one storage transition.
+pub(crate) struct VerifiedTrustPackage {
+    pub(crate) provenance: TrustPackageProvenance,
+    pub(crate) anchors: Vec<TrustAnchor>,
+    pub(crate) open_badge_methods: Vec<OpenBadgeVerificationMethod>,
+}
+
+struct VerifiedSignature {
+    signer_key_id: String,
+    package_digest: String,
 }
 
 /// Certificate entry in package
@@ -92,16 +117,7 @@ where
 }
 
 /// Import trust anchors from USB package
-pub async fn import_from_usb(
-    path: &Path,
-) -> Result<
-    (
-        Vec<TrustAnchor>,
-        Vec<OpenBadgeVerificationMethod>,
-        UsbImportResult,
-    ),
-    SyncError,
-> {
+pub(crate) async fn import_from_usb(path: &Path) -> Result<VerifiedTrustPackage, SyncError> {
     tracing::info!(path = ?path, "Importing trust anchors from USB");
 
     // Check path exists
@@ -123,14 +139,19 @@ pub async fn import_from_usb(
     let package_json = std::fs::read_to_string(path)?;
 
     // Parse without permitting duplicate JSON members or schema drift.
-    let package = parse_strict_package(&package_json)?;
+    let (package, package_value) = parse_strict_package(&package_json)?;
 
-    // Verify package signature
-    let signature_valid = verify_package_signature(&package_json, &package)?;
+    // Verify against the configured/embedded key and bind the signed key id to
+    // that actual key before deriving any records.
+    let trusted_public_key = load_trusted_signing_public_key()?;
+    let verified_signature =
+        verify_package_signature(&package_value, &package, &trusted_public_key)?;
 
     let created_at = parse_required_timestamp(&package.created_at, "package created_at")?;
-    validate_package_created_at(created_at, Utc::now())?;
-    validate_package_metadata(&package)?;
+    let expires_at = parse_required_timestamp(&package.expires_at, "package expires_at")?;
+    let imported_at = Utc::now();
+    validate_package_times(created_at, expires_at, imported_at)?;
+    validate_package_metadata(&package, &verified_signature.signer_key_id)?;
 
     // Convert certificates to TrustAnchor format
     let mut anchors = Vec::new();
@@ -177,28 +198,29 @@ pub async fn import_from_usb(
         open_badge_keys.push(entry);
     }
 
-    let count = anchors.len();
-    let open_badge_count = open_badge_keys.len();
-
     tracing::info!(
-        count,
-        open_badge_count,
+        anchor_count = anchors.len(),
+        open_badge_count = open_badge_keys.len(),
+        trust_domain = %package.trust_domain,
+        sequence = package.sequence,
         version = %package.version,
-        "Imported trust materials from USB package"
+        "Authenticated trust materials from USB package"
     );
 
-    Ok((
-        anchors,
-        open_badge_keys,
-        UsbImportResult {
-            success: true,
-            certificates_imported: count,
-            open_badge_keys_imported: open_badge_count,
-            signature_valid,
-            package_version: Some(package.version),
-            error: None,
+    Ok(VerifiedTrustPackage {
+        provenance: TrustPackageProvenance {
+            trust_domain: package.trust_domain,
+            sequence: package.sequence,
+            package_version: package.version,
+            created_at,
+            expires_at,
+            signer_key_id: verified_signature.signer_key_id,
+            package_digest: verified_signature.package_digest,
+            imported_at,
         },
-    ))
+        anchors,
+        open_badge_methods: open_badge_keys,
+    })
 }
 
 struct StrictJson(Value);
@@ -295,19 +317,40 @@ impl<'de> Visitor<'de> for StrictJsonVisitor {
     }
 }
 
-fn parse_strict_package(raw_json: &str) -> Result<TrustAnchorPackage, SyncError> {
+fn parse_strict_package(raw_json: &str) -> Result<(TrustAnchorPackage, Value), SyncError> {
     let mut deserializer = serde_json::Deserializer::from_str(raw_json);
     let StrictJson(value) = StrictJson::deserialize(&mut deserializer)
         .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
     deserializer
         .end()
         .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
-    serde_json::from_value(value)
-        .map_err(|error| SyncError::UsbImport(format!("Invalid package schema: {error}")))
+    let package = serde_json::from_value(value.clone())
+        .map_err(|error| SyncError::UsbImport(format!("Invalid package schema: {error}")))?;
+    Ok((package, value))
 }
 
-fn validate_package_metadata(package: &TrustAnchorPackage) -> Result<(), SyncError> {
+fn validate_package_metadata(
+    package: &TrustAnchorPackage,
+    actual_signer_key_id: &str,
+) -> Result<(), SyncError> {
+    validate_trust_domain(&package.trust_domain)?;
+    if package.sequence == 0 || package.sequence > MAX_SAFE_JSON_INTEGER {
+        return Err(SyncError::Parse(
+            "Package sequence must be within the interoperable JSON integer range".to_string(),
+        ));
+    }
     validate_identifier("package version", &package.version)?;
+    validate_identifier("package signer_key_id", &package.signer_key_id)?;
+    if package.signer_key_id != actual_signer_key_id {
+        return Err(SyncError::SignatureVerification);
+    }
+    if package._signing_cert.len() > MAX_INFORMATIONAL_CERT_LEN
+        || package._signing_cert.chars().any(char::is_control)
+    {
+        return Err(SyncError::Parse(
+            "Informational signing_cert is oversized or contains control characters".to_string(),
+        ));
+    }
     let entries = package
         .iaca_certificates
         .len()
@@ -323,13 +366,38 @@ fn validate_package_metadata(package: &TrustAnchorPackage) -> Result<(), SyncErr
     Ok(())
 }
 
-fn validate_package_created_at(
+fn validate_package_times(
     created_at: DateTime<Utc>,
-    now: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    imported_at: DateTime<Utc>,
 ) -> Result<(), SyncError> {
-    if created_at > now + chrono::Duration::seconds(MAX_PACKAGE_FUTURE_SKEW_SECONDS) {
+    if created_at > imported_at + chrono::Duration::seconds(MAX_PACKAGE_FUTURE_SKEW_SECONDS) {
         return Err(SyncError::Parse(
             "Package created_at is beyond the allowed clock skew".to_string(),
+        ));
+    }
+    if created_at >= expires_at {
+        return Err(SyncError::Parse(
+            "Package expires_at must be after created_at".to_string(),
+        ));
+    }
+    if imported_at > expires_at {
+        return Err(SyncError::Parse(
+            "Package has passed its signed expires_at".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_trust_domain(value: &str) -> Result<(), SyncError> {
+    if value.is_empty()
+        || value.len() > MAX_TRUST_DOMAIN_LEN
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':'))
+    {
+        return Err(SyncError::Parse(
+            "Package trust_domain must be a bounded ASCII identifier".to_string(),
         ));
     }
     Ok(())
@@ -649,36 +717,108 @@ fn contains_private_key_material(value: &Value) -> bool {
     }
 }
 
-/// Verify the Ed25519 signature on a trust-anchor USB package.
-///
-/// The signature covers the canonical JSON of all fields *except* the
-/// `signature` field itself.  The signing public key is loaded from
-/// `USB_SIGNING_PUBLIC_KEY_PATH` (32-byte raw Ed25519 key, base64-encoded
-/// file) or, when that is unset, from the embedded
-/// `marty-verifier.key.pub` checked into the repository.
-fn verify_package_signature(
-    raw_json: &str,
-    package: &TrustAnchorPackage,
-) -> Result<bool, SyncError> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
-    // ── Load the trusted public key ─────────────────────────────────
+fn load_trusted_signing_public_key() -> Result<[u8; 32], SyncError> {
+    // Trust is configured out of band. `signing_cert` in the package is
+    // deliberately informational and never enters this path.
     let pub_key_path = std::env::var("USB_SIGNING_PUBLIC_KEY_PATH").ok();
-    let pub_key_bytes: Vec<u8> = if let Some(ref p) = pub_key_path {
-        let raw = std::fs::read_to_string(p)
-            .map_err(|e| SyncError::UsbImport(format!("Cannot read public key {p}: {e}")))?;
+    let pub_key_bytes = if let Some(ref path) = pub_key_path {
+        let raw = std::fs::read_to_string(path).map_err(|error| {
+            SyncError::UsbImport(format!("Cannot read public key {path}: {error}"))
+        })?;
         decode_signing_public_key(&raw)?
     } else {
-        // Fallback: built-in public key
         let embedded_pubkey = option_env!("USB_SIGNING_PUBLIC_KEY")
             .unwrap_or(include_str!("../../../marty-verifier.key.pub"));
         decode_signing_public_key(embedded_pubkey)?
     };
 
-    let pub_key_array: [u8; 32] = pub_key_bytes
+    pub_key_bytes
         .try_into()
-        .map_err(|_| SyncError::UsbImport("Public key must be 32 bytes".to_string()))?;
-    let verifying_key = VerifyingKey::from_bytes(&pub_key_array)
+        .map_err(|_| SyncError::UsbImport("Public key must be 32 bytes".to_string()))
+}
+
+fn signer_key_id(public_key: &[u8; 32]) -> String {
+    format!("ed25519:{}", blake3::hash(public_key).to_hex())
+}
+
+fn canonical_signed_payload(package_value: &Value) -> Result<Vec<u8>, SyncError> {
+    let mut signed = package_value.clone();
+    let object = signed
+        .as_object_mut()
+        .ok_or_else(|| SyncError::UsbImport("Trust package must be a JSON object".to_string()))?;
+    if object.remove("signature").is_none() {
+        return Err(SyncError::UsbImport(
+            "Trust package is missing signature".to_string(),
+        ));
+    }
+    let mut canonical = Vec::new();
+    write_jcs_value(&signed, &mut canonical)?;
+    Ok(canonical)
+}
+
+fn write_jcs_value(value: &Value, output: &mut Vec<u8>) -> Result<(), SyncError> {
+    match value {
+        Value::Null => output.extend_from_slice(b"null"),
+        Value::Bool(true) => output.extend_from_slice(b"true"),
+        Value::Bool(false) => output.extend_from_slice(b"false"),
+        Value::Number(number) => {
+            let value = number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| {
+                    SyncError::UsbImport(
+                        "Canonicalization requires an IEEE 754 finite JSON number".to_string(),
+                    )
+                })?;
+            let mut buffer = ryu_js::Buffer::new();
+            output.extend_from_slice(buffer.format_finite(value).as_bytes());
+        }
+        Value::String(text) => serde_json::to_writer(output, text)
+            .map_err(|error| SyncError::UsbImport(format!("Canonicalization failed: {error}")))?,
+        Value::Array(values) => {
+            output.push(b'[');
+            for (index, nested) in values.iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                write_jcs_value(nested, output)?;
+            }
+            output.push(b']');
+        }
+        Value::Object(object) => {
+            let mut entries = object.iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.encode_utf16().cmp(right.0.encode_utf16()));
+            output.push(b'{');
+            for (index, (key, nested)) in entries.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                serde_json::to_writer(&mut *output, key).map_err(|error| {
+                    SyncError::UsbImport(format!("Canonicalization failed: {error}"))
+                })?;
+                output.push(b':');
+                write_jcs_value(nested, output)?;
+            }
+            output.push(b'}');
+        }
+    }
+    Ok(())
+}
+
+/// Verify the Ed25519 signature on a trust-anchor USB package.
+///
+/// The signature covers RFC 8785 JSON Canonicalization Scheme bytes for every
+/// field except `signature`. Identity and digest are derived from the actual pinned
+/// key and these exact signed bytes, never from `signing_cert`.
+fn verify_package_signature(
+    package_value: &Value,
+    package: &TrustAnchorPackage,
+    trusted_public_key: &[u8; 32],
+) -> Result<VerifiedSignature, SyncError> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    // ── Load the trusted public key ─────────────────────────────────
+    let verifying_key = VerifyingKey::from_bytes(trusted_public_key)
         .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 public key: {e}")))?;
 
     // ── Decode the signature from the package ───────────────────────
@@ -690,19 +830,16 @@ fn verify_package_signature(
         .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 signature: {e}")))?;
 
     // ── Build the signed payload (JSON without the "signature" field)
-    let mut doc: serde_json::Value = serde_json::from_str(raw_json)
-        .map_err(|e| SyncError::UsbImport(format!("Re-parse failed: {e}")))?;
-    if let Some(obj) = doc.as_object_mut() {
-        obj.remove("signature");
-    }
-    let canonical = serde_json::to_string(&doc)
-        .map_err(|e| SyncError::UsbImport(format!("Canonicalization failed: {e}")))?;
+    let canonical = canonical_signed_payload(package_value)?;
 
     // ── Verify ──────────────────────────────────────────────────────
-    match verifying_key.verify(canonical.as_bytes(), &signature) {
+    match verifying_key.verify(&canonical, &signature) {
         Ok(()) => {
             tracing::info!("USB package signature verified successfully");
-            Ok(true)
+            Ok(VerifiedSignature {
+                signer_key_id: signer_key_id(trusted_public_key),
+                package_digest: blake3::hash(&canonical).to_hex().to_string(),
+            })
         }
         Err(e) => {
             tracing::error!("USB package signature verification FAILED: {e}");
@@ -717,6 +854,7 @@ fn verify_package_signature(
 mod tests {
     use base64::Engine;
     use chrono::TimeZone;
+    use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
     use super::*;
@@ -724,8 +862,12 @@ mod tests {
     fn minimal_package_json(extra: &str) -> String {
         format!(
             r#"{{
+                "trust_domain":"usb:default",
+                "sequence":1,
                 "version":"1.0.0",
                 "created_at":"2026-08-08T00:00:00Z",
+                "expires_at":"2027-08-08T00:00:00Z",
+                "signer_key_id":"ed25519:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "signing_cert":"informational-only",
                 "signature":"AA==",
                 "iaca_certificates":[],
@@ -735,6 +877,31 @@ mod tests {
                 {extra}
             }}"#
         )
+    }
+
+    fn signed_package_json(signing_key: &SigningKey, declared_signer: Option<&str>) -> String {
+        let public_key = signing_key.verifying_key().to_bytes();
+        let now = Utc::now();
+        let mut package = json!({
+            "trust_domain": "usb:default",
+            "sequence": 1,
+            "version": "1.0.0",
+            "created_at": now.to_rfc3339(),
+            "expires_at": (now + chrono::Duration::days(1)).to_rfc3339(),
+            "signer_key_id": declared_signer
+                .map(str::to_string)
+                .unwrap_or_else(|| signer_key_id(&public_key)),
+            "signing_cert": "informational-only",
+            "signature": "",
+            "iaca_certificates": [],
+            "csca_certificates": [],
+            "dsc_certificates": [],
+            "open_badge_verification_methods": []
+        });
+        let canonical = canonical_signed_payload(&package).expect("canonical signed package");
+        package["signature"] = json!(base64::engine::general_purpose::STANDARD
+            .encode(signing_key.sign(&canonical).to_bytes()));
+        serde_json::to_string(&package).expect("serialize signed package")
     }
 
     fn public_method() -> Value {
@@ -767,12 +934,89 @@ mod tests {
     #[test]
     fn future_package_time_is_rejected() {
         let now = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
-        assert!(validate_package_created_at(now + chrono::Duration::minutes(5), now).is_ok());
-        assert!(validate_package_created_at(
+        assert!(validate_package_times(
+            now + chrono::Duration::minutes(5),
+            now + chrono::Duration::days(1),
+            now
+        )
+        .is_ok());
+        assert!(validate_package_times(
             now + chrono::Duration::minutes(5) + chrono::Duration::seconds(1),
+            now + chrono::Duration::days(1),
             now
         )
         .is_err());
+        assert!(validate_package_times(now, now, now).is_err());
+        assert!(validate_package_times(
+            now,
+            now + chrono::Duration::hours(1),
+            now + chrono::Duration::hours(2)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn signature_binds_actual_pinned_key_identity_and_canonical_digest() {
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let public_key = signing_key.verifying_key().to_bytes();
+        let raw = signed_package_json(&signing_key, None);
+        let (package, value) = parse_strict_package(&raw).expect("strict signed package");
+
+        let verified = verify_package_signature(&value, &package, &public_key)
+            .expect("signature from pinned key");
+        validate_package_metadata(&package, &verified.signer_key_id)
+            .expect("declared signer matches pinned key");
+        assert_eq!(verified.signer_key_id, signer_key_id(&public_key));
+        assert_eq!(verified.package_digest.len(), 64);
+
+        let wrong_id = format!("ed25519:{}", "b".repeat(64));
+        let wrong_raw = signed_package_json(&signing_key, Some(&wrong_id));
+        let (wrong_package, wrong_value) =
+            parse_strict_package(&wrong_raw).expect("signed wrong-id package");
+        let wrong_verified = verify_package_signature(&wrong_value, &wrong_package, &public_key)
+            .expect("signature remains cryptographically valid");
+        assert!(matches!(
+            validate_package_metadata(&wrong_package, &wrong_verified.signer_key_id),
+            Err(SyncError::SignatureVerification)
+        ));
+
+        let mut tampered: Value = serde_json::from_str(&raw).expect("signed JSON");
+        tampered["version"] = json!("2.0.0");
+        let tampered_raw = serde_json::to_string(&tampered).expect("tampered JSON");
+        let (tampered_package, tampered_value) =
+            parse_strict_package(&tampered_raw).expect("strict tampered package");
+        assert!(verify_package_signature(&tampered_value, &tampered_package, &public_key).is_err());
+    }
+
+    #[test]
+    fn signed_payload_uses_rfc_8785_canonicalization() {
+        let first: Value = serde_json::from_str(
+            r#"{"signature":"ignored","z":1e0,"a":{"\u00e9":"\u00e9","b":2}}"#,
+        )
+        .unwrap();
+        let second: Value =
+            serde_json::from_str(r#"{"a":{"b":2,"é":"é"},"z":1,"signature":"different"}"#).unwrap();
+
+        let first_payload = canonical_signed_payload(&first).unwrap();
+        let second_payload = canonical_signed_payload(&second).unwrap();
+        assert_eq!(first_payload, second_payload);
+        assert_eq!(
+            String::from_utf8(first_payload).unwrap(),
+            r#"{"a":{"b":2,"é":"é"},"z":1}"#
+        );
+    }
+
+    #[test]
+    fn canonical_object_keys_use_utf16_sort_order() {
+        let bmp = char::from_u32(0xe000).unwrap().to_string();
+        let astral = char::from_u32(0x1f600).unwrap().to_string();
+        let mut nested = serde_json::Map::new();
+        nested.insert(bmp.clone(), json!("bmp"));
+        nested.insert(astral.clone(), json!("astral"));
+        let value = json!({ "signature": "ignored", "keys": nested });
+
+        let canonical = String::from_utf8(canonical_signed_payload(&value).unwrap()).unwrap();
+        assert!(canonical.find(&astral).unwrap() < canonical.find(&bmp).unwrap());
     }
 
     #[test]

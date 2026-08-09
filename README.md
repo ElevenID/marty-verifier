@@ -177,30 +177,43 @@ For environments without network access:
 
 ```json
 {
+  "trust_domain": "usb:default",
+  "sequence": 42,
   "version": "1.0.0",
-  "created_at": "2024-01-15T12:00:00Z",
+  "created_at": "2026-08-08T12:00:00Z",
+  "expires_at": "2026-09-08T12:00:00Z",
+  "signer_key_id": "ed25519:<BLAKE3 digest of the pinned 32-byte public key>",
+  "signing_cert": "informational-only",
   "signature": "base64-encoded-ed25519-signature",
-    "certificates": [
-      {
-        "type": "IACA",
-        "jurisdiction": "US-CA",
-        "subject": "...",
-        "certificate_pem": "..."
-      }
-    ],
-    "open_badge_verification_methods": [
-      {
-        "id": "did:example:issuer#key-1",
-        "type": "JsonWebKey2020",
-        "controller": "did:example:issuer",
-        "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "..." },
-        "status": "active",
-        "not_before": "2025-01-01T00:00:00Z",
-        "not_after": "2027-01-01T00:00:00Z"
-      }
-    ]
-  }
+  "iaca_certificates": [{
+    "jurisdiction": "US-CA",
+    "subject": "...",
+    "issuer": "...",
+    "serial": "...",
+    "not_before": "2026-01-01T00:00:00Z",
+    "not_after": "2027-01-01T00:00:00Z",
+    "certificate_der_b64": "..."
+  }],
+  "csca_certificates": [],
+  "dsc_certificates": [],
+  "open_badge_verification_methods": [{
+    "id": "did:example:issuer#key-1",
+    "type": "JsonWebKey2020",
+    "controller": "did:example:issuer",
+    "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "..." },
+    "status": "active",
+    "not_before": "2026-01-01T00:00:00Z",
+    "not_after": "2027-01-01T00:00:00Z"
+  }]
+}
 ```
+
+`trust_domain` must exactly match the verifier's out-of-band
+`sync_config.usb_trust_domain` (default `usb:default`). The signature covers
+RFC 8785 JSON Canonicalization Scheme bytes, excluding only `signature`.
+The verifier derives `signer_key_id` from the actual configured or embedded
+Ed25519 public key, rejects a signed mismatch, and applies the complete package
+as one monotonic transaction. `signing_cert` is never a source of trust.
 
 ## Security
 
