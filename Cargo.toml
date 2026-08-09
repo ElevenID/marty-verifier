@@ -69,12 +69,12 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # External crates from marty-core
-marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe", features = ["serde"] }
-marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "fdcfcc1c3476fcdc262f03d254d43d222a0c8cfe", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31", default-features = false }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31", features = ["serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31", features = ["native", "onnx"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "e0b346b3237ae594ca986a3f4eb3fbf1eeaf9b31", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }

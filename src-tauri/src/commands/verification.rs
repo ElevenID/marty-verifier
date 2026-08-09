@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
-use std::sync::OnceLock;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -25,6 +24,7 @@ use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
+use tokio::sync::OnceCell;
 use uuid::Uuid;
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
@@ -44,6 +44,7 @@ const MAX_CLOCK_SKEW_SECS: i64 = 5;
 const DEFAULT_STEP_TIME_LIMIT_MS: i32 = 5000;
 const MAX_OPEN_BADGE_TRUST_AGE_HOURS: u32 = 48;
 const MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS: u32 = 24;
+const MAX_OPEN_BADGE_STATUS_IRI_CHARS: usize = 4096;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1029,8 +1030,8 @@ async fn verify_open_badge_payload(
         open_badge_request_method_trusted(&governed_store.documents, method_id.as_deref());
     if !method_trusted {
         let (warning, error) = match method_id.as_deref() {
-            Some(method_id) => (
-                format!("Open Badge verification method not trusted: {method_id}"),
+            Some(_) => (
+                "Open Badge verification method is not trusted".to_string(),
                 "Verification method not trusted",
             ),
             None => (
@@ -1058,15 +1059,8 @@ async fn verify_open_badge_payload(
         ));
     }
 
-    let request_store = extract_open_badge_document_store(&req_value)?;
-    let (authenticated_status_lists, status_adapter_warnings) = build_authenticated_status_lists(
-        &req_value,
-        &request_store,
-        &governed_store,
-        now,
-        &trust_config,
-    )
-    .await?;
+    let (authenticated_status_lists, status_adapter_warnings) =
+        build_authenticated_status_lists(&req_value, &governed_store, now, &trust_config).await?;
     warnings.extend(status_adapter_warnings);
 
     replace_open_badge_document_store(&mut req_value, &governed_store.documents)?;
@@ -1536,16 +1530,16 @@ fn extract_open_badge_document_store(request: &Value) -> AppResult<DocumentStore
     }
 }
 
-static VERIFIER_SOFTWARE_PROVENANCE: OnceLock<Result<ArtifactProvenance, String>> = OnceLock::new();
+static VERIFIER_SOFTWARE_PROVENANCE: OnceCell<ArtifactProvenance> = OnceCell::const_new();
 
 async fn build_authenticated_status_lists(
     request: &Value,
-    request_store: &DocumentStore,
     governed_store: &GovernedOpenBadgeStore,
     observed_at: DateTime<Utc>,
     config: &OpenBadgeTrustConfig,
 ) -> AppResult<(Vec<AuthenticatedStatusList>, Vec<String>)> {
     let status_list_urls = extract_status_list_urls(request);
+    let request_store = extract_stapled_status_documents(request, &status_list_urls)?;
     if status_list_urls.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -1556,7 +1550,7 @@ async fn build_authenticated_status_lists(
     for status_list_url in status_list_urls {
         match build_authenticated_status_list(
             &status_list_url,
-            request_store,
+            &request_store,
             governed_store,
             observed_at,
             config,
@@ -1564,12 +1558,38 @@ async fn build_authenticated_status_lists(
         ) {
             Ok(status_list) => authenticated.push(status_list),
             Err(reason) => warnings.push(format!(
-                "Status list '{status_list_url}' was not admitted as authenticated context: {reason}"
+                "A declared status list was not admitted as authenticated context: {reason}"
             )),
         }
     }
 
     Ok((authenticated, warnings))
+}
+
+fn extract_stapled_status_documents(
+    request: &Value,
+    status_list_urls: &[String],
+) -> AppResult<DocumentStore> {
+    let Some(value) = request.get("document_store") else {
+        return Ok(DocumentStore::new());
+    };
+    if value.is_null() {
+        return Ok(DocumentStore::new());
+    }
+    let Value::Object(request_store) = value else {
+        return Err(AppError::Verification(
+            "document_store must be a JSON object".to_string(),
+        ));
+    };
+
+    Ok(status_list_urls
+        .iter()
+        .filter_map(|url| {
+            request_store
+                .get(url)
+                .map(|credential| (url.clone(), credential.clone()))
+        })
+        .collect())
 }
 
 fn extract_status_list_urls(request: &Value) -> Vec<String> {
@@ -1595,7 +1615,9 @@ fn extract_status_list_urls(request: &Value) -> Vec<String> {
             entry
                 .get("statusListCredential")
                 .and_then(Value::as_str)
-                .filter(|url| !url.is_empty())
+                .filter(|url| {
+                    !url.is_empty() && url.chars().count() <= MAX_OPEN_BADGE_STATUS_IRI_CHARS
+                })
                 .map(str::to_string)
         })
         .filter(|url| seen.insert(url.clone()))
@@ -1709,21 +1731,19 @@ fn parse_status_list_time(credential: &Value, field: &str) -> Result<DateTime<Ut
 }
 
 async fn verifier_software_provenance() -> AppResult<ArtifactProvenance> {
-    if let Some(cached) = VERIFIER_SOFTWARE_PROVENANCE.get() {
-        return cached.clone().map_err(|error| {
-            AppError::Verification(format!("Software provenance unavailable: {error}"))
-        });
-    }
-
-    let computed = tokio::task::spawn_blocking(compute_verifier_software_provenance)
-        .await
-        .map_err(|error| {
-            AppError::Verification(format!("Software provenance task failed: {error}"))
-        })?;
-    let _ = VERIFIER_SOFTWARE_PROVENANCE.set(computed.clone());
-    computed.map_err(|error| {
-        AppError::Verification(format!("Software provenance unavailable: {error}"))
-    })
+    let provenance = VERIFIER_SOFTWARE_PROVENANCE
+        .get_or_try_init(|| async {
+            tokio::task::spawn_blocking(compute_verifier_software_provenance)
+                .await
+                .map_err(|error| {
+                    AppError::Verification(format!("Software provenance task failed: {error}"))
+                })?
+                .map_err(|error| {
+                    AppError::Verification(format!("Software provenance unavailable: {error}"))
+                })
+        })
+        .await?;
+    Ok(provenance.clone())
 }
 
 fn compute_verifier_software_provenance() -> Result<ArtifactProvenance, String> {
@@ -3046,6 +3066,75 @@ mod tests {
         .is_err());
     }
 
+    #[tokio::test]
+    async fn status_adapter_bounds_and_does_not_reflect_declared_urls() {
+        let malformed_store_request = json!({"document_store": []});
+        assert!(build_authenticated_status_lists(
+            &malformed_store_request,
+            &GovernedOpenBadgeStore::default(),
+            Utc::now(),
+            &OpenBadgeTrustConfig::default(),
+        )
+        .await
+        .is_err());
+
+        let prefix = "https://status.example/";
+        let maximum = format!(
+            "{prefix}{}",
+            "é".repeat(MAX_OPEN_BADGE_STATUS_IRI_CHARS - prefix.chars().count())
+        );
+        let maximum_request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": maximum,
+                }
+            }
+        });
+        assert_eq!(extract_status_list_urls(&maximum_request), vec![maximum]);
+
+        let oversized = format!("{prefix}{}", "a".repeat(MAX_OPEN_BADGE_STATUS_IRI_CHARS));
+        let oversized_request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": oversized,
+                }
+            }
+        });
+        assert!(extract_status_list_urls(&oversized_request).is_empty());
+
+        let private_marker = "private-query-value";
+        let status_url = format!("https://status.example/list?token={private_marker}");
+        let request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": status_url,
+                }
+            },
+            "document_store": {
+                "https://unrelated.example/1": {"large": "caller-controlled"}
+            }
+        });
+        let selected =
+            extract_stapled_status_documents(&request, std::slice::from_ref(&status_url))
+                .expect("select exact stapled status documents");
+        assert!(selected.is_empty());
+        let (_, warnings) = build_authenticated_status_lists(
+            &request,
+            &GovernedOpenBadgeStore::default(),
+            Utc::now(),
+            &OpenBadgeTrustConfig::default(),
+        )
+        .await
+        .expect("missing stapled status context remains a typed warning");
+
+        assert_eq!(warnings.len(), 1);
+        assert!(!warnings[0].contains(private_marker));
+        assert!(!warnings[0].contains(&status_url));
+    }
+
     fn status_evidence(
         purpose: &str,
         outcome: OpenBadgeStatusEvidenceOutcome,
@@ -3131,6 +3220,18 @@ mod tests {
         assert_eq!(provenance.version(), env!("CARGO_PKG_VERSION"));
         assert!(provenance.digest().starts_with("sha256:"));
         assert_eq!(provenance.digest().len(), "sha256:".len() + 64);
+    }
+
+    #[tokio::test]
+    async fn software_provenance_is_stable_across_concurrent_requests() {
+        let (first, second, third) = tokio::join!(
+            verifier_software_provenance(),
+            verifier_software_provenance(),
+            verifier_software_provenance(),
+        );
+        let first = first.expect("first software provenance");
+        assert_eq!(first, second.expect("second software provenance"));
+        assert_eq!(first, third.expect("third software provenance"));
     }
 
     #[test]
