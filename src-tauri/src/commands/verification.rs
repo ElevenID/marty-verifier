@@ -1122,17 +1122,16 @@ fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
 }
 
 fn dtc_trust_chain_valid(checks: &[VerificationCheck]) -> bool {
-    let chain_ok = checks
-        .iter()
-        .find(|c| c.check_name == "TrustChain")
-        .map(|c| c.passed)
-        .unwrap_or(true);
-    let signer_ok = checks
-        .iter()
-        .find(|c| c.check_name == "SignerKeyMatchesCertificate")
-        .map(|c| c.passed)
-        .unwrap_or(true);
-    chain_ok && signer_ok
+    exactly_one_dtc_check_passed(checks, "TrustChain")
+        && exactly_one_dtc_check_passed(checks, "SignerKeyMatchesCertificate")
+}
+
+fn exactly_one_dtc_check_passed(checks: &[VerificationCheck], check_name: &str) -> bool {
+    let mut matching = checks.iter().filter(|check| check.check_name == check_name);
+    match (matching.next(), matching.next()) {
+        (Some(check), None) => check.passed,
+        _ => false,
+    }
 }
 
 fn build_dtc_claims(dtc_data: &Value) -> Value {
@@ -2284,6 +2283,60 @@ mod tests {
         assert_eq!(result.revocation_status, RevocationStatus::Unknown);
         assert_eq!(result.disclosed_claims, json!({}));
         assert!(result.issuer.is_none());
+    }
+
+    fn dtc_check(check_name: &str, passed: bool) -> VerificationCheck {
+        VerificationCheck {
+            check_name: check_name.to_string(),
+            passed,
+            details: None,
+            error_code: None,
+        }
+    }
+
+    #[test]
+    fn dtc_trust_requires_both_explicit_checks() {
+        assert!(!dtc_trust_chain_valid(&[]));
+        assert!(!dtc_trust_chain_valid(&[dtc_check("TrustChain", true)]));
+        assert!(!dtc_trust_chain_valid(&[dtc_check(
+            "SignerKeyMatchesCertificate",
+            true,
+        )]));
+    }
+
+    #[test]
+    fn dtc_trust_requires_both_checks_to_pass() {
+        assert!(!dtc_trust_chain_valid(&[
+            dtc_check("TrustChain", false),
+            dtc_check("SignerKeyMatchesCertificate", true),
+        ]));
+        assert!(!dtc_trust_chain_valid(&[
+            dtc_check("TrustChain", true),
+            dtc_check("SignerKeyMatchesCertificate", false),
+        ]));
+    }
+
+    #[test]
+    fn dtc_trust_accepts_exactly_one_passed_instance_of_each_check() {
+        assert!(dtc_trust_chain_valid(&[
+            dtc_check("Signature", true),
+            dtc_check("TrustChain", true),
+            dtc_check("SignerKeyMatchesCertificate", true),
+        ]));
+    }
+
+    #[test]
+    fn dtc_trust_rejects_duplicate_required_checks() {
+        assert!(!dtc_trust_chain_valid(&[
+            dtc_check("TrustChain", true),
+            dtc_check("TrustChain", true),
+            dtc_check("SignerKeyMatchesCertificate", true),
+        ]));
+        assert!(!dtc_trust_chain_valid(&[
+            dtc_check("TrustChain", true),
+            dtc_check("SignerKeyMatchesCertificate", true),
+            dtc_check("SignerKeyMatchesCertificate", false),
+        ]));
     }
 
     #[tokio::test]

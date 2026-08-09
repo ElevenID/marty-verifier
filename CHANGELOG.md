@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased] - 2026-07-17
 
+### Security
+
+- Require explicit, unique, passing DTC trust-chain and signer-certificate
+  binding evidence before projecting the trust chain as valid.
+
 ## [unreleased] - 2026-07-17
 
 ### Bug Fixes
