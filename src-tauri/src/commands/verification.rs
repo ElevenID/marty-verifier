@@ -544,7 +544,7 @@ pub struct LivenessResultPayload {
     pub errors: Vec<String>,
 }
 
-/// Face match payload (placeholder)
+/// Face match payload.
 #[derive(Debug, Serialize, Clone)]
 pub struct FaceMatchPayload {
     pub verified: bool,
@@ -553,91 +553,33 @@ pub struct FaceMatchPayload {
     pub provider: String,
 }
 
-async fn run_face_match(request: &VerifyRequest) -> AppResult<FaceMatchPayload> {
-    let threshold = request.face_threshold.unwrap_or(0.75);
-
-    #[cfg(feature = "biometrics")]
-    {
-        use marty_biometrics::{BiometricProvider, FaceVerificationRequest, FaceVerifier};
-
-        let reference_image = request.reference_image.clone().unwrap_or_default();
-        let probe_image = request.probe_image.clone().unwrap_or_default();
-        if reference_image.is_empty() || probe_image.is_empty() {
-            return Err(AppError::Verification(
-                "Face match requested but reference/probe images missing".to_string(),
-            ));
-        }
-
-        let provider = BiometricProvider::mock();
-        let result = provider
-            .verify(FaceVerificationRequest {
-                reference_image,
-                probe_image,
-                threshold: Some(threshold),
-                liveness_challenge: None,
-                preferred_liveness_mode: None,
-                allow_network_fallback: false,
-                accessibility_mode: false,
-                retain_audit_clip: false,
-                audit_clip_ttl_seconds: None,
-            })
-            .await
-            .map_err(|e| AppError::Verification(e.to_string()))?;
-
-        Ok(FaceMatchPayload {
-            verified: result.verified,
-            similarity: result.similarity,
-            threshold: result.threshold,
-            provider: result.provider,
-        })
-    }
-
-    #[cfg(not(feature = "biometrics"))]
-    {
-        // Placeholder when biometrics feature is disabled
-        Ok(FaceMatchPayload {
-            verified: true,
-            similarity: 0.9,
-            threshold,
-            provider: "placeholder".to_string(),
-        })
-    }
+async fn run_face_match(_request: &VerifyRequest) -> AppResult<FaceMatchPayload> {
+    Err(AppError::Verification(
+        "No production face-match provider is configured".to_string(),
+    ))
 }
 
 async fn evaluate_pad(
-    challenge: &LivenessChallenge,
+    _challenge: &LivenessChallenge,
     pad_config: &PadProviderConfig,
 ) -> AppResult<LivenessResultPayload> {
     match pad_config.provider {
-        PadProviderType::Mock => Ok(LivenessResultPayload {
-            passed: true,
-            fused_score: 0.85,
-            mode_used: Some(challenge.preferred_mode.as_str().to_string()),
-            errors: vec!["PAD provider set to mock".to_string()],
-        }),
+        PadProviderType::Mock => Err(AppError::Verification(
+            "Mock PAD cannot authorize a production verification".to_string(),
+        )),
         PadProviderType::SelfHosted => {
             if pad_config.endpoint.is_none() {
                 return Err(AppError::Verification(
                     "PAD self-hosted endpoint not configured".to_string(),
                 ));
             }
-            // TODO: Implement HTTP call to self-hosted PAD endpoint with media + challenge metadata
-            Ok(LivenessResultPayload {
-                passed: true,
-                fused_score: 0.82,
-                mode_used: Some("self_hosted".to_string()),
-                errors: vec!["Self-hosted PAD placeholder; implement HTTP adapter".to_string()],
-            })
+            Err(AppError::Verification(
+                "Self-hosted PAD adapter is not implemented".to_string(),
+            ))
         }
-        PadProviderType::Commercial => {
-            // TODO: Implement commercial PAD adapter (e.g., Rekognition/iProov) using endpoint/api_key
-            Ok(LivenessResultPayload {
-                passed: true,
-                fused_score: 0.88,
-                mode_used: Some("commercial".to_string()),
-                errors: vec!["Commercial PAD placeholder; implement API client".to_string()],
-            })
-        }
+        PadProviderType::Commercial => Err(AppError::Verification(
+            "Commercial PAD adapter is not implemented".to_string(),
+        )),
     }
 }
 
@@ -687,7 +629,7 @@ pub struct TrustChainStatus {
 }
 
 /// Revocation status
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RevocationStatus {
     /// Not revoked
@@ -719,14 +661,11 @@ async fn evaluate_policy_constraints(
     issuer_id: &str,
     trust_verified: bool,
     state: &AppState,
-) -> Vec<String> {
-    let mut warnings = Vec::new();
+) -> AppResult<Vec<String>> {
+    let mut violations = Vec::new();
 
     // Load cached policies
-    let policies = match load_cached_policies(state).await {
-        Ok(p) => p,
-        Err(_) => return warnings, // No policies cached, skip checks
-    };
+    let policies = load_cached_policies(state).await?;
 
     // Find applicable policy by credential type
     let policy = policies.iter().find(|p| {
@@ -740,25 +679,24 @@ async fn evaluate_policy_constraints(
             IssuerConstraintChecker::new(policy.trust_profile_id.as_ref(), &policy.allowed_issuers);
         let issuer_result = issuer_checker.check_issuer(issuer_id, trust_verified);
         if let Some(msg) = issuer_result.violation_message() {
-            warnings.push(msg.to_string());
+            violations.push(msg.to_string());
         }
 
         // Check trust profile requirement
         if policy.trust_profile_id.is_some() && !trust_verified {
-            warnings.push("Credential does not meet trust profile requirements".to_string());
+            violations.push("Credential does not meet trust profile requirements".to_string());
         }
 
         // Check freshness if specified
         if let Some(max_age_seconds) = policy.freshness_requirements.max_credential_age_seconds {
-            // Would need issuance_date from credential - placeholder for now
-            warnings.push(format!(
-                "Credential freshness check required (max age: {} seconds)",
+            violations.push(format!(
+                "Credential freshness could not be established (max age: {} seconds)",
                 max_age_seconds
             ));
         }
     }
 
-    warnings
+    Ok(violations)
 }
 
 /// Verify a credential
@@ -844,10 +782,10 @@ pub async fn verify_credential(
             }
             #[cfg(not(feature = "oid4vp"))]
             {
-                placeholder_success(&request, is_online)
+                unsupported_result(&request, "OID4VP support is not included in this build")
             }
         }
-        _ => placeholder_success(&request, is_online),
+        _ => unsupported_result(&request, "Unsupported credential type"),
     };
 
     // Face match (placeholder/mock)
@@ -863,6 +801,7 @@ pub async fn verify_credential(
                 result.face_match = Some(payload);
             }
             Err(e) => {
+                result.status = VerificationStatus::Failed;
                 result
                     .warnings
                     .push(format!("Face match unavailable: {}", e));
@@ -896,10 +835,20 @@ pub async fn verify_credential(
 
         let trust_verified = result.trust_chain.valid;
 
-        let policy_warnings =
-            evaluate_policy_constraints(&request, issuer_id, trust_verified, state.inner()).await;
-
-        result.warnings.extend(policy_warnings);
+        match evaluate_policy_constraints(&request, issuer_id, trust_verified, state.inner()).await
+        {
+            Ok(violations) if !violations.is_empty() => {
+                result.status = VerificationStatus::Invalid;
+                result.warnings.extend(violations);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                result.status = VerificationStatus::Failed;
+                result
+                    .warnings
+                    .push(format!("Policy evaluation unavailable: {error}"));
+            }
+        }
     }
 
     // Store verification event
@@ -1627,7 +1576,7 @@ async fn verify_oid4vp_payload(
         vec![]
     };
 
-    let overall_valid = token_result.valid && structural_errors.is_empty();
+    let holder_presentation_valid = token_result.valid && structural_errors.is_empty();
 
     let mut warnings: Vec<String> = vec![];
     if !is_online {
@@ -1638,28 +1587,25 @@ async fn verify_oid4vp_payload(
         warnings.push(format!("Verification error: {}", err));
     }
 
-    let (holder, disclosed_claims) = if overall_valid {
-        extract_claims_from_vp(&vp_token)
-    } else {
-        (None, serde_json::json!({}))
-    };
+    if holder_presentation_valid {
+        warnings.push(
+            "Holder presentation proof is valid, but embedded credential issuer proofs, trust, and status were not verified"
+                .into(),
+        );
+    }
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
-        status: if overall_valid {
-            VerificationStatus::Valid
+        status: if holder_presentation_valid {
+            VerificationStatus::Failed
         } else {
             VerificationStatus::Invalid
         },
         credential_type: request.credential_type.clone(),
-        issuer: holder.map(|h| IssuerInfo {
-            name: Some(h),
-            jurisdiction: None,
-            subject: None,
-        }),
-        disclosed_claims,
+        issuer: None,
+        disclosed_claims: serde_json::json!({}),
         trust_chain: TrustChainStatus {
-            valid: overall_valid,
+            valid: false,
             chain_type: "oid4vp".to_string(),
             trust_anchor: None,
             offline_verified: !is_online,
@@ -1763,7 +1709,7 @@ pub fn verify_oid4vp_offline(
         vec![]
     };
 
-    let overall_valid = token_result.valid && structural_errors.is_empty();
+    let holder_presentation_valid = token_result.valid && structural_errors.is_empty();
 
     let mut warnings: Vec<String> =
         vec!["Verified offline — revocation and trust anchoring not available".into()];
@@ -1772,28 +1718,25 @@ pub fn verify_oid4vp_offline(
         warnings.push(format!("Verification error: {}", err));
     }
 
-    let (holder, disclosed_claims) = if overall_valid {
-        extract_claims_from_vp(&vp_token)
-    } else {
-        (None, serde_json::json!({}))
-    };
+    if holder_presentation_valid {
+        warnings.push(
+            "Holder presentation proof is valid, but embedded credential issuer proofs, trust, and status were not verified"
+                .into(),
+        );
+    }
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
-        status: if overall_valid {
-            VerificationStatus::Valid
+        status: if holder_presentation_valid {
+            VerificationStatus::Failed
         } else {
             VerificationStatus::Invalid
         },
         credential_type: "oid4vp".to_string(),
-        issuer: holder.map(|h| IssuerInfo {
-            name: Some(h),
-            jurisdiction: None,
-            subject: None,
-        }),
-        disclosed_claims,
+        issuer: None,
+        disclosed_claims: serde_json::json!({}),
         trust_chain: TrustChainStatus {
-            valid: overall_valid,
+            valid: false,
             chain_type: "oid4vp".to_string(),
             trust_anchor: None,
             offline_verified: true,
@@ -2129,17 +2072,20 @@ async fn verify_oid4vp_online(
         .build()
         .map_err(|e| AppError::Verification(format!("HTTP client build error: {}", e)))?;
 
-    // Use the presentation_definition from the request payload if available;
-    // otherwise supply a minimal placeholder so the API call succeeds.
-    let presentation_definition =
-        raw.get("presentation_definition")
-            .cloned()
-            .unwrap_or_else(|| {
-                serde_json::json!({
-                    "id": "oid4vp-request",
-                    "input_descriptors": []
-                })
-            });
+    let presentation_definition = raw.get("presentation_definition").cloned().ok_or_else(|| {
+        AppError::Verification(
+            "OID4VP online verification requires the original presentation_definition".to_string(),
+        )
+    })?;
+    let has_required_descriptors = presentation_definition
+        .get("input_descriptors")
+        .and_then(Value::as_array)
+        .is_some_and(|descriptors| !descriptors.is_empty());
+    if !has_required_descriptors {
+        return Err(AppError::Verification(
+            "OID4VP presentation_definition must contain at least one input descriptor".to_string(),
+        ));
+    }
 
     let body = serde_json::json!({
         "organization_id": "marty-verifier",
@@ -2178,24 +2124,51 @@ async fn verify_oid4vp_online(
         .await
         .map_err(|e| AppError::Verification(format!("Invalid JSON from credentials API: {}", e)))?;
 
-    let valid = api_result
+    let legacy_valid = api_result
         .get("valid")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let verified_claims = api_result
-        .get("verified_claims")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
+    let overall_passed = api_result.get("overall_result").and_then(Value::as_str) == Some("PASS");
+    let trust_chain_valid =
+        api_result.get("trust_chain_valid").and_then(Value::as_bool) == Some(true);
+    let revocation_checked = api_result
+        .get("revocation_checked")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let revocation_valid = api_result
+        .get("revocation_status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("VALID"));
+    let valid = legacy_valid
+        && overall_passed
+        && trust_chain_valid
+        && revocation_checked
+        && revocation_valid;
+    let verified_claims = if valid {
+        api_result
+            .get("verified_claims")
+            .cloned()
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
 
     let mut warnings: Vec<String> = vec![];
     if let Some(err) = api_result.get("error").and_then(|v| v.as_str()) {
         warnings.push(format!("Verification note: {}", err));
+    }
+    if legacy_valid && !valid {
+        warnings.push(
+            "Credentials API did not provide passing trust and revocation evidence".to_string(),
+        );
     }
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
         status: if valid {
             VerificationStatus::Valid
+        } else if legacy_valid {
+            VerificationStatus::Failed
         } else {
             VerificationStatus::Invalid
         },
@@ -2203,12 +2176,12 @@ async fn verify_oid4vp_online(
         issuer: None,
         disclosed_claims: verified_claims,
         trust_chain: TrustChainStatus {
-            valid,
+            valid: trust_chain_valid,
             chain_type: "oid4vp".to_string(),
             trust_anchor: None,
             offline_verified: false,
         },
-        revocation_status: if valid {
+        revocation_status: if revocation_checked && revocation_valid {
             RevocationStatus::Valid
         } else {
             RevocationStatus::Unknown
@@ -2223,90 +2196,23 @@ async fn verify_oid4vp_online(
     })
 }
 
-/// Extract holder DID and disclosed claims from a JWT VP token payload.
-///
-/// The VP payload's `vp.verifiableCredential` array is iterated to collect
-/// `credentialSubject` fields.  Returns `(holder_did, claims_object)`.
-#[cfg(feature = "oid4vp")]
-fn extract_claims_from_vp(vp_token: &str) -> (Option<String>, Value) {
-    let parts: Vec<&str> = vp_token.split('.').collect();
-    if parts.len() != 3 {
-        return (None, serde_json::json!({}));
-    }
-
-    let Ok(payload_bytes) = URL_SAFE_NO_PAD.decode(parts[1]) else {
-        return (None, serde_json::json!({}));
-    };
-
-    let Ok(payload) = serde_json::from_slice::<Value>(&payload_bytes) else {
-        return (None, serde_json::json!({}));
-    };
-
-    let holder = payload
-        .get("iss")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let vp = payload.get("vp").cloned().unwrap_or(serde_json::json!({}));
-
-    let vc_list = vp
-        .get("verifiableCredential")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut claims = serde_json::Map::new();
-    for vc in vc_list {
-        // Handle both inline JSON VCs and VC JWTs (decoded nested `vc` claim)
-        let subject = vc
-            .get("credentialSubject")
-            .or_else(|| vc.get("vc").and_then(|v| v.get("credentialSubject")));
-
-        if let Some(obj) = subject.and_then(|v| v.as_object()) {
-            for (k, v) in obj {
-                if k != "id" {
-                    claims.insert(k.clone(), v.clone());
-                }
-            }
-        }
-    }
-
-    (holder, Value::Object(claims))
-}
-
-/// Placeholder response for non-eMRTD types (to be replaced as other types are wired up).
-fn placeholder_success(request: &VerifyRequest, is_online: bool) -> VerificationResult {
+/// Return a non-authorizing result for an unavailable verifier capability.
+fn unsupported_result(request: &VerifyRequest, reason: &str) -> VerificationResult {
     VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
-        status: VerificationStatus::Valid,
+        status: VerificationStatus::Failed,
         credential_type: request.credential_type.clone(),
-        issuer: Some(IssuerInfo {
-            name: Some("Example Issuer".to_string()),
-            jurisdiction: Some("US".to_string()),
-            subject: None,
-        }),
-        disclosed_claims: serde_json::json!({
-            "given_name": "John",
-            "family_name": "Doe",
-            "age_over_21": true
-        }),
+        issuer: None,
+        disclosed_claims: serde_json::json!({}),
         trust_chain: TrustChainStatus {
-            valid: true,
-            chain_type: "iaca".to_string(),
-            trust_anchor: Some("US-CA".to_string()),
-            offline_verified: !is_online,
+            valid: false,
+            chain_type: "unavailable".to_string(),
+            trust_anchor: None,
+            offline_verified: false,
         },
-        revocation_status: if is_online {
-            RevocationStatus::Valid
-        } else {
-            RevocationStatus::CachedValid
-        },
+        revocation_status: RevocationStatus::Unknown,
         verified_at: chrono::Utc::now().to_rfc3339(),
-        warnings: if is_online {
-            vec![]
-        } else {
-            vec!["Verified offline with cached trust anchors".to_string()]
-        },
+        warnings: vec![reason.to_string()],
         emrtd_details: None,
         dtc_details: None,
         open_badge_details: None,
@@ -2361,6 +2267,32 @@ mod tests {
         tampered.nonce = "wrong".to_string();
 
         assert!(!verify_challenge_signature(&tampered, secret));
+    }
+
+    #[test]
+    fn unsupported_credential_result_cannot_authorize() {
+        let request: VerifyRequest = serde_json::from_value(json!({
+            "credential_type": "unknown-format",
+            "credential_data": "opaque"
+        }))
+        .expect("request");
+
+        let result = unsupported_result(&request, "Unsupported credential type");
+
+        assert_eq!(result.status, VerificationStatus::Failed);
+        assert!(!result.trust_chain.valid);
+        assert_eq!(result.revocation_status, RevocationStatus::Unknown);
+        assert_eq!(result.disclosed_claims, json!({}));
+        assert!(result.issuer.is_none());
+    }
+
+    #[tokio::test]
+    async fn mock_pad_cannot_authorize() {
+        let error = evaluate_pad(&sample_challenge(), &PadProviderConfig::default())
+            .await
+            .expect_err("mock PAD must be unavailable");
+
+        assert!(error.to_string().contains("Mock PAD cannot authorize"));
     }
 
     #[test]
