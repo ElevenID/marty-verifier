@@ -14,6 +14,7 @@ use x509_cert::Certificate;
 use crate::{error::SyncError, signing_key::decode_signing_public_key};
 use marty_secure_storage::{
     OpenBadgeKeySource, OpenBadgeVerificationMethod, TrustAnchor, TrustPackageProvenance,
+    TrustPackageSignerPolicy,
 };
 
 const MAX_PACKAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -52,6 +53,11 @@ pub struct TrustAnchorPackage {
     pub expires_at: String,
     /// Stable identifier derived from the actual pinned verification key.
     pub signer_key_id: String,
+    /// Optional exact key id authorized to sign one subsequent package.
+    #[serde(deserialize_with = "deserialize_required_optional_string")]
+    pub next_signer_key_id: Option<String>,
+    /// Stable offline recovery key id. It cannot change after bootstrap.
+    pub recovery_signer_key_id: String,
     /// Informational legacy certificate field. Trust comes only from the pinned key.
     #[serde(rename = "signing_cert")]
     pub _signing_cert: String,
@@ -71,6 +77,7 @@ pub struct TrustAnchorPackage {
 /// Fully authenticated and strictly parsed package ready for one storage transition.
 pub(crate) struct VerifiedTrustPackage {
     pub(crate) provenance: TrustPackageProvenance,
+    pub(crate) signer_policy: TrustPackageSignerPolicy,
     pub(crate) anchors: Vec<TrustAnchor>,
     pub(crate) open_badge_methods: Vec<OpenBadgeVerificationMethod>,
 }
@@ -114,6 +121,13 @@ where
     D: Deserializer<'de>,
 {
     Value::deserialize(deserializer).map(DeclaredValue::Present)
+}
+
+fn deserialize_required_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
 }
 
 /// Import trust anchors from USB package
@@ -208,6 +222,10 @@ pub(crate) async fn import_from_usb(path: &Path) -> Result<VerifiedTrustPackage,
     );
 
     Ok(VerifiedTrustPackage {
+        signer_policy: TrustPackageSignerPolicy {
+            next_signer_key_id: package.next_signer_key_id,
+            recovery_signer_key_id: package.recovery_signer_key_id,
+        },
         provenance: TrustPackageProvenance {
             trust_domain: package.trust_domain,
             sequence: package.sequence,
@@ -341,6 +359,20 @@ fn validate_package_metadata(
     }
     validate_identifier("package version", &package.version)?;
     validate_identifier("package signer_key_id", &package.signer_key_id)?;
+    if let Some(next_signer_key_id) = package.next_signer_key_id.as_deref() {
+        validate_identifier("package next_signer_key_id", next_signer_key_id)?;
+        if next_signer_key_id == package.signer_key_id
+            || next_signer_key_id == package.recovery_signer_key_id
+        {
+            return Err(SyncError::Parse(
+                "Package next signer must differ from current and recovery signers".to_string(),
+            ));
+        }
+    }
+    validate_identifier(
+        "package recovery_signer_key_id",
+        &package.recovery_signer_key_id,
+    )?;
     if package.signer_key_id != actual_signer_key_id {
         return Err(SyncError::SignatureVerification);
     }
@@ -868,6 +900,8 @@ mod tests {
                 "created_at":"2026-08-08T00:00:00Z",
                 "expires_at":"2027-08-08T00:00:00Z",
                 "signer_key_id":"ed25519:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "next_signer_key_id":null,
+                "recovery_signer_key_id":"ed25519:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "signing_cert":"informational-only",
                 "signature":"AA==",
                 "iaca_certificates":[],
@@ -891,6 +925,8 @@ mod tests {
             "signer_key_id": declared_signer
                 .map(str::to_string)
                 .unwrap_or_else(|| signer_key_id(&public_key)),
+            "next_signer_key_id": Value::Null,
+            "recovery_signer_key_id": signer_key_id(&[9_u8; 32]),
             "signing_cert": "informational-only",
             "signature": "",
             "iaca_certificates": [],
@@ -929,6 +965,19 @@ mod tests {
         let unknown = minimal_package_json(",\"unexpected\":true");
         let error = parse_strict_package(&unknown).expect_err("unknown member must fail");
         assert!(error.to_string().contains("unknown field"));
+
+        for required_policy_field in ["next_signer_key_id", "recovery_signer_key_id"] {
+            let mut missing_transition_field: Value =
+                serde_json::from_str(&minimal_package_json("")).unwrap();
+            missing_transition_field
+                .as_object_mut()
+                .unwrap()
+                .remove(required_policy_field);
+            let error =
+                parse_strict_package(&serde_json::to_string(&missing_transition_field).unwrap())
+                    .expect_err("missing signed transition field must fail");
+            assert!(error.to_string().contains(required_policy_field));
+        }
     }
 
     #[test]
@@ -986,6 +1035,19 @@ mod tests {
         let (tampered_package, tampered_value) =
             parse_strict_package(&tampered_raw).expect("strict tampered package");
         assert!(verify_package_signature(&tampered_value, &tampered_package, &public_key).is_err());
+
+        let mut tampered_transition: Value = serde_json::from_str(&raw).expect("signed JSON");
+        tampered_transition["next_signer_key_id"] = json!(format!("ed25519:{}", "c".repeat(64)));
+        let tampered_transition_raw =
+            serde_json::to_string(&tampered_transition).expect("tampered transition JSON");
+        let (tampered_transition_package, tampered_transition_value) =
+            parse_strict_package(&tampered_transition_raw).expect("strict tampered package");
+        assert!(verify_package_signature(
+            &tampered_transition_value,
+            &tampered_transition_package,
+            &public_key
+        )
+        .is_err());
     }
 
     #[test]
