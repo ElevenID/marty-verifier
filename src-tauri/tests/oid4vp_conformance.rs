@@ -91,20 +91,24 @@ fn empty_json_object_returns_error() {
 
 // ── §2  Happy Path ────────────────────────────────────────────────────────────
 
-/// Core conformance test: the static fixture VP token (signed with the shared
-/// Ed25519 seed, correct `aud` + `nonce` + far-future `exp`) must verify as
-/// `Valid` through the offline path.
+/// A valid holder-signed VP is not a valid credential decision by itself.
+/// Offline verification cannot authenticate the embedded issuer credentials,
+/// trust path, or status, so it must remain non-authorizing.
 #[test]
-fn happy_path_offline_flow_returns_valid_status() {
+fn holder_proof_alone_does_not_return_valid_status() {
     let data = credential_data(STATIC_VP_TOKEN, NONCE);
     let result = verify_oid4vp_offline(&data, VERIFIER_ID, VERIFIER_ID)
         .expect("verify_oid4vp_offline should not error on valid input");
     assert_eq!(
         result.status,
-        VerificationStatus::Valid,
-        "Happy-path VP token must verify as Valid; warnings: {:?}",
+        VerificationStatus::Failed,
+        "Holder proof without issuer evidence must fail closed; warnings: {:?}",
         result.warnings
     );
+    assert!(!result.trust_chain.valid);
+    assert_eq!(result.disclosed_claims, serde_json::json!({}));
+    assert!(result.warnings.iter().any(|warning| warning
+        .contains("embedded credential issuer proofs, trust, and status were not verified")));
 }
 
 /// The offline verification path MUST include an offline disclaimer warning
@@ -244,18 +248,18 @@ fn with_matching_pd_and_ps_result_is_valid() {
         .expect("PD+PS structural check should not error");
     assert_eq!(
         result.status,
-        VerificationStatus::Valid,
-        "Matching PD+PS must still produce Valid; warnings: {:?}",
+        VerificationStatus::Failed,
+        "Matching PD+PS does not establish issuer proof or trust; warnings: {:?}",
         result.warnings
     );
 }
 
-/// Without PD/PS fields the structural check is skipped; result is still Valid.
+/// Without PD/PS fields, a holder proof still cannot authorize credential claims.
 #[test]
 fn without_pd_and_ps_structural_check_is_skipped() {
     let data = credential_data(STATIC_VP_TOKEN, NONCE);
     let result = verify_oid4vp_offline(&data, VERIFIER_ID, VERIFIER_ID).unwrap();
-    assert_eq!(result.status, VerificationStatus::Valid);
+    assert_eq!(result.status, VerificationStatus::Failed);
 }
 
 /// A `presentation_submission` whose `definition_id` does not match the
@@ -349,8 +353,8 @@ fn pex_field_constraint_satisfied_is_valid() {
 
     assert_eq!(
         result.status,
-        VerificationStatus::Valid,
-        "Satisfied field constraint MUST produce Valid; warnings: {:?}",
+        VerificationStatus::Failed,
+        "Satisfied field constraints do not establish issuer proof; warnings: {:?}",
         result.warnings
     );
 }
@@ -439,8 +443,8 @@ fn pex_optional_field_absent_is_valid() {
 
     assert_eq!(
         result.status,
-        VerificationStatus::Valid,
-        "Absent optional field MUST NOT produce Invalid; warnings: {:?}",
+        VerificationStatus::Failed,
+        "Absent optional field passes structure but issuer evidence remains unavailable; warnings: {:?}",
         result.warnings
     );
 }
@@ -529,8 +533,8 @@ fn pex_multi_descriptor_all_satisfied_is_valid() {
 
     assert_eq!(
         result.status,
-        VerificationStatus::Valid,
-        "Multi-descriptor PD with all constraints satisfied MUST be Valid; warnings: {:?}",
+        VerificationStatus::Failed,
+        "Multi-descriptor constraints do not authenticate embedded credentials; warnings: {:?}",
         result.warnings
     );
 }
