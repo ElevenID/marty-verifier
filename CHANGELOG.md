@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased] - 2026-07-17
 
+### Security
+
+- Fail closed when production biometric models are absent or invalid instead
+  of selecting the deterministic mock provider from Tauri commands, and reject
+  caller-controlled face-match thresholds below the production security floor.
+
 ## [unreleased] - 2026-07-17
 
 ### Bug Fixes
