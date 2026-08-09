@@ -358,9 +358,9 @@ fn validate_package_metadata(
         ));
     }
     validate_identifier("package version", &package.version)?;
-    validate_identifier("package signer_key_id", &package.signer_key_id)?;
+    validate_ed25519_key_id("package signer_key_id", &package.signer_key_id)?;
     if let Some(next_signer_key_id) = package.next_signer_key_id.as_deref() {
-        validate_identifier("package next_signer_key_id", next_signer_key_id)?;
+        validate_ed25519_key_id("package next_signer_key_id", next_signer_key_id)?;
         if next_signer_key_id == package.signer_key_id
             || next_signer_key_id == package.recovery_signer_key_id
         {
@@ -369,7 +369,7 @@ fn validate_package_metadata(
             ));
         }
     }
-    validate_identifier(
+    validate_ed25519_key_id(
         "package recovery_signer_key_id",
         &package.recovery_signer_key_id,
     )?;
@@ -443,6 +443,24 @@ fn validate_identifier(name: &str, value: &str) -> Result<(), SyncError> {
     {
         return Err(SyncError::Parse(format!(
             "{name} must be a bounded non-empty value without surrounding whitespace"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_ed25519_key_id(name: &str, value: &str) -> Result<(), SyncError> {
+    let digest = value.strip_prefix("ed25519:").ok_or_else(|| {
+        SyncError::Parse(format!(
+            "{name} must be ed25519: followed by a lowercase BLAKE3 digest"
+        ))
+    })?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(SyncError::Parse(format!(
+            "{name} must be ed25519: followed by 64 lowercase hexadecimal characters"
         )));
     }
     Ok(())
@@ -978,6 +996,36 @@ mod tests {
                     .expect_err("missing signed transition field must fail");
             assert!(error.to_string().contains(required_policy_field));
         }
+    }
+
+    #[test]
+    fn signer_policy_requires_canonical_ed25519_key_ids() {
+        let invalid_ids = [
+            "missing-prefix",
+            "ed25519:abc",
+            "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "ed25519:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        ];
+
+        for field in ["next_signer_key_id", "recovery_signer_key_id"] {
+            for invalid_id in invalid_ids {
+                let mut value: Value =
+                    serde_json::from_str(&minimal_package_json("")).expect("minimal package");
+                value[field] = json!(invalid_id);
+                let raw = serde_json::to_string(&value).expect("package JSON");
+                let (package, _) = parse_strict_package(&raw).expect("strict package shape");
+                let declared_signer = package.signer_key_id.clone();
+                let error = validate_package_metadata(&package, &declared_signer)
+                    .expect_err("noncanonical signer policy id must fail");
+                assert!(error.to_string().contains("ed25519:"));
+            }
+        }
+
+        let (_, value) = parse_strict_package(&minimal_package_json(""))
+            .expect("canonical signer ids must remain valid");
+        let package: TrustAnchorPackage = serde_json::from_value(value).unwrap();
+        let declared_signer = package.signer_key_id.clone();
+        validate_package_metadata(&package, &declared_signer).expect("canonical signer policy ids");
     }
 
     #[test]
