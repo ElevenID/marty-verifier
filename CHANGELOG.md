@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fail closed when production biometric models are absent or invalid instead
   of selecting the deterministic mock provider from Tauri commands, and reject
   caller-controlled face-match thresholds below the production security floor.
+- Fail closed when production Open Badge trust policy is unsafe or trust data is unavailable, critically stale, or future-dated, and exclude credential-supplied trust documents.
+- Exclude inactive, out-of-window, stale, future-dated, malformed, conflicting, duplicate, or private-key-bearing Open Badge trust records from production verification.
 
 ## [unreleased] - 2026-07-17
 

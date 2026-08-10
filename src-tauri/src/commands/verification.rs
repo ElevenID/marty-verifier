@@ -1,6 +1,7 @@
 //! Credential verification commands
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -9,10 +10,12 @@ use chrono::{DateTime, Duration, Utc};
 use marty_app_storage::{OpenBadgeVerificationMethod, TrustAnchorType};
 #[cfg(feature = "oid4vp")]
 use marty_oid4vci::verifier::{PresentationDefinition, PresentationSubmission, VerificationEngine};
+use marty_secure_storage::{OpenBadgeTrustRecord, TrustPackageProvenance};
 use marty_verification::chip_io::{verify_from_reader, MockPassportReader};
 use marty_verification::open_badges::{
     detect_version as detect_open_badges_version, verify_ob2_json, verify_ob3_json_async,
-    DocumentStore, OpenBadgesVersion,
+    verify_ob3_json_with_status_lists_async, ArtifactProvenance, AuthenticatedStatusList,
+    DocumentStore, OpenBadgesVersion, StatusAuthorityProvenance,
 };
 use marty_verification::policy::{IssuerConstraintChecker, PresentationPolicy};
 use marty_verification::trust_anchor::CscaRegistry;
@@ -21,12 +24,14 @@ use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
+use tokio::sync::OnceCell;
 use uuid::Uuid;
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
 
 use crate::config::{
-    LivenessRetentionConfig, OpenBadgeTrustPolicy, PadProviderConfig, PadProviderType,
+    LivenessRetentionConfig, OpenBadgeTrustConfig, OpenBadgeTrustPolicy, PadProviderConfig,
+    PadProviderType,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::{AppState, StoredLivenessChallenge};
@@ -37,6 +42,9 @@ pub use marty_app_storage::VerificationHistoryEntry;
 const DEFAULT_CHALLENGE_TTL_SECS: i64 = 60;
 const MAX_CLOCK_SKEW_SECS: i64 = 5;
 const DEFAULT_STEP_TIME_LIMIT_MS: i32 = 5000;
+const MAX_OPEN_BADGE_TRUST_AGE_HOURS: u32 = 48;
+const MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS: u32 = 24;
+const MAX_OPEN_BADGE_STATUS_IRI_CHARS: usize = 4096;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -529,8 +537,49 @@ pub struct OpenBadgeDetails {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub error_codes: Vec<String>,
     pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub status_checks: Vec<OpenBadgeStatusEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub normalized: Option<Value>,
+}
+
+/// Authenticated Open Badge status evidence projected from marty-core.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenBadgeStatusEvidence {
+    pub status_list_url: String,
+    pub status_issuer: String,
+    pub status_purpose: String,
+    pub status_list_index: u64,
+    pub status_size: u8,
+    pub status_value: u16,
+    pub outcome: OpenBadgeStatusEvidenceOutcome,
+    pub checked_at: DateTime<Utc>,
+    pub retrieved_at: DateTime<Utc>,
+    pub fresh_until: DateTime<Utc>,
+    pub authority_provenance: OpenBadgeStatusAuthorityEvidence,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OpenBadgeStatusEvidenceOutcome {
+    Good,
+    Revoked,
+    Suspended,
+    Message,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenBadgeStatusAuthorityEvidence {
+    pub trust_profile: OpenBadgeArtifactEvidence,
+    pub resolver: OpenBadgeArtifactEvidence,
+    pub software: OpenBadgeArtifactEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenBadgeArtifactEvidence {
+    pub id: String,
+    pub version: String,
+    pub digest: String,
 }
 
 /// Liveness result payload
@@ -959,57 +1008,72 @@ async fn verify_open_badge_payload(
     let (version, mut req_value) = build_open_badge_request(&raw)?;
 
     let trust_config = state.config.read().await.open_badge_trust.clone();
-    let trusted_methods = state.storage.get_open_badge_keys().await?;
-    let mut store = build_trusted_open_badge_store(&trusted_methods);
+    ensure_production_open_badge_policy(&trust_config.policy)?;
+    let now = Utc::now();
+    let trust_records = state.trust_storage.get_open_badge_trust_records().await?;
     let mut warnings = Vec::new();
+    let (governed_store, rejected_records) =
+        build_governed_open_badge_store(&trust_records, now, trust_config.stale_critical_hours);
 
-    if store.is_empty() {
-        warnings.push("Open Badge trust store is empty".to_string());
+    if rejected_records > 0 {
+        warnings.push(format!(
+            "Rejected {rejected_records} Open Badge trust record(s) with invalid lifecycle or binding metadata"
+        ));
+    }
+
+    if governed_store.documents.is_empty() {
+        warnings.push("Governed Open Badge trust store is empty".to_string());
     }
 
     let method_id = extract_open_badge_method_id(&req_value, version);
-    if let Some(method_id) = method_id.as_deref() {
-        if !open_badge_method_trusted(&store, method_id) {
-            warnings.push(format!(
-                "Open Badge verification method not trusted: {}",
-                method_id
-            ));
-            if matches!(trust_config.policy, OpenBadgeTrustPolicy::FailClosed) {
-                return Ok(build_open_badge_result(
-                    request,
-                    version,
-                    false,
-                    warnings,
-                    Some(method_id.to_string()),
-                    None,
-                    is_online,
-                    OpenBadgeDetails {
-                        version: open_badge_version_label(version).to_string(),
-                        errors: vec!["Verification method not trusted".to_string()],
-                        error_codes: Vec::new(),
-                        warnings: Vec::new(),
-                        normalized: None,
-                    },
-                ));
-            }
-        }
+    let method_trusted =
+        open_badge_request_method_trusted(&governed_store.documents, method_id.as_deref());
+    if !method_trusted {
+        let (warning, error) = match method_id.as_deref() {
+            Some(_) => (
+                "Open Badge verification method is not trusted".to_string(),
+                "Verification method not trusted",
+            ),
+            None => (
+                "Open Badge verification method is missing".to_string(),
+                "Verification method missing",
+            ),
+        };
+        warnings.push(warning);
+        return Ok(build_open_badge_result(
+            request,
+            version,
+            false,
+            warnings,
+            None,
+            None,
+            is_online,
+            OpenBadgeDetails {
+                version: open_badge_version_label(version).to_string(),
+                errors: vec![error.to_string()],
+                error_codes: Vec::new(),
+                warnings: Vec::new(),
+                status_checks: Vec::new(),
+                normalized: None,
+            },
+        ));
     }
 
-    let request_store = extract_open_badge_document_store(&req_value)?;
-    let allow_untrusted_keys = matches!(trust_config.policy, OpenBadgeTrustPolicy::FailOpen);
-    merge_open_badge_store(&mut store, &request_store, allow_untrusted_keys);
+    let (authenticated_status_lists, status_adapter_warnings) =
+        build_authenticated_status_lists(&req_value, &governed_store, now, &trust_config).await?;
+    warnings.extend(status_adapter_warnings);
 
-    if let Value::Object(ref mut obj) = req_value {
-        obj.insert("document_store".to_string(), serde_json::to_value(&store)?);
-    }
+    replace_open_badge_document_store(&mut req_value, &governed_store.documents)?;
 
     let req_json = serde_json::to_string(&req_value)?;
     let verify_result_json = match version {
         OpenBadgesVersion::V2 => verify_ob2_json(&req_json)
             .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
-        OpenBadgesVersion::V3 => verify_ob3_json_async(&req_json)
-            .await
-            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
+        OpenBadgesVersion::V3 => {
+            verify_ob3_json_with_status_lists_async(&req_json, &authenticated_status_lists)
+                .await
+                .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?
+        }
         OpenBadgesVersion::Unknown => {
             return Err(AppError::Verification(
                 "Unable to detect Open Badge version".to_string(),
@@ -1021,16 +1085,17 @@ async fn verify_open_badge_payload(
         AppError::Verification(format!("Invalid Open Badge verify response: {}", e))
     })?;
 
-    let valid = result_value
+    let mut valid = result_value
         .get("valid")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let errors = extract_string_list(result_value.get("errors"));
     let error_codes = extract_string_list(result_value.get("error_codes"));
     let warnings_from_result = extract_string_list(result_value.get("warnings"));
+    let status_checks = extract_open_badge_status_evidence(&result_value)?;
     let normalized = result_value.get("normalized").cloned();
 
-    let details = OpenBadgeDetails {
+    let mut details = OpenBadgeDetails {
         version: result_value
             .get("version")
             .and_then(|v| v.as_str())
@@ -1039,15 +1104,20 @@ async fn verify_open_badge_payload(
         errors,
         error_codes,
         warnings: warnings_from_result,
+        status_checks,
         normalized: normalized.clone(),
     };
 
-    let (stale_warning, stale_critical) = open_badge_trust_staleness(state, &trust_config).await?;
-    if let Some(msg) = stale_warning {
-        warnings.push(msg);
-    }
-    if let Some(msg) = stale_critical {
-        warnings.push(msg);
+    match open_badge_trust_freshness(state, &trust_config).await? {
+        OpenBadgeTrustFreshness::Fresh => {}
+        OpenBadgeTrustFreshness::Warning(message) => warnings.push(message),
+        OpenBadgeTrustFreshness::Unavailable(message) => {
+            valid = false;
+            warnings.push(message);
+            details
+                .errors
+                .push("Open Badge trust data unavailable".to_string());
+        }
     }
 
     Ok(build_open_badge_result(
@@ -1195,12 +1265,184 @@ fn build_open_badge_request(raw: &Value) -> AppResult<(OpenBadgesVersion, Value)
     }
 }
 
-fn build_trusted_open_badge_store(methods: &[OpenBadgeVerificationMethod]) -> DocumentStore {
-    let mut store = DocumentStore::new();
-    for method in methods {
-        store.insert(method.id.clone(), method.document.clone());
+#[derive(Debug, Default)]
+struct GovernedOpenBadgeStore {
+    documents: DocumentStore,
+    provenance_by_document: HashMap<String, TrustPackageProvenance>,
+}
+
+impl GovernedOpenBadgeStore {
+    fn provenance_for_method(&self, method_id: &str) -> Option<&TrustPackageProvenance> {
+        if let Some(provenance) = self.provenance_by_document.get(method_id) {
+            return Some(provenance);
+        }
+
+        method_id
+            .split_once('#')
+            .and_then(|(base, _)| self.provenance_by_document.get(base))
     }
-    store
+
+    fn authority_documents(&self, provenance: &TrustPackageProvenance) -> DocumentStore {
+        self.documents
+            .iter()
+            .filter(|(id, _)| self.provenance_by_document.get(*id) == Some(provenance))
+            .map(|(id, document)| (id.clone(), document.clone()))
+            .collect()
+    }
+}
+
+fn build_governed_open_badge_store(
+    records: &[OpenBadgeTrustRecord],
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> (GovernedOpenBadgeStore, usize) {
+    let mut governed = GovernedOpenBadgeStore::default();
+    let mut ambiguous_ids = HashSet::new();
+    let mut rejected_records = 0;
+
+    for record in records {
+        if !open_badge_governed_record_is_usable(record, now, stale_critical_hours) {
+            rejected_records += 1;
+            continue;
+        }
+        let Some(provenance) = record.provenance.as_ref() else {
+            rejected_records += 1;
+            continue;
+        };
+        let method = &record.method;
+
+        if ambiguous_ids.contains(&method.id) {
+            rejected_records += 1;
+        } else if governed.documents.remove(&method.id).is_some() {
+            governed.provenance_by_document.remove(&method.id);
+            ambiguous_ids.insert(method.id.clone());
+            rejected_records += 2;
+        } else {
+            governed
+                .documents
+                .insert(method.id.clone(), method.document.clone());
+            governed
+                .provenance_by_document
+                .insert(method.id.clone(), provenance.clone());
+        }
+    }
+
+    (governed, rejected_records)
+}
+
+fn open_badge_governed_record_is_usable(
+    record: &OpenBadgeTrustRecord,
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> bool {
+    let Some(provenance) = record.provenance.as_ref() else {
+        return false;
+    };
+    if provenance.created_at != record.method.synced_at
+        || provenance.created_at > now
+        || provenance.expires_at <= now
+        || provenance.created_at >= provenance.expires_at
+        || provenance.imported_at < provenance.created_at
+        || provenance.imported_at > now
+    {
+        return false;
+    }
+
+    open_badge_trust_record_is_usable(&record.method, now, stale_critical_hours)
+}
+
+#[cfg(test)]
+fn build_trusted_open_badge_store(
+    methods: &[OpenBadgeVerificationMethod],
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> (DocumentStore, usize) {
+    let mut store = DocumentStore::new();
+    let mut ambiguous_ids = HashSet::new();
+    let mut rejected_records = 0;
+
+    for method in methods {
+        if !open_badge_trust_record_is_usable(method, now, stale_critical_hours) {
+            rejected_records += 1;
+            continue;
+        }
+
+        if ambiguous_ids.contains(&method.id) {
+            rejected_records += 1;
+        } else if store.remove(&method.id).is_some() {
+            ambiguous_ids.insert(method.id.clone());
+            rejected_records += 2;
+        } else {
+            store.insert(method.id.clone(), method.document.clone());
+        }
+    }
+
+    (store, rejected_records)
+}
+
+fn open_badge_trust_record_is_usable(
+    method: &OpenBadgeVerificationMethod,
+    now: DateTime<Utc>,
+    stale_critical_hours: u32,
+) -> bool {
+    if method.status.as_deref() != Some("active") || method.synced_at > now {
+        return false;
+    }
+
+    let (Some(not_before), Some(not_after)) = (method.not_before, method.not_after) else {
+        return false;
+    };
+    if not_before > now || not_after <= now || not_before >= not_after {
+        return false;
+    }
+
+    let critical_age = Duration::hours(i64::from(
+        stale_critical_hours.min(MAX_OPEN_BADGE_TRUST_AGE_HOURS),
+    ));
+    if critical_age <= Duration::zero()
+        || now.signed_duration_since(method.synced_at) >= critical_age
+    {
+        return false;
+    }
+
+    let Some(document) = method.document.as_object() else {
+        return false;
+    };
+    if document.get("id").and_then(Value::as_str) != Some(method.id.as_str()) {
+        return false;
+    }
+
+    let Some(controller) = method.controller.as_deref() else {
+        return false;
+    };
+    if document.get("controller").and_then(Value::as_str) != Some(controller) {
+        return false;
+    }
+
+    !contains_private_jwk(&method.document)
+}
+
+fn contains_private_jwk(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, nested)| {
+            if key.starts_with("privateKey") || key == "secretKeyJwk" {
+                return true;
+            }
+
+            if key == "publicKeyJwk" {
+                return nested.as_object().is_none_or(|jwk| {
+                    matches!(jwk.get("kty").and_then(Value::as_str), Some("oct") | None)
+                        || ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]
+                            .iter()
+                            .any(|private| jwk.contains_key(*private))
+                });
+            }
+
+            contains_private_jwk(nested)
+        }),
+        Value::Array(items) => items.iter().any(contains_private_jwk),
+        _ => false,
+    }
 }
 
 fn extract_open_badge_method_id(request: &Value, version: OpenBadgesVersion) -> Option<String> {
@@ -1288,20 +1530,277 @@ fn extract_open_badge_document_store(request: &Value) -> AppResult<DocumentStore
     }
 }
 
-fn merge_open_badge_store(
-    base: &mut DocumentStore,
-    supplemental: &DocumentStore,
-    allow_untrusted_keys: bool,
-) {
+static VERIFIER_SOFTWARE_PROVENANCE: OnceCell<ArtifactProvenance> = OnceCell::const_new();
+
+async fn build_authenticated_status_lists(
+    request: &Value,
+    governed_store: &GovernedOpenBadgeStore,
+    observed_at: DateTime<Utc>,
+    config: &OpenBadgeTrustConfig,
+) -> AppResult<(Vec<AuthenticatedStatusList>, Vec<String>)> {
+    let status_list_urls = extract_status_list_urls(request);
+    let request_store = extract_stapled_status_documents(request, &status_list_urls)?;
+    if status_list_urls.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let software = verifier_software_provenance().await?;
+    let mut authenticated = Vec::new();
+    let mut warnings = Vec::new();
+    for status_list_url in status_list_urls {
+        match build_authenticated_status_list(
+            &status_list_url,
+            &request_store,
+            governed_store,
+            observed_at,
+            config,
+            &software,
+        ) {
+            Ok(status_list) => authenticated.push(status_list),
+            Err(reason) => warnings.push(format!(
+                "A declared status list was not admitted as authenticated context: {reason}"
+            )),
+        }
+    }
+
+    Ok((authenticated, warnings))
+}
+
+fn extract_stapled_status_documents(
+    request: &Value,
+    status_list_urls: &[String],
+) -> AppResult<DocumentStore> {
+    let Some(value) = request.get("document_store") else {
+        return Ok(DocumentStore::new());
+    };
+    if value.is_null() {
+        return Ok(DocumentStore::new());
+    }
+    let Value::Object(request_store) = value else {
+        return Err(AppError::Verification(
+            "document_store must be a JSON object".to_string(),
+        ));
+    };
+
+    Ok(status_list_urls
+        .iter()
+        .filter_map(|url| {
+            request_store
+                .get(url)
+                .map(|credential| (url.clone(), credential.clone()))
+        })
+        .collect())
+}
+
+fn extract_status_list_urls(request: &Value) -> Vec<String> {
+    let Some(status) = request
+        .get("credential")
+        .and_then(|credential| credential.get("credentialStatus"))
+    else {
+        return Vec::new();
+    };
+    let entries: Vec<&Value> = match status {
+        Value::Array(entries) if entries.len() <= 32 => entries.iter().collect(),
+        Value::Object(_) => vec![status],
+        _ => return Vec::new(),
+    };
+
+    let mut seen = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            entry.get("type").and_then(Value::as_str) == Some("BitstringStatusListEntry")
+        })
+        .filter_map(|entry| {
+            entry
+                .get("statusListCredential")
+                .and_then(Value::as_str)
+                .filter(|url| {
+                    !url.is_empty() && url.chars().count() <= MAX_OPEN_BADGE_STATUS_IRI_CHARS
+                })
+                .map(str::to_string)
+        })
+        .filter(|url| seen.insert(url.clone()))
+        .collect()
+}
+
+fn build_authenticated_status_list(
+    status_list_url: &str,
+    request_store: &DocumentStore,
+    governed_store: &GovernedOpenBadgeStore,
+    observed_at: DateTime<Utc>,
+    config: &OpenBadgeTrustConfig,
+    software: &ArtifactProvenance,
+) -> Result<AuthenticatedStatusList, String> {
+    let credential = request_store.get(status_list_url).cloned().ok_or_else(|| {
+        "the request did not staple a credential at the exact status URL".to_string()
+    })?;
+    let status_issuer = credential_issuer_id(&credential)
+        .ok_or_else(|| "the stapled credential has no scalar issuer identifier".to_string())?;
+    let status_method = extract_ob3_method_id(&credential).ok_or_else(|| {
+        "the stapled credential has no scalar proof method identifier".to_string()
+    })?;
+    let provenance = governed_store
+        .provenance_for_method(&status_method)
+        .ok_or_else(|| "the status proof method is not in governed trust storage".to_string())?;
+    let authority_documents = governed_store.authority_documents(provenance);
+    if authority_documents.is_empty() {
+        return Err("the governed package has no resolver-owned authority documents".to_string());
+    }
+
+    let valid_from = parse_status_list_time(&credential, "validFrom")?;
+    let valid_until = parse_status_list_time(&credential, "validUntil")?;
+    if valid_from > observed_at || valid_until <= observed_at || valid_until <= valid_from {
+        return Err("the stapled credential is outside its signed validity period".to_string());
+    }
+    if config.status_list_max_age_hours == 0 || config.stale_critical_hours == 0 {
+        return Err("status or trust freshness policy is disabled".to_string());
+    }
+
+    let status_list_max_age_hours = config
+        .status_list_max_age_hours
+        .min(MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS);
+    let trust_max_age_hours = config
+        .stale_critical_hours
+        .min(MAX_OPEN_BADGE_TRUST_AGE_HOURS);
+    let signed_age_deadline = valid_from
+        .checked_add_signed(Duration::hours(i64::from(status_list_max_age_hours)))
+        .ok_or_else(|| "status freshness deadline exceeds the supported range".to_string())?;
+    let trust_age_deadline = provenance
+        .created_at
+        .checked_add_signed(Duration::hours(i64::from(trust_max_age_hours)))
+        .ok_or_else(|| "trust freshness deadline exceeds the supported range".to_string())?;
+    let fresh_until = [
+        valid_until,
+        signed_age_deadline,
+        trust_age_deadline,
+        provenance.expires_at,
+    ]
+    .into_iter()
+    .min()
+    .ok_or_else(|| "no status freshness deadline is available".to_string())?;
+    if fresh_until <= observed_at {
+        return Err("the stapled credential exceeds the configured signed-age limit".to_string());
+    }
+
+    let package_digest = format!("blake3:{}", provenance.package_digest);
+    let trust_profile = ArtifactProvenance::new(
+        provenance.trust_domain.clone(),
+        provenance.package_version.clone(),
+        package_digest.clone(),
+    )?;
+    let resolver = ArtifactProvenance::new(
+        provenance.signer_key_id.clone(),
+        provenance.sequence.to_string(),
+        package_digest,
+    )?;
+    let authority_provenance =
+        StatusAuthorityProvenance::new(trust_profile, resolver, software.clone());
+
+    AuthenticatedStatusList::new(
+        status_list_url,
+        credential,
+        status_issuer,
+        authority_documents,
+        observed_at,
+        fresh_until,
+        authority_provenance,
+    )
+}
+
+fn credential_issuer_id(credential: &Value) -> Option<String> {
+    match credential.get("issuer")? {
+        Value::String(issuer) if !issuer.is_empty() => Some(issuer.clone()),
+        Value::Object(issuer) => issuer
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn parse_status_list_time(credential: &Value, field: &str) -> Result<DateTime<Utc>, String> {
+    let value = credential
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("the stapled credential is missing scalar {field}"))?;
+    DateTime::parse_from_rfc3339(value)
+        .map(|time| time.with_timezone(&Utc))
+        .map_err(|_| format!("the stapled credential has invalid {field}"))
+}
+
+async fn verifier_software_provenance() -> AppResult<ArtifactProvenance> {
+    let provenance = VERIFIER_SOFTWARE_PROVENANCE
+        .get_or_try_init(|| async {
+            tokio::task::spawn_blocking(compute_verifier_software_provenance)
+                .await
+                .map_err(|error| {
+                    AppError::Verification(format!("Software provenance task failed: {error}"))
+                })?
+                .map_err(|error| {
+                    AppError::Verification(format!("Software provenance unavailable: {error}"))
+                })
+        })
+        .await?;
+    Ok(provenance.clone())
+}
+
+fn compute_verifier_software_provenance() -> Result<ArtifactProvenance, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("could not locate the running executable: {error}"))?;
+    let mut file = std::fs::File::open(&executable)
+        .map_err(|error| format!("could not read the running executable: {error}"))?;
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("could not hash the running executable: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        context.update(&buffer[..count]);
+    }
+    let digest = context.finish();
+    let mut digest_hex = String::with_capacity(digest.as_ref().len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest.as_ref() {
+        digest_hex.push(HEX[usize::from(byte >> 4)] as char);
+        digest_hex.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+
+    ArtifactProvenance::new(
+        "marty-verifier-executable",
+        env!("CARGO_PKG_VERSION"),
+        format!("sha256:{digest_hex}"),
+    )
+}
+
+fn merge_open_badge_offline_store(base: &mut DocumentStore, supplemental: &DocumentStore) {
     for (key, value) in supplemental {
         if base.contains_key(key) {
             continue;
         }
-        if !allow_untrusted_keys && is_open_badge_key_document(value) {
-            continue;
-        }
         base.insert(key.clone(), value.clone());
     }
+}
+
+fn replace_open_badge_document_store(
+    request: &mut Value,
+    trusted_store: &DocumentStore,
+) -> AppResult<()> {
+    let Value::Object(obj) = request else {
+        return Err(AppError::Verification(
+            "Open Badge verification request must be a JSON object".to_string(),
+        ));
+    };
+
+    obj.insert(
+        "document_store".to_string(),
+        serde_json::to_value(trusted_store)?,
+    );
+    Ok(())
 }
 
 fn open_badge_method_trusted(store: &DocumentStore, method_id: &str) -> bool {
@@ -1318,17 +1817,21 @@ fn open_badge_method_trusted(store: &DocumentStore, method_id: &str) -> bool {
     false
 }
 
-fn is_open_badge_key_document(value: &Value) -> bool {
-    let Some(obj) = value.as_object() else {
-        return false;
-    };
+fn open_badge_request_method_trusted(store: &DocumentStore, method_id: Option<&str>) -> bool {
+    method_id
+        .map(|method_id| open_badge_method_trusted(store, method_id))
+        .unwrap_or(false)
+}
 
-    obj.contains_key("publicKeyJwk")
-        || obj.contains_key("publicKeyPem")
-        || obj.contains_key("publicKey")
-        || obj.contains_key("publicKeyBase58")
-        || obj.contains_key("publicKeyMultibase")
-        || obj.contains_key("verificationMethod")
+fn ensure_production_open_badge_policy(policy: &OpenBadgeTrustPolicy) -> AppResult<()> {
+    if matches!(policy, OpenBadgeTrustPolicy::FailOpen) {
+        return Err(AppError::Config(
+            "Open Badge fail-open trust policy is not permitted for production verification"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn extract_string_list(value: Option<&Value>) -> Vec<String> {
@@ -1343,38 +1846,101 @@ fn extract_string_list(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn open_badge_trust_staleness(
-    state: &AppState,
-    config: &crate::config::OpenBadgeTrustConfig,
-) -> AppResult<(Option<String>, Option<String>)> {
-    let last_sync = state.storage.get_latest_open_badge_sync().await?;
+fn extract_open_badge_status_evidence(result: &Value) -> AppResult<Vec<OpenBadgeStatusEvidence>> {
+    match result.get("status_checks") {
+        None => Ok(Vec::new()),
+        Some(Value::Array(checks)) => {
+            serde_json::from_value(Value::Array(checks.clone())).map_err(|error| {
+                AppError::Verification(format!(
+                    "Invalid authenticated Open Badge status evidence: {error}"
+                ))
+            })
+        }
+        Some(_) => Err(AppError::Verification(
+            "Authenticated Open Badge status evidence must be an array".to_string(),
+        )),
+    }
+}
+
+fn open_badge_revocation_status(
+    status_checks: &[OpenBadgeStatusEvidence],
+    verification_valid: bool,
+) -> RevocationStatus {
+    if status_checks
+        .iter()
+        .any(|check| check.outcome == OpenBadgeStatusEvidenceOutcome::Revoked)
+    {
+        return RevocationStatus::Revoked;
+    }
+    if verification_valid
+        && status_checks.iter().any(|check| {
+            check.status_purpose == "revocation"
+                && check.outcome == OpenBadgeStatusEvidenceOutcome::Good
+        })
+    {
+        return RevocationStatus::Valid;
+    }
+
+    RevocationStatus::Unknown
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OpenBadgeTrustFreshness {
+    Fresh,
+    Warning(String),
+    Unavailable(String),
+}
+
+fn classify_open_badge_trust_freshness(
+    last_sync: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    config: &OpenBadgeTrustConfig,
+) -> OpenBadgeTrustFreshness {
     let Some(last_sync) = last_sync else {
-        return Ok((None, None));
+        return OpenBadgeTrustFreshness::Unavailable(
+            "Open Badge trust list has never been synchronized".to_string(),
+        );
     };
 
-    let age_hours = (Utc::now() - last_sync).num_minutes() as f64 / 60.0;
+    let age = now.signed_duration_since(last_sync);
+    if age < Duration::zero() {
+        return OpenBadgeTrustFreshness::Unavailable(
+            "Open Badge trust list synchronization timestamp is in the future".to_string(),
+        );
+    }
 
-    if age_hours > config.stale_critical_hours as f64 {
-        return Ok((
-            None,
-            Some(format!(
-                "Open Badge trust list critically stale ({:.1} hours old)",
-                age_hours
-            )),
+    let age_hours = age.num_minutes() as f64 / 60.0;
+    if age
+        >= Duration::hours(i64::from(
+            config
+                .stale_critical_hours
+                .min(MAX_OPEN_BADGE_TRUST_AGE_HOURS),
+        ))
+    {
+        return OpenBadgeTrustFreshness::Unavailable(format!(
+            "Open Badge trust list critically stale ({age_hours:.1} hours old)"
         ));
     }
 
-    if age_hours > config.stale_warning_hours as f64 {
-        return Ok((
-            Some(format!(
-                "Open Badge trust list stale ({:.1} hours old)",
-                age_hours
-            )),
-            None,
+    if age >= Duration::hours(i64::from(config.stale_warning_hours)) {
+        return OpenBadgeTrustFreshness::Warning(format!(
+            "Open Badge trust list stale ({age_hours:.1} hours old)"
         ));
     }
 
-    Ok((None, None))
+    OpenBadgeTrustFreshness::Fresh
+}
+
+async fn open_badge_trust_freshness(
+    state: &AppState,
+    config: &OpenBadgeTrustConfig,
+) -> AppResult<OpenBadgeTrustFreshness> {
+    let last_sync = state.trust_storage.get_latest_open_badge_sync().await?;
+    Ok(classify_open_badge_trust_freshness(
+        last_sync,
+        Utc::now(),
+        config,
+    ))
 }
 
 fn open_badge_version_label(version: OpenBadgesVersion) -> &'static str {
@@ -1396,6 +1962,7 @@ fn build_open_badge_result(
     is_online: bool,
     details: OpenBadgeDetails,
 ) -> VerificationResult {
+    let revocation_status = open_badge_revocation_status(&details.status_checks, valid);
     let disclosed_claims = normalized
         .as_ref()
         .map(open_badge_claims_from_normalized)
@@ -1423,7 +1990,7 @@ fn build_open_badge_result(
             trust_anchor,
             offline_verified: !is_online,
         },
-        revocation_status: RevocationStatus::Unknown,
+        revocation_status,
         verified_at: chrono::Utc::now().to_rfc3339(),
         warnings,
         emrtd_details: None,
@@ -1965,16 +2532,12 @@ pub async fn verify_open_badge_offline(
     let raw = parse_json_input(credential_data_json, "Open Badge")?;
     let (version, mut req_value) = build_open_badge_request(&raw)?;
 
-    // Empty store + FailOpen so embedded key documents are accepted
-    let mut store = build_trusted_open_badge_store(&[]);
-    let allow_untrusted_keys = true;
+    // Empty store + explicit offline merge so embedded documents are accepted.
+    let mut store = DocumentStore::new();
 
     let request_store = extract_open_badge_document_store(&req_value)?;
-    merge_open_badge_store(&mut store, &request_store, allow_untrusted_keys);
-
-    if let Value::Object(ref mut obj) = req_value {
-        obj.insert("document_store".to_string(), serde_json::to_value(&store)?);
-    }
+    merge_open_badge_offline_store(&mut store, &request_store);
+    replace_open_badge_document_store(&mut req_value, &store)?;
 
     let req_json = serde_json::to_string(&req_value)?;
     let verify_result_json = match version {
@@ -2001,6 +2564,7 @@ pub async fn verify_open_badge_offline(
     let errors = extract_string_list(result_value.get("errors"));
     let error_codes = extract_string_list(result_value.get("error_codes"));
     let warnings_from_result = extract_string_list(result_value.get("warnings"));
+    let status_checks = extract_open_badge_status_evidence(&result_value)?;
     let normalized = result_value.get("normalized").cloned();
 
     let version_label = result_value
@@ -2014,6 +2578,7 @@ pub async fn verify_open_badge_offline(
         errors,
         error_codes,
         warnings: warnings_from_result,
+        status_checks: status_checks.clone(),
         normalized: normalized.clone(),
     };
 
@@ -2045,7 +2610,7 @@ pub async fn verify_open_badge_offline(
             trust_anchor: method_id,
             offline_verified: true,
         },
-        revocation_status: RevocationStatus::Unknown,
+        revocation_status: open_badge_revocation_status(&status_checks, valid),
         verified_at: chrono::Utc::now().to_rfc3339(),
         warnings: vec!["Verified offline — empty trust store".to_string()],
         emrtd_details: None,
@@ -2314,26 +2879,454 @@ mod tests {
         assert!(request.get("credential").is_some());
     }
 
+    fn active_open_badge_method(now: DateTime<Utc>) -> OpenBadgeVerificationMethod {
+        OpenBadgeVerificationMethod {
+            id: "did:example:issuer#key-1".to_string(),
+            document: json!({
+                "id": "did:example:issuer#key-1",
+                "type": "JsonWebKey2020",
+                "controller": "did:example:issuer",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": "11qYAYdk9JbF9h5H4fGxM7yJFMw9qkE3vZ8LxJ8rV5M"
+                }
+            }),
+            controller: Some("did:example:issuer".to_string()),
+            issuer: None,
+            kid: None,
+            not_before: Some(now - Duration::hours(1)),
+            not_after: Some(now + Duration::hours(1)),
+            status: Some("active".to_string()),
+            source: marty_app_storage::OpenBadgeKeySource::Sync,
+            synced_at: now - Duration::hours(1),
+        }
+    }
+
+    fn governed_open_badge_record(
+        method: OpenBadgeVerificationMethod,
+        trust_domain: &str,
+        digest_byte: char,
+        now: DateTime<Utc>,
+    ) -> OpenBadgeTrustRecord {
+        OpenBadgeTrustRecord {
+            provenance: Some(TrustPackageProvenance {
+                trust_domain: trust_domain.to_string(),
+                sequence: 7,
+                package_version: "7.0.0".to_string(),
+                created_at: method.synced_at,
+                expires_at: now + Duration::hours(12),
+                signer_key_id: format!("ed25519:{}", "a".repeat(64)),
+                package_digest: digest_byte.to_string().repeat(64),
+                imported_at: now - Duration::minutes(30),
+            }),
+            method,
+        }
+    }
+
+    fn method_with_id(
+        mut method: OpenBadgeVerificationMethod,
+        id: &str,
+        controller: &str,
+    ) -> OpenBadgeVerificationMethod {
+        method.id = id.to_string();
+        method.controller = Some(controller.to_string());
+        method.document["id"] = json!(id);
+        method.document["controller"] = json!(controller);
+        method
+    }
+
+    fn software_artifact() -> ArtifactProvenance {
+        ArtifactProvenance::new(
+            "marty-verifier-executable",
+            "1.0.0",
+            format!("sha256:{}", "f".repeat(64)),
+        )
+        .expect("software provenance")
+    }
+
     #[test]
-    fn open_badge_store_filters_untrusted_keys() {
-        let mut base = DocumentStore::new();
-        base.insert(
-            "trusted-key".to_string(),
+    fn production_governed_store_rejects_provenance_less_records() {
+        let now = Utc::now();
+        let legacy = OpenBadgeTrustRecord {
+            method: active_open_badge_method(now),
+            provenance: None,
+        };
+
+        let (store, rejected) = build_governed_open_badge_store(&[legacy], now, 48);
+
+        assert!(store.documents.is_empty());
+        assert!(store.provenance_by_document.is_empty());
+        assert_eq!(rejected, 1);
+    }
+
+    #[test]
+    fn production_governed_store_isolates_package_domains() {
+        let now = Utc::now();
+        let first = governed_open_badge_record(
+            method_with_id(
+                active_open_badge_method(now),
+                "did:example:first#key-1",
+                "did:example:first",
+            ),
+            "trust.example/first",
+            '1',
+            now,
+        );
+        let second = governed_open_badge_record(
+            method_with_id(
+                active_open_badge_method(now),
+                "did:example:second#key-1",
+                "did:example:second",
+            ),
+            "trust.example/second",
+            '2',
+            now,
+        );
+
+        let (store, rejected) = build_governed_open_badge_store(&[first, second], now, 48);
+        let first_provenance = store
+            .provenance_for_method("did:example:first#key-1")
+            .expect("first provenance");
+        let authority = store.authority_documents(first_provenance);
+
+        assert_eq!(rejected, 0);
+        assert!(authority.contains_key("did:example:first#key-1"));
+        assert!(!authority.contains_key("did:example:second#key-1"));
+    }
+
+    #[test]
+    fn status_adapter_requires_exact_url_and_bounds_signed_age() {
+        let now = Utc::now();
+        let method_id = "did:example:status#key-1";
+        let record = governed_open_badge_record(
+            method_with_id(
+                active_open_badge_method(now),
+                method_id,
+                "did:example:status",
+            ),
+            "trust.example/status",
+            '3',
+            now,
+        );
+        let (store, rejected) = build_governed_open_badge_store(&[record], now, 48);
+        assert_eq!(rejected, 0);
+
+        let status_url = "https://status.example/lists/1";
+        let credential = json!({
+            "issuer": "did:example:status",
+            "validFrom": (now - Duration::hours(1)).to_rfc3339(),
+            "validUntil": (now + Duration::hours(4)).to_rfc3339(),
+            "proof": { "verificationMethod": method_id }
+        });
+        let mut request_store = DocumentStore::new();
+        request_store.insert(status_url.to_string(), credential.clone());
+
+        let admitted = build_authenticated_status_list(
+            status_url,
+            &request_store,
+            &store,
+            now,
+            &OpenBadgeTrustConfig::default(),
+            &software_artifact(),
+        )
+        .expect("admit exact governed status context");
+        assert_eq!(admitted.url(), status_url);
+        assert_eq!(admitted.trusted_issuer(), "did:example:status");
+        assert!(admitted.authority_documents().contains_key(method_id));
+        assert!(admitted.fresh_until() <= now + Duration::hours(4));
+
+        assert!(build_authenticated_status_list(
+            "https://status.example/lists/other",
+            &request_store,
+            &store,
+            now,
+            &OpenBadgeTrustConfig::default(),
+            &software_artifact(),
+        )
+        .is_err());
+
+        let mut stale_store = DocumentStore::new();
+        let mut stale = credential;
+        stale["validFrom"] = json!((now - Duration::hours(25)).to_rfc3339());
+        stale_store.insert(status_url.to_string(), stale);
+        let relaxed_config = OpenBadgeTrustConfig {
+            status_list_max_age_hours: 10_000,
+            stale_critical_hours: 10_000,
+            ..OpenBadgeTrustConfig::default()
+        };
+        assert!(build_authenticated_status_list(
+            status_url,
+            &stale_store,
+            &store,
+            now,
+            &relaxed_config,
+            &software_artifact(),
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn status_adapter_bounds_and_does_not_reflect_declared_urls() {
+        let malformed_store_request = json!({"document_store": []});
+        assert!(build_authenticated_status_lists(
+            &malformed_store_request,
+            &GovernedOpenBadgeStore::default(),
+            Utc::now(),
+            &OpenBadgeTrustConfig::default(),
+        )
+        .await
+        .is_err());
+
+        let prefix = "https://status.example/";
+        let maximum = format!(
+            "{prefix}{}",
+            "é".repeat(MAX_OPEN_BADGE_STATUS_IRI_CHARS - prefix.chars().count())
+        );
+        let maximum_request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": maximum,
+                }
+            }
+        });
+        assert_eq!(extract_status_list_urls(&maximum_request), vec![maximum]);
+
+        let oversized = format!("{prefix}{}", "a".repeat(MAX_OPEN_BADGE_STATUS_IRI_CHARS));
+        let oversized_request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": oversized,
+                }
+            }
+        });
+        assert!(extract_status_list_urls(&oversized_request).is_empty());
+
+        let private_marker = "private-query-value";
+        let status_url = format!("https://status.example/list?token={private_marker}");
+        let request = json!({
+            "credential": {
+                "credentialStatus": {
+                    "type": "BitstringStatusListEntry",
+                    "statusListCredential": status_url,
+                }
+            },
+            "document_store": {
+                "https://unrelated.example/1": {"large": "caller-controlled"}
+            }
+        });
+        let selected =
+            extract_stapled_status_documents(&request, std::slice::from_ref(&status_url))
+                .expect("select exact stapled status documents");
+        assert!(selected.is_empty());
+        let (_, warnings) = build_authenticated_status_lists(
+            &request,
+            &GovernedOpenBadgeStore::default(),
+            Utc::now(),
+            &OpenBadgeTrustConfig::default(),
+        )
+        .await
+        .expect("missing stapled status context remains a typed warning");
+
+        assert_eq!(warnings.len(), 1);
+        assert!(!warnings[0].contains(private_marker));
+        assert!(!warnings[0].contains(&status_url));
+    }
+
+    fn status_evidence(
+        purpose: &str,
+        outcome: OpenBadgeStatusEvidenceOutcome,
+    ) -> OpenBadgeStatusEvidence {
+        let now = Utc::now();
+        let artifact = OpenBadgeArtifactEvidence {
+            id: "artifact".to_string(),
+            version: "1".to_string(),
+            digest: format!("sha256:{}", "a".repeat(64)),
+        };
+        OpenBadgeStatusEvidence {
+            status_list_url: "https://status.example/lists/1".to_string(),
+            status_issuer: "did:example:status".to_string(),
+            status_purpose: purpose.to_string(),
+            status_list_index: 1,
+            status_size: 1,
+            status_value: u16::from(outcome != OpenBadgeStatusEvidenceOutcome::Good),
+            outcome,
+            checked_at: now,
+            retrieved_at: now,
+            fresh_until: now + Duration::hours(1),
+            authority_provenance: OpenBadgeStatusAuthorityEvidence {
+                trust_profile: artifact.clone(),
+                resolver: artifact.clone(),
+                software: artifact,
+            },
+        }
+    }
+
+    #[test]
+    fn revocation_projection_requires_explicit_authenticated_evidence() {
+        assert_eq!(
+            open_badge_revocation_status(&[], true),
+            RevocationStatus::Unknown
+        );
+        assert_eq!(
+            open_badge_revocation_status(
+                &[status_evidence(
+                    "revocation",
+                    OpenBadgeStatusEvidenceOutcome::Good,
+                )],
+                true
+            ),
+            RevocationStatus::Valid
+        );
+        assert_eq!(
+            open_badge_revocation_status(
+                &[status_evidence(
+                    "revocation",
+                    OpenBadgeStatusEvidenceOutcome::Good,
+                )],
+                false
+            ),
+            RevocationStatus::Unknown
+        );
+        assert_eq!(
+            open_badge_revocation_status(
+                &[status_evidence(
+                    "revocation",
+                    OpenBadgeStatusEvidenceOutcome::Revoked,
+                )],
+                false
+            ),
+            RevocationStatus::Revoked
+        );
+        assert_eq!(
+            open_badge_revocation_status(
+                &[status_evidence(
+                    "suspension",
+                    OpenBadgeStatusEvidenceOutcome::Good,
+                )],
+                true
+            ),
+            RevocationStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn software_provenance_hashes_the_running_executable() {
+        let provenance = compute_verifier_software_provenance().expect("software provenance");
+
+        assert_eq!(provenance.id(), "marty-verifier-executable");
+        assert_eq!(provenance.version(), env!("CARGO_PKG_VERSION"));
+        assert!(provenance.digest().starts_with("sha256:"));
+        assert_eq!(provenance.digest().len(), "sha256:".len() + 64);
+    }
+
+    #[tokio::test]
+    async fn software_provenance_is_stable_across_concurrent_requests() {
+        let (first, second, third) = tokio::join!(
+            verifier_software_provenance(),
+            verifier_software_provenance(),
+            verifier_software_provenance(),
+        );
+        let first = first.expect("first software provenance");
+        assert_eq!(first, second.expect("second software provenance"));
+        assert_eq!(first, third.expect("third software provenance"));
+    }
+
+    #[test]
+    fn production_open_badge_store_admits_only_active_in_window_records() {
+        let now = Utc::now();
+        let active = active_open_badge_method(now);
+        let (store, rejected) =
+            build_trusted_open_badge_store(std::slice::from_ref(&active), now, 48);
+        assert_eq!(store.len(), 1);
+        assert_eq!(rejected, 0);
+
+        let mut inactive = active.clone();
+        inactive.status = Some("revoked".to_string());
+        assert!(!open_badge_trust_record_is_usable(&inactive, now, 48));
+
+        let mut not_yet_valid = active.clone();
+        not_yet_valid.not_before = Some(now + Duration::seconds(1));
+        assert!(!open_badge_trust_record_is_usable(&not_yet_valid, now, 48));
+
+        let mut expired = active.clone();
+        expired.not_after = Some(now);
+        assert!(!open_badge_trust_record_is_usable(&expired, now, 48));
+
+        let mut critically_stale = active;
+        critically_stale.synced_at = now - Duration::hours(48);
+        assert!(!open_badge_trust_record_is_usable(
+            &critically_stale,
+            now,
+            48
+        ));
+        assert!(!open_badge_trust_record_is_usable(
+            &critically_stale,
+            now,
+            10_000
+        ));
+    }
+
+    #[test]
+    fn production_open_badge_store_rejects_binding_conflicts_and_private_keys() {
+        let now = Utc::now();
+        let active = active_open_badge_method(now);
+
+        let mut wrong_id = active.clone();
+        wrong_id.document["id"] = json!("did:example:issuer#other-key");
+        assert!(!open_badge_trust_record_is_usable(&wrong_id, now, 48));
+
+        let mut wrong_controller = active.clone();
+        wrong_controller.document["controller"] = json!("did:example:other");
+        assert!(!open_badge_trust_record_is_usable(
+            &wrong_controller,
+            now,
+            48
+        ));
+
+        let mut private_key = active;
+        private_key.document["publicKeyJwk"]["d"] = json!("private-material");
+        assert!(!open_badge_trust_record_is_usable(&private_key, now, 48));
+    }
+
+    #[test]
+    fn production_open_badge_store_rejects_duplicate_method_ids() {
+        let now = Utc::now();
+        let method = active_open_badge_method(now);
+        let (store, rejected) = build_trusted_open_badge_store(&[method.clone(), method], now, 48);
+
+        assert!(store.is_empty());
+        assert_eq!(rejected, 2);
+    }
+
+    #[test]
+    fn production_open_badge_store_replaces_credential_documents() {
+        let mut request = json!({
+            "credential": {},
+            "document_store": {
+                "did:example:untrusted": {
+                    "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "def" }
+                },
+                "https://issuer.example/status": {
+                    "credentialSubject": { "encodedList": "credential-controlled" }
+                }
+            }
+        });
+        let mut trusted_store = DocumentStore::new();
+        trusted_store.insert(
+            "did:example:trusted".to_string(),
             json!({ "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "abc" } }),
         );
 
-        let mut supplemental = DocumentStore::new();
-        supplemental.insert(
-            "untrusted-key".to_string(),
-            json!({ "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": "def" } }),
-        );
-        supplemental.insert("badge".to_string(), json!({ "id": "badge-1" }));
+        replace_open_badge_document_store(&mut request, &trusted_store)
+            .expect("replace document store");
+        let installed_store = extract_open_badge_document_store(&request).expect("document store");
 
-        merge_open_badge_store(&mut base, &supplemental, false);
-
-        assert!(base.contains_key("trusted-key"));
-        assert!(base.contains_key("badge"));
-        assert!(!base.contains_key("untrusted-key"));
+        assert_eq!(installed_store, trusted_store);
+        assert!(!installed_store.contains_key("did:example:untrusted"));
+        assert!(!installed_store.contains_key("https://issuer.example/status"));
     }
 
     #[test]
@@ -2371,6 +3364,90 @@ mod tests {
         assert!(open_badge_method_trusted(
             &store,
             "did:example:issuer#key-1"
+        ));
+    }
+
+    #[test]
+    fn production_open_badge_policy_rejects_fail_open() {
+        ensure_production_open_badge_policy(&OpenBadgeTrustPolicy::FailClosed)
+            .expect("fail-closed policy");
+        ensure_production_open_badge_policy(&OpenBadgeTrustPolicy::Selective)
+            .expect("selective policy");
+
+        let error = ensure_production_open_badge_policy(&OpenBadgeTrustPolicy::FailOpen)
+            .expect_err("fail-open policy must be rejected");
+        assert!(matches!(error, AppError::Config(message) if message.contains("fail-open")));
+    }
+
+    #[test]
+    fn production_open_badge_requires_a_trusted_method() {
+        let mut store = DocumentStore::new();
+        store.insert(
+            "did:example:trusted".to_string(),
+            json!({ "verificationMethod": [{ "id": "did:example:trusted#key-1" }] }),
+        );
+
+        assert!(!open_badge_request_method_trusted(&store, None));
+        assert!(!open_badge_request_method_trusted(
+            &store,
+            Some("did:example:untrusted#key-1")
+        ));
+        assert!(open_badge_request_method_trusted(
+            &store,
+            Some("did:example:trusted#key-1")
+        ));
+    }
+
+    #[test]
+    fn open_badge_trust_freshness_fails_closed_without_sync() {
+        let freshness =
+            classify_open_badge_trust_freshness(None, Utc::now(), &OpenBadgeTrustConfig::default());
+
+        assert!(matches!(
+            freshness,
+            OpenBadgeTrustFreshness::Unavailable(message)
+                if message.contains("never been synchronized")
+        ));
+    }
+
+    #[test]
+    fn open_badge_trust_freshness_fails_closed_for_future_sync() {
+        let now = Utc::now();
+        let freshness = classify_open_badge_trust_freshness(
+            Some(now + Duration::seconds(1)),
+            now,
+            &OpenBadgeTrustConfig::default(),
+        );
+
+        assert!(matches!(
+            freshness,
+            OpenBadgeTrustFreshness::Unavailable(message) if message.contains("future")
+        ));
+    }
+
+    #[test]
+    fn open_badge_trust_freshness_enforces_warning_and_critical_boundaries() {
+        let now = Utc::now();
+        let config = OpenBadgeTrustConfig::default();
+
+        assert_eq!(
+            classify_open_badge_trust_freshness(Some(now - Duration::hours(23)), now, &config,),
+            OpenBadgeTrustFreshness::Fresh
+        );
+        assert!(matches!(
+            classify_open_badge_trust_freshness(Some(now - Duration::hours(24)), now, &config,),
+            OpenBadgeTrustFreshness::Warning(_)
+        ));
+        assert!(matches!(
+            classify_open_badge_trust_freshness(Some(now - Duration::hours(48)), now, &config,),
+            OpenBadgeTrustFreshness::Unavailable(_)
+        ));
+
+        let mut relaxed = config;
+        relaxed.stale_critical_hours = 10_000;
+        assert!(matches!(
+            classify_open_badge_trust_freshness(Some(now - Duration::hours(48)), now, &relaxed,),
+            OpenBadgeTrustFreshness::Unavailable(_)
         ));
     }
 }
