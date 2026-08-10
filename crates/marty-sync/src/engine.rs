@@ -11,7 +11,11 @@ use tokio::sync::RwLock;
 use marty_secure_storage::{SecureStorage, SyncState, TrustAnchorType};
 
 use crate::error::SyncError;
-use crate::usb::{import_from_usb, UsbImportResult};
+use crate::usb::{import_from_usb, validate_trust_domain, UsbImportResult, VerifiedTrustPackage};
+
+fn default_usb_trust_domain() -> String {
+    "usb:default".to_string()
+}
 
 /// Sync configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +30,9 @@ pub struct SyncConfig {
     pub sync_interval_hours: u32,
     /// Enable USB import
     pub enable_usb_import: bool,
+    /// Out-of-band trust domain packages must declare exactly.
+    #[serde(default = "default_usb_trust_domain")]
+    pub usb_trust_domain: String,
     /// Maximum offline hours before warning
     pub max_offline_hours: u32,
 }
@@ -38,6 +45,7 @@ impl Default for SyncConfig {
             open_badge_keys_url: None,
             sync_interval_hours: 24,
             enable_usb_import: true,
+            usb_trust_domain: default_usb_trust_domain(),
             max_offline_hours: 72,
         }
     }
@@ -84,6 +92,7 @@ pub struct SyncEngine {
 impl SyncEngine {
     /// Create new sync engine
     pub fn new(storage: Arc<SecureStorage>, config: SyncConfig) -> Result<Self, SyncError> {
+        validate_trust_domain(&config.usb_trust_domain)?;
         Ok(Self {
             storage,
             config,
@@ -272,58 +281,120 @@ impl SyncEngine {
         }
 
         let path = Path::new(path);
-        let (anchors, open_badge_keys, mut result) = import_from_usb(path).await?;
+        let package = import_from_usb(path).await?;
+        self.apply_verified_package(package).await
+    }
 
-        // Store imported anchors
-        for anchor in anchors {
-            self.storage.store_trust_anchor(&anchor).await?;
+    async fn apply_verified_package(
+        &self,
+        package: VerifiedTrustPackage,
+    ) -> Result<UsbImportResult, SyncError> {
+        if package.provenance.trust_domain != self.config.usb_trust_domain {
+            return Err(SyncError::UsbImport(format!(
+                "Package trust domain {} does not match configured domain {}",
+                package.provenance.trust_domain, self.config.usb_trust_domain
+            )));
         }
 
-        // Store Open Badge verification methods
-        for method in open_badge_keys {
-            self.storage.store_open_badge_key(&method).await?;
-        }
-
-        // Update sync state
-        let mut state = self.storage.get_sync_state().await?.unwrap_or(SyncState {
-            last_iaca_sync: None,
-            last_csca_sync: None,
-            last_crl_sync: None,
-            iaca_version: None,
-            csca_version: None,
-            sync_in_progress: false,
-            last_error: None,
-        });
-
-        state.last_iaca_sync = Some(Utc::now());
-        state.last_csca_sync = Some(Utc::now());
-        state.iaca_version = result.package_version.clone();
-        state.csca_version = result.package_version.clone();
-
-        self.storage.update_sync_state(&state).await?;
-
-        // Log audit event
-        self.storage
-            .add_audit_log(
-                "usb_import",
-                None,
-                Some(path.to_string_lossy().as_ref()),
-                Some(&serde_json::json!({
-                    "certificates_imported": result.certificates_imported,
-                    "open_badge_keys_imported": result.open_badge_keys_imported,
-                    "package_version": result.package_version
-                })),
+        let package_version = package.provenance.package_version.clone();
+        let applied = self
+            .storage
+            .apply_trust_package_with_signer_policy(
+                &package.provenance,
+                &package.anchors,
+                &package.open_badge_methods,
+                &package.signer_policy,
             )
             .await?;
 
-        result.success = true;
-        Ok(result)
+        Ok(UsbImportResult {
+            success: true,
+            certificates_imported: applied.trust_anchors,
+            open_badge_keys_imported: applied.open_badge_methods,
+            signature_valid: true,
+            package_version: Some(package_version),
+            error: None,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use marty_secure_storage::{
+        OpenBadgeKeySource, OpenBadgeVerificationMethod, StorageError, TrustAnchor,
+        TrustAnchorSource, TrustPackageProvenance,
+    };
+
     use super::*;
+
+    fn trust_anchor(bytes: &[u8], created_at: chrono::DateTime<Utc>) -> TrustAnchor {
+        let digest = blake3::hash(bytes).to_hex().to_string();
+        TrustAnchor {
+            id: digest.clone(),
+            anchor_type: TrustAnchorType::Iaca,
+            jurisdiction: "US-CO".to_string(),
+            subject: None,
+            issuer: None,
+            serial_number: None,
+            not_before: None,
+            not_after: None,
+            certificate_der: bytes.to_vec(),
+            certificate_hash: digest,
+            source: TrustAnchorSource::UsbImport,
+            synced_at: created_at,
+        }
+    }
+
+    fn open_badge_method(created_at: chrono::DateTime<Utc>) -> OpenBadgeVerificationMethod {
+        OpenBadgeVerificationMethod {
+            id: "did:example:issuer#key-1".to_string(),
+            document: serde_json::json!({
+                "id": "did:example:issuer#key-1",
+                "type": "JsonWebKey2020",
+                "controller": "did:example:issuer",
+                "publicKeyJwk": {
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": "11qYAYdk9JwqPceJUchO3G0VQJq4aW8QjJwA8Yl5b4o"
+                }
+            }),
+            controller: Some("did:example:issuer".to_string()),
+            issuer: None,
+            kid: None,
+            not_before: Some(created_at - chrono::Duration::hours(1)),
+            not_after: Some(created_at + chrono::Duration::days(1)),
+            status: Some("active".to_string()),
+            source: OpenBadgeKeySource::UsbImport,
+            synced_at: created_at,
+        }
+    }
+
+    fn verified_package(
+        sequence: u64,
+        created_at: chrono::DateTime<Utc>,
+        digest_byte: char,
+        anchors: Vec<TrustAnchor>,
+        open_badge_methods: Vec<OpenBadgeVerificationMethod>,
+    ) -> VerifiedTrustPackage {
+        VerifiedTrustPackage {
+            signer_policy: marty_secure_storage::TrustPackageSignerPolicy {
+                next_signer_key_id: None,
+                recovery_signer_key_id: format!("ed25519:{}", "f".repeat(64)),
+            },
+            provenance: TrustPackageProvenance {
+                trust_domain: "usb:default".to_string(),
+                sequence,
+                package_version: format!("{sequence}.0.0"),
+                created_at,
+                expires_at: created_at + chrono::Duration::days(30),
+                signer_key_id: format!("ed25519:{}", "a".repeat(64)),
+                package_digest: digest_byte.to_string().repeat(64),
+                imported_at: Utc::now(),
+            },
+            anchors,
+            open_badge_methods,
+        }
+    }
 
     #[test]
     fn test_sync_config_default() {
@@ -334,6 +405,7 @@ mod tests {
         assert!(config.open_badge_keys_url.is_none());
         assert_eq!(config.sync_interval_hours, 24);
         assert!(config.enable_usb_import);
+        assert_eq!(config.usb_trust_domain, "usb:default");
         assert_eq!(config.max_offline_hours, 72);
     }
 
@@ -345,12 +417,14 @@ mod tests {
             open_badge_keys_url: Some("https://trust.example.org/open-badges".to_string()),
             sync_interval_hours: 12,
             enable_usb_import: false,
+            usb_trust_domain: "usb:air-gap-one".to_string(),
             max_offline_hours: 48,
         };
 
         assert_eq!(config.aamva_dts_url.unwrap(), "https://dts.aamva.org");
         assert_eq!(config.sync_interval_hours, 12);
         assert!(!config.enable_usb_import);
+        assert_eq!(config.usb_trust_domain, "usb:air-gap-one");
         assert_eq!(
             config.open_badge_keys_url.unwrap(),
             "https://trust.example.org/open-badges"
@@ -417,5 +491,118 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(result.error.unwrap(), "Network timeout");
+    }
+
+    #[tokio::test]
+    async fn verified_usb_package_uses_one_monotonic_whole_package_transition() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+        let first_anchor = trust_anchor(&[1, 2, 3], created_at);
+        let first_method = open_badge_method(created_at);
+        let first = verified_package(
+            1,
+            created_at,
+            'b',
+            vec![first_anchor.clone()],
+            vec![first_method.clone()],
+        );
+
+        let imported = engine.apply_verified_package(first).await.unwrap();
+        assert_eq!(imported.certificates_imported, 1);
+        assert_eq!(imported.open_badge_keys_imported, 1);
+        assert!(imported.signature_valid);
+
+        let next_created_at = created_at + chrono::Duration::seconds(1);
+        let replacement = trust_anchor(&[4, 5, 6], next_created_at);
+        let second = verified_package(2, next_created_at, 'c', vec![replacement.clone()], vec![]);
+        engine.apply_verified_package(second).await.unwrap();
+
+        let anchors = storage
+            .get_trust_anchor_records(TrustAnchorType::Iaca, None)
+            .await
+            .unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].anchor.id, replacement.id);
+        assert!(storage.get_open_badge_keys().await.unwrap().is_empty());
+
+        let replay = verified_package(1, created_at, 'b', vec![first_anchor], vec![first_method]);
+        assert!(matches!(
+            engine.apply_verified_package(replay).await,
+            Err(SyncError::Storage(
+                StorageError::TrustPackageRollback { .. }
+            ))
+        ));
+        let anchors_after_replay = storage
+            .get_trust_anchor_records(TrustAnchorType::Iaca, None)
+            .await
+            .unwrap();
+        assert_eq!(anchors_after_replay.len(), 1);
+        assert_eq!(anchors_after_replay[0].anchor.id, replacement.id);
+    }
+
+    #[tokio::test]
+    async fn mismatched_usb_trust_domain_is_rejected_without_mutation() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+        let anchor = trust_anchor(&[7, 8, 9], created_at);
+        let mut package = verified_package(1, created_at, 'd', vec![anchor], vec![]);
+        package.provenance.trust_domain = "usb:another-environment".to_string();
+
+        assert!(matches!(
+            engine.apply_verified_package(package).await,
+            Err(SyncError::UsbImport(message))
+                if message.contains("does not match configured domain")
+        ));
+        assert!(storage
+            .get_trust_anchor_records(TrustAnchorType::Iaca, None)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(storage.get_open_badge_keys().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn signed_next_signer_is_activated_once_and_old_signer_fails_closed() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+        let next_signer = format!("ed25519:{}", "b".repeat(64));
+
+        let mut bootstrap = verified_package(
+            1,
+            created_at,
+            '4',
+            vec![trust_anchor(&[10, 11, 12], created_at)],
+            vec![],
+        );
+        bootstrap.signer_policy.next_signer_key_id = Some(next_signer.clone());
+        engine.apply_verified_package(bootstrap).await.unwrap();
+
+        let next_created_at = created_at + chrono::Duration::seconds(1);
+        let next_anchor = trust_anchor(&[13, 14, 15], next_created_at);
+        let mut activated =
+            verified_package(2, next_created_at, '5', vec![next_anchor.clone()], vec![]);
+        activated.provenance.signer_key_id = next_signer;
+        engine.apply_verified_package(activated).await.unwrap();
+
+        let old_created_at = created_at + chrono::Duration::seconds(2);
+        let old_signer = verified_package(3, old_created_at, '6', vec![], vec![]);
+        assert!(matches!(
+            engine.apply_verified_package(old_signer).await,
+            Err(SyncError::Storage(StorageError::TrustPackageSignerChange(
+                _
+            )))
+        ));
+        let anchors = storage
+            .get_trust_anchor_records(TrustAnchorType::Iaca, None)
+            .await
+            .unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].anchor.id, next_anchor.id);
     }
 }

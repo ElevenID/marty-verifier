@@ -140,6 +140,13 @@ pub struct OpenBadgeTrustConfig {
     pub stale_warning_hours: u32,
     /// Critical threshold for trust list staleness (hours)
     pub stale_critical_hours: u32,
+    /// Maximum age of the signed validity start for a stapled status list
+    #[serde(default = "default_open_badge_status_list_max_age_hours")]
+    pub status_list_max_age_hours: u32,
+}
+
+const fn default_open_badge_status_list_max_age_hours() -> u32 {
+    24
 }
 
 /// Open Badge trust policy
@@ -273,6 +280,7 @@ impl Default for OpenBadgeTrustConfig {
             policy: OpenBadgeTrustPolicy::FailClosed,
             stale_warning_hours: 24,
             stale_critical_hours: 48,
+            status_list_max_age_hours: default_open_badge_status_list_max_age_hours(),
         }
     }
 }
