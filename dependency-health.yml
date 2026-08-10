@@ -6,7 +6,7 @@ dependencies:
     upstream: https://github.com/RustCrypto
     current: "x509-cert-0.2/der-0.7/ed25519-dalek-2/rand-0.8/aes-gcm-0.10"
     target: mutually-compatible-current-stable-releases
-    status: coordinated-migration
+    status: watch
     decision: upgrade
     advisories: []
     tracking-issue: https://github.com/ElevenID/marty-verifier/issues/70
@@ -18,7 +18,7 @@ dependencies:
     upstream: https://github.com/hwchen/keyring-rs
     current: "direct-4.1.6/transitive-3.6.3"
     target: "4.1.6-or-later-only"
-    status: transitive-migration
+    status: watch
     decision: upgrade
     advisories: []
     tracking-issue: https://github.com/ElevenID/marty-verifier/issues/70
