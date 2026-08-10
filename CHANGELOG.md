@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Require explicit, unique, passing DTC trust-chain and signer-certificate
+  binding evidence before projecting the trust chain as valid.
 - Fail closed when production biometric models are absent or invalid instead
   of selecting the deterministic mock provider from Tauri commands, and reject
   caller-controlled face-match thresholds below the production security floor.
