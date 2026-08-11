@@ -9,8 +9,15 @@ use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use marty_app_storage::{OpenBadgeVerificationMethod, TrustAnchorType};
 #[cfg(feature = "oid4vp")]
-use marty_oid4vci::verifier::{PresentationDefinition, PresentationSubmission, VerificationEngine};
-use marty_secure_storage::{OpenBadgeTrustRecord, TrustPackageProvenance};
+use marty_oid4vci::verifier::{
+    PresentationDefinition, PresentationSubmission, VerificationCheckStatus as Oid4vpCheckStatus,
+    VerificationEngine, VerificationResult as Oid4vpCoreVerificationResult,
+    VerificationScope as Oid4vpScope,
+};
+use marty_secure_storage::{
+    OpenBadgeTrustRecord, TrustAnchorRecord, TrustAnchorType as CoreTrustAnchorType,
+    TrustPackageProvenance,
+};
 use marty_verification::chip_io::{verify_from_reader, MockPassportReader};
 use marty_verification::open_badges::{
     detect_version as detect_open_badges_version, verify_ob2_json, verify_ob3_json_async,
@@ -822,7 +829,7 @@ pub async fn verify_credential(
     let credential_type = request.credential_type.to_lowercase();
     let mut result = match credential_type.as_str() {
         "emrtd" => verify_emrtd_payload(&request, &state, is_online).await?,
-        "dtc" => verify_dtc_payload(&request, is_online).await?,
+        "dtc" => verify_dtc_payload(&request, &state, is_online).await?,
         "open-badge" => verify_open_badge_payload(&request, &state, is_online).await?,
         "oid4vp" | "sd-jwt" => {
             #[cfg(feature = "oid4vp")]
@@ -913,10 +920,17 @@ pub async fn verify_credential(
 
 async fn verify_dtc_payload(
     request: &VerifyRequest,
+    state: &AppState,
     is_online: bool,
 ) -> AppResult<VerificationResult> {
     let raw = parse_json_input(&request.credential_data, "DTC")?;
-    let payload = build_dtc_verify_payload(&raw)?;
+    let supplied_trust_anchors = dtc_contains_presented_trust_anchors(&raw);
+    let records = state
+        .trust_storage
+        .get_trust_anchor_records(CoreTrustAnchorType::Csca, None)
+        .await?;
+    let (governed_trust_anchors, rejected_records) = build_governed_dtc_csca_store(&records)?;
+    let payload = build_dtc_verify_payload(&raw, &governed_trust_anchors)?;
     let verify_json = serde_json::to_string(&payload)?;
     let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
         .map_err(|e| AppError::Verification(format!("DTC verification failed: {}", e)))?;
@@ -943,13 +957,25 @@ async fn verify_dtc_payload(
         .map(|s| s.to_string());
 
     let mut warnings = Vec::new();
+    if supplied_trust_anchors {
+        tracing::warn!("Ignoring credential-supplied DTC trust anchors");
+        warnings.push("Credential-supplied DTC trust anchors were ignored".to_string());
+    }
+    if rejected_records > 0 {
+        warnings.push(format!(
+            "Ignored {rejected_records} CSCA trust record(s) without authenticated package provenance"
+        ));
+    }
+    if governed_trust_anchors.is_empty() {
+        warnings.push("Governed DTC CSCA trust store is empty".to_string());
+    }
     if let Some(msg) = value.get("error_message").and_then(|v| v.as_str()) {
         if !msg.is_empty() {
             warnings.push(msg.to_string());
         }
     }
     if !is_online {
-        warnings.push("Verified offline with local DTC trust data".to_string());
+        warnings.push("DTC verification used locally cached governed trust data".to_string());
     }
 
     let trust_chain_valid = dtc_trust_chain_valid(&checks);
@@ -1131,7 +1157,7 @@ fn parse_json_input(input: &str, label: &str) -> AppResult<Value> {
     })
 }
 
-fn build_dtc_verify_payload(raw: &Value) -> AppResult<Value> {
+fn build_dtc_verify_payload(raw: &Value, governed_trust_anchors: &[String]) -> AppResult<Value> {
     let mut payload = match raw.get("dtc_data") {
         Some(dtc) => dtc.clone(),
         None => raw.clone(),
@@ -1144,18 +1170,68 @@ fn build_dtc_verify_payload(raw: &Value) -> AppResult<Value> {
     }
 
     if let Value::Object(ref mut obj) = payload {
-        for key in [
-            "signer_public_key_pem",
-            "trust_anchors_pem",
-            "certificate_chain_pem",
-        ] {
+        obj.remove("trust_anchors_pem");
+        for key in ["signer_public_key_pem", "certificate_chain_pem"] {
             if let Some(value) = raw.get(key) {
                 obj.insert(key.to_string(), value.clone());
             }
         }
+        obj.insert(
+            "trust_anchors_pem".to_string(),
+            Value::Array(
+                governed_trust_anchors
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
     }
 
     Ok(payload)
+}
+
+fn dtc_contains_presented_trust_anchors(raw: &Value) -> bool {
+    raw.get("trust_anchors_pem").is_some()
+        || raw
+            .get("dtc_data")
+            .and_then(Value::as_object)
+            .is_some_and(|dtc| dtc.contains_key("trust_anchors_pem"))
+}
+
+fn build_governed_dtc_csca_store(records: &[TrustAnchorRecord]) -> AppResult<(Vec<String>, usize)> {
+    let mut anchors = Vec::new();
+    let mut seen = HashSet::new();
+    let mut rejected_records = 0;
+
+    for record in records {
+        if record.provenance.is_none() {
+            rejected_records += 1;
+            continue;
+        }
+        if !seen.insert(record.anchor.certificate_hash.as_str()) {
+            continue;
+        }
+
+        Certificate::from_der(&record.anchor.certificate_der).map_err(|_| {
+            AppError::Verification("Stored governed DTC CSCA certificate is malformed".to_string())
+        })?;
+        anchors.push(certificate_der_to_pem(&record.anchor.certificate_der));
+    }
+
+    Ok((anchors, rejected_records))
+}
+
+fn certificate_der_to_pem(certificate_der: &[u8]) -> String {
+    let encoded = BASE64_STANDARD.encode(certificate_der);
+    let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+    for start in (0..encoded.len()).step_by(64) {
+        let end = (start + 64).min(encoded.len());
+        pem.push_str(&encoded[start..end]);
+        pem.push('\n');
+    }
+    pem.push_str("-----END CERTIFICATE-----\n");
+    pem
 }
 
 fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
@@ -2101,52 +2177,20 @@ async fn verify_oid4vp_payload(
 
     let token_result = engine.verify_vp_token(&vp_token, &nonce);
 
-    // Optional structural check when presentation_submission + definition are both present.
-    let structural_errors: Vec<String> = if token_result.valid {
-        let sub_val = raw.get("presentation_submission");
-        let def_val = raw.get("presentation_definition");
-
-        if let (Some(sub_val), Some(def_val)) = (sub_val, def_val) {
-            let submission: Option<PresentationSubmission> =
-                serde_json::from_value(sub_val.clone()).ok();
-            let definition: Option<PresentationDefinition> =
-                serde_json::from_value(def_val.clone()).ok();
-
-            if let (Some(submission), Some(definition)) = (submission, definition) {
-                // Decode the VP token payload for PEX field constraint evaluation.
-                let vp_payload = decode_vp_token_payload(&vp_token);
-                let pex_result =
-                    engine.verify_presentation(&definition, &submission, vp_payload.as_ref());
-                if !pex_result.valid {
-                    pex_result
-                        .errors
-                        .into_iter()
-                        .chain(
-                            pex_result
-                                .descriptor_results
-                                .into_iter()
-                                .filter(|r| !r.valid)
-                                .filter_map(|r| r.error),
-                        )
-                        .collect()
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        }
+    // Optional structural check when neither PEX object is present; fail closed
+    // when the pair is partial or malformed.
+    let holder_proof_valid = oid4vp_presentation_proof_passed(&token_result);
+    let structural_errors = if holder_proof_valid {
+        oid4vp_presentation_exchange_errors(&engine, &raw, &vp_token)
     } else {
         vec![]
     };
 
-    let holder_presentation_valid = token_result.valid && structural_errors.is_empty();
+    let holder_presentation_valid = holder_proof_valid && structural_errors.is_empty();
 
     let mut warnings: Vec<String> = vec![];
     if !is_online {
-        warnings.push("Verified offline — revocation and trust anchoring not available".into());
+        warnings.push("OID4VP offline mode — revocation and trust anchoring not available".into());
     }
     warnings.extend(structural_errors.iter().cloned());
     for err in &token_result.errors {
@@ -2185,6 +2229,75 @@ async fn verify_oid4vp_payload(
         liveness: None,
         face_match: None,
     })
+}
+
+#[cfg(feature = "oid4vp")]
+fn oid4vp_presentation_proof_passed(result: &Oid4vpCoreVerificationResult) -> bool {
+    result.check_valid
+        && result.scope == Oid4vpScope::PresentationProof
+        && result.evidence.presentation_proof == Oid4vpCheckStatus::Passed
+        && result.evidence.transaction_binding == Oid4vpCheckStatus::Passed
+}
+
+#[cfg(feature = "oid4vp")]
+fn oid4vp_presentation_exchange_passed(result: &Oid4vpCoreVerificationResult) -> bool {
+    result.check_valid
+        && result.scope == Oid4vpScope::PresentationExchange
+        && result.evidence.presentation_structure == Oid4vpCheckStatus::Passed
+        && result.evidence.presentation_constraints == Oid4vpCheckStatus::Passed
+}
+
+#[cfg(feature = "oid4vp")]
+fn oid4vp_presentation_exchange_errors(
+    engine: &VerificationEngine,
+    raw: &serde_json::Value,
+    vp_token: &str,
+) -> Vec<String> {
+    let submission = raw.get("presentation_submission");
+    let definition = raw.get("presentation_definition");
+
+    let (submission, definition) = match (submission, definition) {
+        (None, None) => return vec![],
+        (Some(_), None) | (None, Some(_)) => {
+            return vec![
+                "OID4VP presentation_submission and presentation_definition must be provided together"
+                    .into(),
+            ];
+        }
+        (Some(submission), Some(definition)) => (submission, definition),
+    };
+
+    let submission: PresentationSubmission = match serde_json::from_value(submission.clone()) {
+        Ok(submission) => submission,
+        Err(_) => return vec!["OID4VP presentation_submission is malformed".into()],
+    };
+    let definition: PresentationDefinition = match serde_json::from_value(definition.clone()) {
+        Ok(definition) => definition,
+        Err(_) => return vec!["OID4VP presentation_definition is malformed".into()],
+    };
+
+    // The payload is consumed only after verify_vp_token authenticated the JWT.
+    let vp_payload = decode_vp_token_payload(vp_token);
+    let result = engine.verify_presentation(&definition, &submission, vp_payload.as_ref());
+    if oid4vp_presentation_exchange_passed(&result) {
+        return vec![];
+    }
+
+    let mut errors: Vec<String> = result
+        .errors
+        .into_iter()
+        .chain(
+            result
+                .descriptor_results
+                .into_iter()
+                .filter(|descriptor| !descriptor.valid)
+                .filter_map(|descriptor| descriptor.error),
+        )
+        .collect();
+    if errors.is_empty() {
+        errors.push("OID4VP presentation exchange checks did not pass".into());
+    }
+    errors
 }
 
 /// Decode the JWT payload segment of a compact VP token (or any JWT) without
@@ -2235,50 +2348,17 @@ pub fn verify_oid4vp_offline(
 
     let token_result = engine.verify_vp_token(&vp_token, &nonce);
 
-    let structural_errors: Vec<String> = if token_result.valid {
-        let sub_val = raw.get("presentation_submission");
-        let def_val = raw.get("presentation_definition");
-
-        if let (Some(sub_val), Some(def_val)) = (sub_val, def_val) {
-            let submission: Option<PresentationSubmission> =
-                serde_json::from_value(sub_val.clone()).ok();
-            let definition: Option<PresentationDefinition> =
-                serde_json::from_value(def_val.clone()).ok();
-
-            if let (Some(submission), Some(definition)) = (submission, definition) {
-                // Decode the VP token payload for PEX field constraint evaluation.
-                let vp_payload = decode_vp_token_payload(&vp_token);
-                let pex_result =
-                    engine.verify_presentation(&definition, &submission, vp_payload.as_ref());
-                if !pex_result.valid {
-                    pex_result
-                        .errors
-                        .into_iter()
-                        .chain(
-                            pex_result
-                                .descriptor_results
-                                .into_iter()
-                                .filter(|r| !r.valid)
-                                .filter_map(|r| r.error),
-                        )
-                        .collect()
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        }
+    let holder_proof_valid = oid4vp_presentation_proof_passed(&token_result);
+    let structural_errors = if holder_proof_valid {
+        oid4vp_presentation_exchange_errors(&engine, &raw, &vp_token)
     } else {
         vec![]
     };
 
-    let holder_presentation_valid = token_result.valid && structural_errors.is_empty();
+    let holder_presentation_valid = holder_proof_valid && structural_errors.is_empty();
 
     let mut warnings: Vec<String> =
-        vec!["Verified offline — revocation and trust anchoring not available".into()];
+        vec!["OID4VP offline mode — revocation and trust anchoring not available".into()];
     warnings.extend(structural_errors.iter().cloned());
     for err in &token_result.errors {
         warnings.push(format!("Verification error: {}", err));
@@ -2440,7 +2520,8 @@ pub fn verify_dtc_offline(
     credential_data_json: &str,
 ) -> crate::error::AppResult<VerificationResult> {
     let raw = parse_json_input(credential_data_json, "DTC")?;
-    let payload = build_dtc_verify_payload(&raw)?;
+    let supplied_trust_anchors = dtc_contains_presented_trust_anchors(&raw);
+    let payload = build_dtc_verify_payload(&raw, &[])?;
     let verify_json = serde_json::to_string(&payload)?;
     let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
         .map_err(|e| AppError::Verification(format!("DTC verification failed: {}", e)))?;
@@ -2470,7 +2551,12 @@ pub fn verify_dtc_offline(
             warnings.push(msg.to_string());
         }
     }
-    warnings.push("Verified offline with local DTC trust data".to_string());
+    if supplied_trust_anchors {
+        warnings.push("Credential-supplied DTC trust anchors were ignored".to_string());
+    }
+    warnings.push(
+        "Offline helper has no governed CSCA store; DTC trust cannot be established".to_string(),
+    );
 
     let trust_chain_valid = dtc_trust_chain_valid(&checks);
     let revocation_status = if dtc_data
@@ -2902,6 +2988,113 @@ mod tests {
             dtc_check("SignerKeyMatchesCertificate", true),
             dtc_check("SignerKeyMatchesCertificate", false),
         ]));
+    }
+
+    #[test]
+    fn dtc_payload_replaces_presented_anchors_with_governed_anchors() {
+        let raw = json!({
+            "dtc_data": {
+                "dtc_id": "DTC-1",
+                "trust_anchors_pem": ["presented-nested-anchor"]
+            },
+            "trust_anchors_pem": ["presented-envelope-anchor"],
+            "certificate_chain_pem": ["presented-signer-certificate"]
+        });
+        let governed = vec!["governed-csca".to_string()];
+
+        let payload = build_dtc_verify_payload(&raw, &governed).expect("payload");
+
+        assert!(dtc_contains_presented_trust_anchors(&raw));
+        assert_eq!(payload["trust_anchors_pem"], json!(["governed-csca"]));
+        assert_eq!(
+            payload["certificate_chain_pem"],
+            json!(["presented-signer-certificate"])
+        );
+    }
+
+    #[test]
+    fn stateless_dtc_payload_cannot_use_presented_trust_anchors() {
+        let raw = json!({
+            "dtc_id": "DTC-1",
+            "trust_anchors_pem": ["presented-anchor"]
+        });
+
+        let payload = build_dtc_verify_payload(&raw, &[]).expect("payload");
+
+        assert_eq!(payload["trust_anchors_pem"], json!([]));
+    }
+
+    #[test]
+    fn governed_dtc_store_rejects_provenance_less_records() {
+        let record = TrustAnchorRecord {
+            anchor: marty_secure_storage::TrustAnchor {
+                id: "legacy".to_string(),
+                anchor_type: CoreTrustAnchorType::Csca,
+                jurisdiction: "US".to_string(),
+                subject: None,
+                issuer: None,
+                serial_number: None,
+                not_before: None,
+                not_after: None,
+                certificate_der: vec![1, 2, 3],
+                certificate_hash: "legacy".to_string(),
+                source: marty_secure_storage::TrustAnchorSource::Manual,
+                synced_at: Utc::now(),
+            },
+            provenance: None,
+        };
+
+        let (anchors, rejected) =
+            build_governed_dtc_csca_store(&[record]).expect("legacy record is ignored");
+
+        assert!(anchors.is_empty());
+        assert_eq!(rejected, 1);
+    }
+
+    #[test]
+    fn governed_dtc_store_encodes_authenticated_csca_der() {
+        let (certificate_der, _) = marty_crypto::cert_builder::create_csca_certificate(
+            "USA",
+            "Marty DTC Test CSCA",
+            365,
+            marty_crypto::keygen::KeyType::EcdsaP256,
+        )
+        .expect("CSCA");
+        let now = Utc::now();
+        let record = TrustAnchorRecord {
+            anchor: marty_secure_storage::TrustAnchor {
+                id: "governed".to_string(),
+                anchor_type: CoreTrustAnchorType::Csca,
+                jurisdiction: "USA".to_string(),
+                subject: None,
+                issuer: None,
+                serial_number: None,
+                not_before: None,
+                not_after: None,
+                certificate_der,
+                certificate_hash: "governed".to_string(),
+                source: marty_secure_storage::TrustAnchorSource::UsbImport,
+                synced_at: now,
+            },
+            provenance: Some(TrustPackageProvenance {
+                trust_domain: "usb:dtc-test".to_string(),
+                sequence: 1,
+                package_version: "1.0.0".to_string(),
+                created_at: now,
+                expires_at: now + Duration::hours(1),
+                signer_key_id: "dtc-test-signer".to_string(),
+                package_digest: "a".repeat(64),
+                imported_at: now,
+            }),
+        };
+
+        let (anchors, rejected) =
+            build_governed_dtc_csca_store(&[record]).expect("governed record");
+
+        assert_eq!(rejected, 0);
+        assert_eq!(anchors.len(), 1);
+        assert!(anchors[0].starts_with("-----BEGIN CERTIFICATE-----\n"));
+        assert!(anchors[0].ends_with("-----END CERTIFICATE-----\n"));
     }
 
     #[tokio::test]

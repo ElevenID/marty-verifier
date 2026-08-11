@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Source DTC CSCA trust anchors only from authenticated trust-package records
+  in Core secure storage, ignore credential-supplied anchors, and pin the
+  verifier workspace to released Core v0.1.42.
+- Consume Core's scoped OID4VP proof and Presentation Exchange evidence instead
+  of treating a low-level check as a final credential-validity decision.
 - Require explicit, unique, passing DTC trust-chain and signer-certificate
   binding evidence before projecting the trust chain as valid.
 - Fail closed when production biometric models are absent or invalid instead
