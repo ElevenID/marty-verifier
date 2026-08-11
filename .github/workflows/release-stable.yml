@@ -215,7 +215,7 @@ jobs:
           test "${#remote_refs[@]}" -eq 2
           test "${remote_refs[0]%%[[:space:]]*}" = "$EXPECTED_TAG_OBJECT"
           test "${remote_refs[1]%%[[:space:]]*}" = "$EXPECTED_COMMIT"
-          test "$(git rev-parse HEAD^{commit})" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse "HEAD^{commit}")" = "$EXPECTED_COMMIT"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
@@ -388,7 +388,7 @@ jobs:
           test "${#remote_refs[@]}" -eq 2
           test "${remote_refs[0]%%[[:space:]]*}" = "$EXPECTED_TAG_OBJECT"
           test "${remote_refs[1]%%[[:space:]]*}" = "$EXPECTED_COMMIT"
-          test "$(git rev-parse HEAD^{commit})" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse "HEAD^{commit}")" = "$EXPECTED_COMMIT"
 
       - name: Update release with manifest and notes
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
