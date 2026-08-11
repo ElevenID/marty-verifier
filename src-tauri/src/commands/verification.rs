@@ -529,11 +529,25 @@ pub struct DtcDetails {
 #[derive(Debug, Serialize)]
 pub struct VerificationCheck {
     pub check_name: String,
+    pub outcome: VerificationCheckOutcome,
+    /// Compatibility projection for existing IPC consumers.
+    ///
+    /// `outcome` is authoritative and this value is true only for `Passed`.
     pub passed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+}
+
+/// Explicit outcome of a verifier check.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VerificationCheckOutcome {
+    Passed,
+    Failed,
+    NotPerformed,
+    Error,
 }
 
 /// Open Badge verification details.
@@ -979,15 +993,7 @@ async fn verify_dtc_payload(
     }
 
     let trust_chain_valid = dtc_trust_chain_valid(&checks);
-    let revocation_status = if dtc_data
-        .get("is_revoked")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        RevocationStatus::Revoked
-    } else {
-        RevocationStatus::Unknown
-    };
+    let revocation_status = parse_dtc_revocation_status(&value, &checks);
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
@@ -1243,10 +1249,8 @@ fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
                 .iter()
                 .filter_map(|item| {
                     let check_name = item.get("check_name")?.as_str()?.to_string();
-                    let passed = item
-                        .get("passed")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
+                    let outcome = parse_dtc_check_outcome(item);
+                    let passed = outcome == VerificationCheckOutcome::Passed;
                     let details = item
                         .get("details")
                         .and_then(|v| v.as_str())
@@ -1257,6 +1261,7 @@ fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
                         .map(|s| s.to_string());
                     Some(VerificationCheck {
                         check_name,
+                        outcome,
                         passed,
                         details,
                         error_code,
@@ -1267,6 +1272,38 @@ fn parse_dtc_checks(value: &Value) -> Vec<VerificationCheck> {
         .unwrap_or_default()
 }
 
+fn parse_dtc_check_outcome(item: &Value) -> VerificationCheckOutcome {
+    let outcome = match item.get("outcome").and_then(Value::as_str) {
+        Some("PASSED") => VerificationCheckOutcome::Passed,
+        Some("FAILED") => VerificationCheckOutcome::Failed,
+        Some("NOT_PERFORMED") => VerificationCheckOutcome::NotPerformed,
+        Some("ERROR") => VerificationCheckOutcome::Error,
+        _ => return VerificationCheckOutcome::Error,
+    };
+
+    // Core retains `passed` as a compatibility projection. Reject a missing or
+    // contradictory projection rather than allowing malformed output to pass.
+    if item.get("passed").and_then(Value::as_bool)
+        != Some(outcome == VerificationCheckOutcome::Passed)
+    {
+        return VerificationCheckOutcome::Error;
+    }
+
+    outcome
+}
+
+fn parse_dtc_revocation_status(value: &Value, checks: &[VerificationCheck]) -> RevocationStatus {
+    match value.get("revocation_status").and_then(Value::as_str) {
+        // Current-good is accepted only when Core's explicit status and check
+        // agree. Missing, duplicate, or malformed evidence remains unknown.
+        Some("GOOD") if exactly_one_dtc_check_passed(checks, "RevocationStatus") => {
+            RevocationStatus::Valid
+        }
+        Some("REVOKED") => RevocationStatus::Revoked,
+        Some("GOOD") | Some("UNKNOWN") | Some(_) | None => RevocationStatus::Unknown,
+    }
+}
+
 fn dtc_trust_chain_valid(checks: &[VerificationCheck]) -> bool {
     exactly_one_dtc_check_passed(checks, "TrustChain")
         && exactly_one_dtc_check_passed(checks, "SignerKeyMatchesCertificate")
@@ -1275,7 +1312,7 @@ fn dtc_trust_chain_valid(checks: &[VerificationCheck]) -> bool {
 fn exactly_one_dtc_check_passed(checks: &[VerificationCheck], check_name: &str) -> bool {
     let mut matching = checks.iter().filter(|check| check.check_name == check_name);
     match (matching.next(), matching.next()) {
-        (Some(check), None) => check.passed,
+        (Some(check), None) => check.outcome == VerificationCheckOutcome::Passed,
         _ => false,
     }
 }
@@ -2559,15 +2596,7 @@ pub fn verify_dtc_offline(
     );
 
     let trust_chain_valid = dtc_trust_chain_valid(&checks);
-    let revocation_status = if dtc_data
-        .get("is_revoked")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        RevocationStatus::Revoked
-    } else {
-        RevocationStatus::Unknown
-    };
+    let revocation_status = parse_dtc_revocation_status(&value, &checks);
 
     Ok(VerificationResult {
         verification_id: uuid::Uuid::new_v4().to_string(),
@@ -2937,11 +2966,128 @@ mod tests {
     }
 
     fn dtc_check(check_name: &str, passed: bool) -> VerificationCheck {
+        let outcome = if passed {
+            VerificationCheckOutcome::Passed
+        } else {
+            VerificationCheckOutcome::Failed
+        };
         VerificationCheck {
             check_name: check_name.to_string(),
+            outcome,
             passed,
             details: None,
             error_code: None,
+        }
+    }
+
+    #[test]
+    fn dtc_checks_preserve_explicit_core_outcomes() {
+        let value = json!({
+            "verification_results": [
+                {"check_name": "Signature", "outcome": "PASSED", "passed": true},
+                {"check_name": "TrustChain", "outcome": "FAILED", "passed": false},
+                {
+                    "check_name": "RevocationStatus",
+                    "outcome": "NOT_PERFORMED",
+                    "passed": false,
+                    "error_code": "E810"
+                },
+                {"check_name": "StatusEvidence", "outcome": "ERROR", "passed": false}
+            ]
+        });
+
+        let checks = parse_dtc_checks(&value);
+
+        assert_eq!(
+            checks.iter().map(|check| check.outcome).collect::<Vec<_>>(),
+            vec![
+                VerificationCheckOutcome::Passed,
+                VerificationCheckOutcome::Failed,
+                VerificationCheckOutcome::NotPerformed,
+                VerificationCheckOutcome::Error,
+            ]
+        );
+        assert_eq!(
+            checks.iter().map(|check| check.passed).collect::<Vec<_>>(),
+            vec![true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn dtc_checks_fail_safe_on_missing_unknown_or_inconsistent_outcomes() {
+        let value = json!({
+            "verification_results": [
+                {"check_name": "MissingOutcome", "passed": true},
+                {"check_name": "UnknownOutcome", "outcome": "SKIPPED", "passed": false},
+                {"check_name": "MissingProjection", "outcome": "PASSED"},
+                {"check_name": "ContradictoryPass", "outcome": "PASSED", "passed": false},
+                {"check_name": "ContradictoryFailure", "outcome": "FAILED", "passed": true}
+            ]
+        });
+
+        let checks = parse_dtc_checks(&value);
+
+        assert_eq!(checks.len(), 5);
+        assert!(checks
+            .iter()
+            .all(|check| check.outcome == VerificationCheckOutcome::Error && !check.passed));
+    }
+
+    #[test]
+    fn dtc_current_good_requires_one_explicit_passed_status_check() {
+        let value = json!({
+            "revocation_status": "GOOD",
+            "verification_results": [
+                {"check_name": "RevocationStatus", "outcome": "PASSED", "passed": true}
+            ]
+        });
+        let checks = parse_dtc_checks(&value);
+
+        assert_eq!(
+            parse_dtc_revocation_status(&value, &checks),
+            RevocationStatus::Valid
+        );
+
+        let malformed = json!({
+            "revocation_status": "GOOD",
+            "verification_results": [
+                {"check_name": "RevocationStatus", "outcome": "PASSED", "passed": false}
+            ]
+        });
+        assert_eq!(
+            parse_dtc_revocation_status(&malformed, &parse_dtc_checks(&malformed)),
+            RevocationStatus::Unknown
+        );
+
+        let duplicate = json!({
+            "revocation_status": "GOOD",
+            "verification_results": [
+                {"check_name": "RevocationStatus", "outcome": "PASSED", "passed": true},
+                {"check_name": "RevocationStatus", "outcome": "PASSED", "passed": true}
+            ]
+        });
+        assert_eq!(
+            parse_dtc_revocation_status(&duplicate, &parse_dtc_checks(&duplicate)),
+            RevocationStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn dtc_revoked_and_unknown_statuses_are_not_promoted() {
+        for (status, expected) in [
+            (Some("REVOKED"), RevocationStatus::Revoked),
+            (Some("UNKNOWN"), RevocationStatus::Unknown),
+            (Some("FUTURE_VALUE"), RevocationStatus::Unknown),
+            (None, RevocationStatus::Unknown),
+        ] {
+            let mut value = json!({"verification_results": []});
+            if let Some(status) = status {
+                value["revocation_status"] = Value::String(status.to_string());
+            }
+            assert_eq!(
+                parse_dtc_revocation_status(&value, &parse_dtc_checks(&value)),
+                expected
+            );
         }
     }
 
