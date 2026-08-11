@@ -152,6 +152,10 @@ jobs:
       - name: Generate SBOM
         run: |
           cargo cyclonedx --format json --override-filename marty-verifier-sbom
+          # cargo-cyclonedx writes each workspace member's SBOM beside its Cargo.toml.
+          cp src-tauri/marty-verifier-sbom.json marty-verifier-sbom.json
+          test -s marty-verifier-sbom.json
+          jq -e '.metadata.component.name == "marty-verifier"' marty-verifier-sbom.json > /dev/null
 
       - name: Download release assets
         uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f
@@ -159,13 +163,6 @@ jobs:
           tag: ${{ steps.version.outputs.tag }}
           fileName: '*'
           out-file-path: 'release-assets'
-
-      - name: Generate checksums
-        working-directory: release-assets
-        run: |
-          find . -maxdepth 1 -type f ! -name '*.sig' -printf '%f\0' \
-            | sort -z \
-            | xargs -0 sha256sum > ../SHA256SUMS
 
       - name: Validate signing artifacts exist
         run: |
@@ -249,11 +246,24 @@ jobs:
           echo "Generated latest.json with real signatures:"
           cat latest.json
 
+      - name: Generate checksums
+        run: |
+          # Replace the build-time updater manifest with the signed canonical manifest.
+          cp latest.json release-assets/latest.json
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f ! -name '*.sig' -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum
+          ) > SHA256SUMS
+          sha256sum marty-verifier-sbom.json >> SHA256SUMS
+
       - name: Generate attestations for release artifacts
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018
         with:
           subject-path: |
             release-assets/*
+            marty-verifier-sbom.json
             SHA256SUMS
 
       - name: Update release with manifest and notes
