@@ -4146,7 +4146,7 @@ dependencies = [
 
 [[package]]
 name = "marty-app-storage"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4233,7 +4233,7 @@ dependencies = [
 
 [[package]]
 name = "marty-entitlements"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
 ]
@@ -4268,7 +4268,7 @@ dependencies = [
 
 [[package]]
 name = "marty-reporting"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "marty-secure-storage",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "marty-sync"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -4395,7 +4395,7 @@ dependencies = [
 
 [[package]]
 name = "marty-verifier"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

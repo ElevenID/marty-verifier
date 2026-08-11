@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-11
+
+### Security
+
+- Pin the verifier to the released Core v0.1.45 policy engine and preserve its
+  explicit `PASSED`, `FAILED`, `NOT_PERFORMED`, and `ERROR` DTC outcomes across
+  the Rust IPC boundary and verifier UI.
+- Derive DTC lifecycle state from Core's authenticated current-status result;
+  unknown, missing, contradictory, or duplicate evidence is never promoted to
+  current-good.
+
+### Fixed
+
+- Test the supported default feature composition on Intel macOS while retaining
+  all-feature release tests on Linux, Windows, and ARM64 macOS.
+- Require the application CycloneDX SBOM and checksum the canonical signed
+  updater manifest before release publication and provenance generation.
+
 ## [0.1.2] - 2026-08-10
 
 ### Security
