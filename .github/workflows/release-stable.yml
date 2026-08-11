@@ -95,8 +95,13 @@ jobs:
         working-directory: ui
         run: pnpm build
 
-      - name: Run tests
+      - name: Run tests (all features)
+        if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test --workspace --all-features
+
+      - name: Run tests (Intel macOS shipped features)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo test --workspace
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
