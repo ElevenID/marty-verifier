@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release to an immutable exact commit on Core's protected `main`, update all six
   governed pins together, and require the normal protected PR checks. Dependency
   automation no longer bumps application versions, pushes `main`, or creates a
-  Verifier tag or release.
+  Verifier tag or release. It uses the repository's short-lived `GITHUB_TOKEN`
+  instead of exposing a long-lived external credential; maintainers must approve
+  the resulting PR workflow runs before review or merge.
 - Require stable Verifier tags to be new annotated tags prepared from one exact
   protected-`main` commit only after every configured exact-head workflow is
   terminal and successful. Release jobs revalidate the preparation evidence,

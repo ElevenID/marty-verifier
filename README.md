@@ -303,9 +303,11 @@ draft dependency PR. It resolves the published tag to an exact commit on Core's
 protected `main`, updates all six Core `rev` pins and `Cargo.lock` together, and
 runs locked, all-feature workspace tests before pushing the dedicated branch.
 The PR then receives the normal Rust, UI, security, license, policy, and quality
-checks. The automation never pushes `main`, bumps the Verifier application
-version, creates or moves a tag, publishes a release, force-pushes, approves, or
-merges its PR.
+checks. GitHub places workflow runs initiated by the repository's short-lived
+`GITHUB_TOKEN` in an approval-required state; a maintainer must approve those
+runs before review or merge. The automation never pushes `main`, bumps the
+Verifier application version, creates or moves a tag, publishes a release,
+force-pushes, approves, or merges its PR.
 
 Application versioning is a separate reviewed release change. Cargo workspace,
 Tauri, UI package, and npm lockfile versions must move together. A stable tag is
