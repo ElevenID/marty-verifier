@@ -296,14 +296,23 @@ See [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md) for the release trust model and
 
 ### Release Process
 
-**Automated from marty-core:**
+**Marty Core dependency proposals:**
 
-When marty-core releases a new version, this repository automatically:
-1. Updates marty-core dependencies
-2. Runs full test suite
-3. Bumps patch version (e.g., 0.1.0 → 0.1.1)
-4. Creates new release if tests pass
-5. Creates GitHub Issue if tests fail
+When Marty Core publishes a stable release, repository automation may open one
+draft dependency PR. It resolves the published tag to an exact commit on Core's
+protected `main`, updates all six Core `rev` pins and `Cargo.lock` together, and
+runs locked, all-feature workspace tests before pushing the dedicated branch.
+The PR then receives the normal Rust, UI, security, license, policy, and quality
+checks. GitHub places workflow runs initiated by the repository's short-lived
+`GITHUB_TOKEN` in an approval-required state; a maintainer must approve those
+runs before review or merge. The automation never pushes `main`, bumps the
+Verifier application version, creates or moves a tag, publishes a release,
+force-pushes, approves, or merges its PR.
+
+Application versioning is a separate reviewed release change. Cargo workspace,
+Tauri, UI package, and npm lockfile versions must move together. A stable tag is
+created only from the reviewed merge commit after that exact protected-`main`
+commit's required checks pass; a failed immutable tag is never moved or reused.
 
 **Manual release:**
 
@@ -314,11 +323,19 @@ git push origin v0.2.0-rc.1
 
 # Test the RC build from GitHub Releases
 
-# Promote to stable (creates v0.2.0 tag)
-# Manually tag or wait for auto-promotion after marty-core update
-git tag v0.2.0
-git push origin v0.2.0
+# After merging the complete 0.2.0 version change, capture exact origin/main
+SOURCE_SHA=$(git rev-parse origin/main)
+
+# Only the preparation workflow creates the previously unused annotated tag.
+# It requires every configured exact-main gate and dispatches the tag-bound release.
+gh workflow run prepare-stable-tag.yml --ref main \
+  -f tag=v0.2.0 \
+  -f source_sha="$SOURCE_SHA"
 ```
+
+Do not create a stable tag manually. If preparation publishes a tag but release
+publication fails, retain that immutable tag as quarantined and prepare a new
+version; never move, delete, or reuse the failed tag.
 
 ### Auto-Updater
 

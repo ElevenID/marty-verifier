@@ -1,4 +1,4 @@
-name: Auto-Update Dependencies
+name: Propose Marty Core dependency update
 
 on:
   repository_dispatch:
@@ -6,142 +6,336 @@ on:
   workflow_dispatch:
     inputs:
       marty_core_tag:
-        description: 'marty-core tag to update to (e.g., v0.2.0)'
+        description: "Published stable Marty Core tag (for example v0.1.46)"
         required: true
+        type: string
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: marty-core-dependency-update
+  cancel-in-progress: false
 
 jobs:
-  update-dependencies:
-    name: Update marty-core Dependencies
+  propose-update:
+    name: Propose exact Core revision
     permissions:
-      contents: write
-      issues: write
+      contents: write # Push only the dedicated automation branch.
+      issues: write # Record one bounded, deduplicated failure issue.
+      pull-requests: write # Open one draft proposal; maintainers approve its workflow runs.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: main
 
-
-      - name: Get marty-core version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${GITHUB_EVENT_INPUTS_MARTY_CORE_TAG}"
-          else
-            TAG="${GITHUB_EVENT_CLIENT_PAYLOAD_TAG}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Normalize requested stable tag
+        id: requested
+        shell: bash
         env:
-          GITHUB_EVENT_INPUTS_MARTY_CORE_TAG: ${{ github.event.inputs.marty_core_tag }}
-          GITHUB_EVENT_CLIENT_PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
-
-      - name: Update Cargo.toml dependencies
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          MANUAL_TAG: ${{ inputs.marty_core_tag }}
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          
-          # Update git tag references in workspace Cargo.toml
-          sed -i.bak "s|marty-crypto = { git = \"https://github.com/ElevenID/marty-core\", branch = \"main\" }|marty-crypto = { git = \"https://github.com/ElevenID/marty-core\", tag = \"$TAG\" }|g" Cargo.toml
-          sed -i.bak "s|marty-verification = { git = \"https://github.com/ElevenID/marty-core\", branch = \"main\"|marty-verification = { git = \"https://github.com/ElevenID/marty-core\", tag = \"$TAG\"|g" Cargo.toml
-          sed -i.bak "s|marty-biometrics = { git = \"https://github.com/ElevenID/marty-core\", branch = \"main\"|marty-biometrics = { git = \"https://github.com/ElevenID/marty-core\", tag = \"$TAG\"|g" Cargo.toml
-          
-          # Also update any existing tag references
-          sed -i.bak "s|marty-crypto = { git = \"https://github.com/ElevenID/marty-core\", tag = \"v[0-9.]*\" }|marty-crypto = { git = \"https://github.com/ElevenID/marty-core\", tag = \"$TAG\" }|g" Cargo.toml
-          sed -i.bak "s|tag = \"v[0-9.]*\"|tag = \"$TAG\"|g" Cargo.toml
-          
-          rm -f Cargo.toml.bak
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="$MANUAL_TAG"
+          else
+            tag="$DISPATCH_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Requested Core tag is not an exact stable semantic version."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve published Core tag to one exact commit
+        id: core
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
+        with:
+          github-token: ${{ github.token }}
+          result-encoding: json
+          script: |
+            const owner = "ElevenID";
+            const repo = "marty-core";
+            const tag = process.env.CORE_TAG;
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            if (release.data.draft || release.data.prerelease || !release.data.published_at) {
+              core.setFailed("Core tag must have a published, non-draft, non-prerelease release");
+              return;
+            }
+            const reference = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+            let object = reference.data.object;
+            for (let depth = 0; object.type === "tag" && depth < 4; depth += 1) {
+              const annotated = await github.rest.git.getTag({ owner, repo, tag_sha: object.sha });
+              object = annotated.data.object;
+            }
+            if (object.type !== "commit" || !/^[0-9a-f]{40}$/.test(object.sha)) {
+              core.setFailed("Core tag did not peel to one exact commit");
+              return;
+            }
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: `${object.sha}...main`,
+            });
+            if (!["ahead", "identical"].includes(comparison.data.status)) {
+              core.setFailed("Core release commit is not on the protected main history");
+              return;
+            }
+            return {
+              commit_sha: object.sha,
+              release_id: release.data.id,
+              published_at: release.data.published_at,
+              tag,
+              tag_ref_object_sha: reference.data.object.sha,
+              tag_ref_object_type: reference.data.object.type,
+            };
+
+      - name: Prepare update identity
+        id: identity
+        shell: bash
+        env:
+          RESOLUTION: ${{ steps.core.outputs.result }}
+        run: |
+          set -euo pipefail
+          sha="$(jq -r '.commit_sha' <<< "$RESOLUTION")"
+          tag="$(jq -r '.tag' <<< "$RESOLUTION")"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Resolved Core commit is malformed."
+            exit 1
+          fi
+          branch="automation/marty-core-${tag#v}-${sha:0:12}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse overlapping or abandoned automation branches
+        id: collision
+        shell: bash
+        env:
+          BRANCH: ${{ steps.identity.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --state open --head "$BRANCH" --json number,url --jq '.[0] // empty')"
+          if [ -n "$existing" ]; then
+            echo "already_open=true" >> "$GITHUB_OUTPUT"
+            echo "An exact update PR is already open: $(jq -r '.url' <<< "$existing")"
+            exit 0
+          fi
+          echo "already_open=false" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::The exact automation branch exists without an open PR; refusing to overwrite it."
+            exit 1
+          fi
+          overlapping="$(gh pr list --state open --limit 100 --json number,url,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("automation/marty-core-"))][0] // empty')"
+          if [ -n "$overlapping" ]; then
+            echo "::error::Another Core dependency PR is open: $(jq -r '.url' <<< "$overlapping")"
+            exit 1
+          fi
+
+      - name: Update all six exact Core pins
+        if: steps.collision.outputs.already_open == 'false'
+        id: update
+        shell: bash
+        env:
+          CORE_SHA: ${{ steps.identity.outputs.sha }}
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
+        run: |
+          set -euo pipefail
+          result="$(python scripts/update_core_dependencies.py \
+            --root . --core-tag "$CORE_TAG" --core-sha "$CORE_SHA" --write)"
+          echo "changed=$(jq -r '.changed' <<< "$result")" >> "$GITHUB_OUTPUT"
+          echo "previous_sha=$(jq -r '.previous_sha' <<< "$result")" >> "$GITHUB_OUTPUT"
+          echo "application_version=$(jq -r '.application_version' <<< "$result")" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: steps.update.outputs.changed == 'true'
 
-      - name: Update Cargo.lock
-        run: cargo update -p marty-crypto -p marty-verification -p marty-biometrics
-
-      - name: Run tests
-        id: tests
-        continue-on-error: true
-        run: cargo test --workspace --all-features
-
-      - name: Auto-bump version
-        if: steps.tests.outcome == 'success'
+      - name: Update and validate the lockfile
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        env:
+          CORE_SHA: ${{ steps.identity.outputs.sha }}
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
         run: |
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          
-          # Parse version components
-          IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-          
-          # Increment patch version
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-          
-          # Update version in Cargo.toml
-          sed -i.bak "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
-          rm -f Cargo.toml.bak
-          
-          # Update version in tauri.conf.json
-          cd src-tauri
-          sed -i.bak "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" tauri.conf.json
-          rm -f tauri.conf.json.bak
-          cd ..
-          
-          # Update version in package.json
-          cd ui
-          sed -i.bak "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" package.json
-          rm -f package.json.bak
-          cd ..
-          
-          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
-          echo "Updated version from $CURRENT_VERSION to $NEW_VERSION"
+          set -euo pipefail
+          cargo update \
+            -p marty-crypto \
+            -p marty-verification \
+            -p marty-biometrics \
+            -p marty-secure-storage \
+            -p marty-types \
+            -p marty-oid4vci
+          python scripts/update_core_dependencies.py \
+            --root . --core-tag "$CORE_TAG" --core-sha "$CORE_SHA" --check
+          cargo metadata --locked --format-version 1 >/dev/null
 
-      - name: Commit and push changes
-        if: steps.tests.outcome == 'success'
+      - name: Run owned automation and workspace tests
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock src-tauri/tauri.conf.json ui/package.json
-          git commit -m "chore(deps): update marty-core to ${{ steps.version.outputs.tag }} and bump to v$NEW_VERSION"
-          git push
+          set -euo pipefail
+          python scripts/test_update_core_dependencies.py
+          cargo test --locked --workspace --all-features
 
-      - name: Create release tag
-        if: steps.tests.outcome == 'success'
+      - name: Restrict generated change scope
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
         run: |
-          git tag "v$NEW_VERSION"
-          git push origin "v$NEW_VERSION"
+          set -euo pipefail
+          mapfile -t changed < <(git status --porcelain=v1 | sed 's/^...//')
+          if [ "${#changed[@]}" -ne 2 ]; then
+            printf '::error::Expected only Cargo.toml and Cargo.lock; changed paths:\n%s\n' "${changed[*]}"
+            exit 1
+          fi
+          for path in "${changed[@]}"; do
+            case "$path" in
+              Cargo.toml|Cargo.lock) ;;
+              *) echo "::error::Unexpected generated path: $path"; exit 1 ;;
+            esac
+          done
 
-      - name: Create GitHub Issue on failure
-        if: steps.tests.outcome == 'failure'
+      - name: Revalidate the remote tag before publication
+        if: steps.update.outputs.changed == 'true'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
+          EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+          RESOLUTION: ${{ steps.core.outputs.result }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = "ElevenID";
+            const repo = "marty-core";
+            const expected = JSON.parse(process.env.RESOLUTION);
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag: process.env.CORE_TAG });
+            if (
+              release.data.id !== expected.release_id ||
+              release.data.draft ||
+              release.data.prerelease ||
+              !release.data.published_at ||
+              release.data.published_at !== expected.published_at
+            ) {
+              core.setFailed("Core release identity or publication state changed during dependency preparation");
+              return;
+            }
+            const reference = await github.rest.git.getRef({ owner, repo, ref: `tags/${process.env.CORE_TAG}` });
+            if (
+              reference.data.object.type !== expected.tag_ref_object_type ||
+              reference.data.object.sha !== expected.tag_ref_object_sha
+            ) {
+              core.setFailed("Core tag root object changed during dependency preparation");
+              return;
+            }
+            let object = reference.data.object;
+            for (let depth = 0; object.type === "tag" && depth < 4; depth += 1) {
+              const annotated = await github.rest.git.getTag({ owner, repo, tag_sha: object.sha });
+              object = annotated.data.object;
+            }
+            if (object.type !== "commit" || object.sha !== process.env.EXPECTED_SHA) {
+              core.setFailed("Core tag identity changed during dependency preparation; no branch will be pushed");
+            }
+
+      - name: Commit exact dependency update
+        if: steps.update.outputs.changed == 'true'
+        id: commit
+        shell: bash
+        env:
+          BRANCH: ${{ steps.identity.outputs.branch }}
+          CORE_SHA: ${{ steps.identity.outputs.sha }}
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git checkout -b "$BRANCH"
+          git config user.name "elevenid-dependency-automation[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- Cargo.toml Cargo.lock
+          git diff --cached --check
+          git commit -m "chore(deps): pin Marty Core ${CORE_TAG} at ${CORE_SHA:0:12}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git push origin "$BRANCH"
+
+      - name: Open protected review PR
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        env:
+          APPLICATION_VERSION: ${{ steps.update.outputs.application_version }}
+          BRANCH: ${{ steps.identity.outputs.branch }}
+          CORE_SHA: ${{ steps.identity.outputs.sha }}
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_SHA: ${{ steps.update.outputs.previous_sha }}
+          RESOLUTION: ${{ steps.core.outputs.result }}
+        run: |
+          set -euo pipefail
+          release_id="$(jq -r '.release_id' <<< "$RESOLUTION")"
+          published_at="$(jq -r '.published_at' <<< "$RESOLUTION")"
+          body="$(cat <<EOF
+          ## Automated dependency proposal
+
+          - Core release: \`${CORE_TAG}\` (release \`${release_id}\`, published \`${published_at}\`)
+          - Exact Core commit: \`${CORE_SHA}\`
+          - Previous Core commit: \`${PREVIOUS_SHA}\`
+          - Verifier application version remains \`${APPLICATION_VERSION}\`
+
+          All six governed Core crates and \`Cargo.lock\` were updated together. The automation ran the owned contract tests, locked metadata validation, and the full locked all-feature Rust workspace suite. This PR never bumps an application version, creates a tag, publishes a release, force-pushes, auto-approves, or auto-merges. Normal PR checks and review remain mandatory.
+
+          No imported, vendor, upstream, external, protocol-compliance, interoperability, conformance test, fixture, assertion, expected result, selection, exclusion, or plan was changed.
+          EOF
+          )"
+          gh pr create --draft --base main --head "$BRANCH" \
+            --title "chore(deps): pin Marty Core ${CORE_TAG}" \
+            --body "$body"
+
+      - name: Roll back an unpublished exact automation branch
+        if: failure() && steps.commit.outputs.sha != ''
+        shell: bash
+        env:
+          BRANCH: ${{ steps.identity.outputs.branch }}
+          EXPECTED_SHA: ${{ steps.commit.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          open_prs="$(gh pr list --state open --head "$BRANCH" --json number --jq 'length')"
+          remote_sha="$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')"
+          if [ "$open_prs" != "0" ]; then
+            echo "A PR exists for the branch; retaining it."
+            exit 0
+          fi
+          if [ "$remote_sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Automation branch head changed or is unavailable; refusing rollback."
+            exit 1
+          fi
+          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
+          echo "Removed unpublished exact automation branch ${BRANCH} at ${EXPECTED_SHA}."
+
+      - name: Record a bounded failure issue
+        if: failure()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          CORE_TAG: ${{ steps.requested.outputs.tag }}
         with:
           script: |
-            const issue = await github.rest.issues.create({
+            const tag = process.env.CORE_TAG || "invalid-or-unresolved";
+            const title = `Core dependency proposal failed for ${tag}`;
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Failed to auto-update marty-core to ${{ steps.version.outputs.tag }}`,
-              body: `## Auto-Update Failed
-              
-              The automated dependency update from marty-core ${{ steps.version.outputs.tag }} failed during testing.
-              
-              **marty-core version:** ${{ steps.version.outputs.tag }}
-              **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              
-              ### Action Required
-              
-              1. Review the test failures in the workflow run linked above
-              2. Manually update dependencies if needed:
-                 \`\`\`bash
-                 # Update Cargo.toml git tag references
-                 # Run: cargo update -p marty-crypto -p marty-verification -p marty-biometrics
-                 # Run tests: cargo test --workspace --all-features
-                 \`\`\`
-              3. Once fixed, manually bump version and create release tag
-              
-              ### Tests Output
-              
-              Check the workflow logs for detailed test failure information.
-              `,
-              labels: ['dependencies', 'automated', 'needs-investigation']
+              state: "open",
+              per_page: 100,
             });
-            
-            console.log(`Created issue #${issue.data.number}`);
+            if (existing.some(issue => !issue.pull_request && issue.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `The protected Core dependency proposal failed before merge or release. Review ${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}. No tag is created by this workflow.`,
+            });
