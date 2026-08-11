@@ -74,6 +74,8 @@ export interface DtcDetails {
 
 export interface VerificationCheck {
   check_name: string;
+  outcome: 'PASSED' | 'FAILED' | 'NOT_PERFORMED' | 'ERROR';
+  /** Compatibility projection; outcome is authoritative. */
   passed: boolean;
   details?: string;
   error_code?: string;

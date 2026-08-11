@@ -32,6 +32,13 @@ const statusConfig = {
   pending: { color: 'info' as const, icon: <PendingIcon />, label: 'Pending' },
 };
 
+const dtcCheckConfig = {
+  PASSED: { color: 'success' as const, label: 'Passed' },
+  FAILED: { color: 'error' as const, label: 'Failed' },
+  NOT_PERFORMED: { color: 'default' as const, label: 'Not performed' },
+  ERROR: { color: 'warning' as const, label: 'Error' },
+};
+
 export default function VerificationResultCard({ result }: VerificationResultCardProps) {
   const config = statusConfig[result.status] ?? statusConfig.failed;
 
@@ -176,17 +183,20 @@ export default function VerificationResultCard({ result }: VerificationResultCar
                 DTC Verification Checks
               </Typography>
               <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                {result.dtc_details.checks.map((check) => (
-                  <Chip
-                    key={check.check_name}
-                    label={`${check.check_name}: ${check.passed ? 'Passed' : 'Failed'}${
-                      check.error_code ? ` (${check.error_code})` : ''
-                    }`}
-                    color={check.passed ? 'success' : 'error'}
-                    variant="outlined"
-                    title={check.details}
-                  />
-                ))}
+                {result.dtc_details.checks.map((check, index) => {
+                  const checkConfig = dtcCheckConfig[check.outcome] ?? dtcCheckConfig.ERROR;
+                  return (
+                    <Chip
+                      key={`${check.check_name}-${index}`}
+                      label={`${check.check_name}: ${checkConfig.label}${
+                        check.error_code ? ` (${check.error_code})` : ''
+                      }`}
+                      color={checkConfig.color}
+                      variant="outlined"
+                      title={check.details}
+                    />
+                  );
+                })}
               </Stack>
               {result.dtc_details.errors && result.dtc_details.errors.length > 0 && (
                 <Box sx={{ mt: 1 }}>

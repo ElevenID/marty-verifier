@@ -89,4 +89,47 @@ describe('VerificationResultCard', () => {
     
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
   });
+
+  it('renders explicit DTC check outcomes without calling unresolved checks failed', () => {
+    const result = createMockResult({
+      credential_type: 'dtc',
+      dtc_details: {
+        checks: [
+          { check_name: 'Signature', outcome: 'PASSED', passed: true },
+          { check_name: 'TrustChain', outcome: 'FAILED', passed: false },
+          {
+            check_name: 'RevocationStatus',
+            outcome: 'NOT_PERFORMED',
+            passed: false,
+            error_code: 'E810',
+          },
+          {
+            check_name: 'StatusEvidence',
+            outcome: 'ERROR',
+            passed: false,
+            details: 'Status evidence was malformed',
+          },
+        ],
+        errors: [],
+        error_codes: [],
+      },
+    });
+
+    render(<VerificationResultCard result={result} />);
+
+    expect(screen.getByText('Signature: Passed')).toBeInTheDocument();
+    expect(screen.getByText('TrustChain: Failed')).toBeInTheDocument();
+
+    const notPerformed = screen.getByText('RevocationStatus: Not performed (E810)');
+    expect(notPerformed).toBeInTheDocument();
+    expect(notPerformed.closest('.MuiChip-root')).toHaveClass('MuiChip-colorDefault');
+
+    const error = screen.getByText('StatusEvidence: Error');
+    expect(error).toBeInTheDocument();
+    expect(error.closest('.MuiChip-root')).toHaveClass('MuiChip-colorWarning');
+    expect(error.closest('.MuiChip-root')).toHaveAttribute(
+      'title',
+      'Status evidence was malformed'
+    );
+  });
 });
