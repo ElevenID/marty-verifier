@@ -11,7 +11,22 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read # Every CI job only reads repository contents.
+
 jobs:
+  dependency-automation-contract:
+    name: Dependency Automation Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Validate dependency and release automation
+        run: |
+          python scripts/test_update_core_dependencies.py
+          python scripts/test_stable_tag_gate.py
+
   test-rust:
     name: Rust Tests
     runs-on: ${{ matrix.os }}
