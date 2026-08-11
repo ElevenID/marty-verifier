@@ -28,16 +28,21 @@ jobs:
       - name: Require a non-default automation token
         shell: bash
         env:
-          AUTOMATION_TOKEN: ${{ secrets.MARTY_CORE_TOKEN }}
+          AUTOMATION_SECRET_NAME: ${{ vars.DEPENDENCY_PR_SECRET_NAME }}
+          AUTOMATION_TOKEN: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
           DEFAULT_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -z "${AUTOMATION_SECRET_NAME:-}" ]; then
+            echo "::error::DEPENDENCY_PR_SECRET_NAME must identify the repository's external PR token secret."
+            exit 1
+          fi
           if [ -z "${AUTOMATION_TOKEN:-}" ]; then
-            echo "::error::MARTY_CORE_TOKEN is required to create a PR whose events run protected checks."
+            echo "::error::The configured external PR token secret is unavailable."
             exit 1
           fi
           if [ "$AUTOMATION_TOKEN" = "$DEFAULT_GITHUB_TOKEN" ]; then
-            echo "::error::MARTY_CORE_TOKEN must not be the workflow GITHUB_TOKEN."
+            echo "::error::The external PR token must not be the workflow GITHUB_TOKEN."
             exit 1
           fi
 
@@ -46,7 +51,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: main
-          token: ${{ secrets.MARTY_CORE_TOKEN }}
+          token: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
 
       - name: Normalize requested stable tag
         id: requested
@@ -73,7 +78,7 @@ jobs:
         env:
           CORE_TAG: ${{ steps.requested.outputs.tag }}
         with:
-          github-token: ${{ secrets.MARTY_CORE_TOKEN }}
+          github-token: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
           result-encoding: json
           script: |
             const owner = "ElevenID";
@@ -134,7 +139,7 @@ jobs:
         shell: bash
         env:
           BRANCH: ${{ steps.identity.outputs.branch }}
-          GH_TOKEN: ${{ secrets.MARTY_CORE_TOKEN }}
+          GH_TOKEN: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
         run: |
           set -euo pipefail
           existing="$(gh pr list --state open --head "$BRANCH" --json number,url --jq '.[0] // empty')"
@@ -225,7 +230,7 @@ jobs:
           EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
           RESOLUTION: ${{ steps.core.outputs.result }}
         with:
-          github-token: ${{ secrets.MARTY_CORE_TOKEN }}
+          github-token: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
           script: |
             const owner = "ElevenID";
             const repo = "marty-core";
@@ -266,7 +271,7 @@ jobs:
           BRANCH: ${{ steps.identity.outputs.branch }}
           CORE_SHA: ${{ steps.identity.outputs.sha }}
           CORE_TAG: ${{ steps.requested.outputs.tag }}
-          GH_TOKEN: ${{ secrets.MARTY_CORE_TOKEN }}
+          GH_TOKEN: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
         run: |
           set -euo pipefail
           gh auth setup-git
@@ -287,7 +292,7 @@ jobs:
           BRANCH: ${{ steps.identity.outputs.branch }}
           CORE_SHA: ${{ steps.identity.outputs.sha }}
           CORE_TAG: ${{ steps.requested.outputs.tag }}
-          GH_TOKEN: ${{ secrets.MARTY_CORE_TOKEN }}
+          GH_TOKEN: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
           PREVIOUS_SHA: ${{ steps.update.outputs.previous_sha }}
           RESOLUTION: ${{ steps.core.outputs.result }}
         run: |
@@ -317,7 +322,7 @@ jobs:
         env:
           BRANCH: ${{ steps.identity.outputs.branch }}
           EXPECTED_SHA: ${{ steps.commit.outputs.sha }}
-          GH_TOKEN: ${{ secrets.MARTY_CORE_TOKEN }}
+          GH_TOKEN: ${{ secrets[vars.DEPENDENCY_PR_SECRET_NAME] }}
         run: |
           set -euo pipefail
           open_prs="$(gh pr list --state open --head "$BRANCH" --json number --jq 'length')"

@@ -184,7 +184,8 @@ class WorkflowContractTests(unittest.TestCase):
         workflow = (root / ".github" / "workflows" / "auto-update-deps.yml").read_text(encoding="utf-8")
         for name in MODULE.CORE_CRATES:
             self.assertIn(name, workflow)
-        self.assertIn("MARTY_CORE_TOKEN", workflow)
+        self.assertIn("DEPENDENCY_PR_SECRET_NAME", workflow)
+        self.assertIn("secrets[vars.DEPENDENCY_PR_SECRET_NAME]", workflow)
         self.assertNotIn("GH_TOKEN", workflow.split("steps:", 1)[0])
         self.assertIn("gh pr create --draft", workflow)
         self.assertIn('git push origin "$BRANCH"', workflow)
