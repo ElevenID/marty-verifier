@@ -179,6 +179,23 @@ def release_asset_paths(repository: Path, target: str) -> list[Path]:
     return sorted(assets, key=lambda path: path.name)
 
 
+def release_asset_name(source: Path, target: str, application_version: str) -> str:
+    macos_arch = {
+        "x86_64-apple-darwin": "x64",
+        "aarch64-apple-darwin": "aarch64",
+    }.get(target)
+    if macos_arch is None:
+        return source.name
+
+    for suffix in (".app.tar.gz.sig", ".app.tar.gz"):
+        if source.name.endswith(suffix):
+            stem = source.name[: -len(suffix)]
+            if stem.endswith(("_x64", "_aarch64")):
+                return source.name
+            return f"{stem}_{application_version}_{macos_arch}{suffix}"
+    return source.name
+
+
 def stage(args: argparse.Namespace) -> None:
     validate_identity(
         args.source_sha,
@@ -227,7 +244,11 @@ def stage(args: argparse.Namespace) -> None:
 
     release_assets = []
     for source in release_asset_paths(repository, args.target):
-        destination = assets_dir / source.name
+        destination = assets_dir / release_asset_name(
+            source, args.target, args.application_version
+        )
+        if destination.exists():
+            raise SmokeError("normalized release asset names are not unique")
         shutil.copy2(source, destination)
         release_assets.append(
             {
