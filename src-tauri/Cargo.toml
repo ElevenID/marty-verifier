@@ -52,7 +52,6 @@ tempfile = "3.14"
 
 # The packaged startup self-check replaces both keyring generations with
 # process-local stores before initializing either storage implementation.
-keyring.workspace = true
 keyring-core = "1.0"
 keyring-legacy = { package = "keyring", version = "3.6" }
 

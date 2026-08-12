@@ -189,7 +189,7 @@ fn write_report(path: &Path, report: &SelfCheckReport<'_>) -> Result<()> {
 }
 
 fn perform_self_check() -> Result<()> {
-    install_ephemeral_keyrings()?;
+    let current_store_id = install_ephemeral_keyrings()?;
 
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     validate_context(&context)?;
@@ -201,7 +201,9 @@ fn perform_self_check() -> Result<()> {
     };
     validate_safe_defaults(&config)?;
 
-    let state = AppState::from_config(config).context("initialize application state")?;
+    let state = AppState::from_config_with_process_local_keyring(config)
+        .context("initialize application state")?;
+    validate_ephemeral_keyring(&current_store_id)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -228,25 +230,41 @@ fn perform_self_check() -> Result<()> {
     Ok(())
 }
 
-fn install_ephemeral_keyrings() -> Result<()> {
-    keyring_core::set_default_store(
-        keyring_core::mock::Store::new().context("create current keyring store")?,
-    );
+fn install_ephemeral_keyrings() -> Result<String> {
+    let current_store: Arc<keyring_core::CredentialStore> =
+        keyring_core::mock::Store::new().context("create current keyring store")?;
+    let current_store_id = current_store.id();
+    keyring_core::set_default_store(current_store);
     keyring_legacy::set_default_credential_builder(Box::new(LegacyMemoryBuilder::default()));
+    validate_ephemeral_keyring(&current_store_id)?;
 
     let database_key = base64::engine::general_purpose::STANDARD.encode([0x42_u8; 32]);
     let pii_key = base64::engine::general_purpose::STANDARD.encode([0x24_u8; 32]);
     seed_current_keyring("database_encryption_key", &database_key)?;
     seed_current_keyring("pii_encryption_key", &pii_key)?;
     seed_legacy_keyring("database_encryption_key", &database_key)?;
-    Ok(())
+    Ok(current_store_id)
 }
 
 fn seed_current_keyring(name: &str, value: &str) -> Result<()> {
-    keyring::Entry::new("com.marty.verifier", name)
+    keyring_core::Entry::new("com.marty.verifier", name)
         .context("create current keyring entry")?
         .set_password(value)
         .context("seed current keyring")
+}
+
+fn validate_ephemeral_keyring(expected_id: &str) -> Result<()> {
+    let store = keyring_core::get_default_store()
+        .ok_or_else(|| anyhow!("current process-local keyring is not installed"))?;
+    if store.id() != expected_id
+        || !matches!(
+            store.persistence(),
+            keyring_core::CredentialPersistence::ProcessOnly
+        )
+    {
+        return Err(anyhow!("current keyring escaped the process-local store"));
+    }
+    Ok(())
 }
 
 fn seed_legacy_keyring(name: &str, value: &str) -> Result<()> {

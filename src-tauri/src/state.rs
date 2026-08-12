@@ -73,7 +73,18 @@ impl AppState {
     pub fn from_config(config: AppConfig) -> AppResult<Self> {
         // Initialize secure storage (app-level: verification events, trust anchors)
         let storage = Arc::new(SecureStorage::new(&config.data_dir)?);
+        Self::from_config_and_storage(config, storage)
+    }
 
+    /// Initialize self-check state with an already-installed process-local keyring.
+    pub(crate) fn from_config_with_process_local_keyring(config: AppConfig) -> AppResult<Self> {
+        let storage = Arc::new(SecureStorage::new_with_process_local_keyring(
+            &config.data_dir,
+        )?);
+        Self::from_config_and_storage(config, storage)
+    }
+
+    fn from_config_and_storage(config: AppConfig, storage: Arc<SecureStorage>) -> AppResult<Self> {
         // Initialize core secure storage used by the sync engine.
         let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir).map_err(|e| {
             crate::error::AppError::Config(format!("Core storage init failed: {}", e))
