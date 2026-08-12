@@ -310,6 +310,17 @@ class StableTagWorkflowContractTests(unittest.TestCase):
                 "dynamic/github-code-scanning/codeql",
             },
         )
+        events = {
+            item["path"]: item["event"] for item in policy["required_workflows"]
+        }
+        self.assertEqual(
+            events[".github/workflows/license-compliance.yml"],
+            "workflow_dispatch",
+        )
+        license_workflow = (
+            root / ".github/workflows/license-compliance.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", license_workflow)
 
 
 if __name__ == "__main__":
