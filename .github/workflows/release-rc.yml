@@ -7,20 +7,112 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'RC tag to release (e.g., v0.2.0-rc.1)'
+        description: 'Existing RC tag to release (e.g., v0.2.0-rc.1)'
         required: true
+        type: string
+
+concurrency:
+  group: verifier-rc-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  validate-release-source:
+    name: Validate immutable RC source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
+      app_version: ${{ steps.identity.outputs.app_version }}
+      commit: ${{ steps.identity.outputs.commit }}
+      tag_object: ${{ steps.identity.outputs.tag_object }}
+    steps:
+      - name: Select requested tag
+        id: target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCHED_TAG: ${{ github.event.inputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            tag="$DISPATCHED_TAG"
+          else
+            tag="$PUSHED_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::RC release tag is invalid: $tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ steps.target.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind tag, checkout, and application version
+        id: identity
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_COMMIT: ${{ github.sha }}
+          TAG: ${{ steps.target.outputs.tag }}
+          PYTHONPATH: scripts
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse "$TAG^{commit}")"
+          tag_object="$(git rev-parse "refs/tags/$TAG")"
+          test "$(git cat-file -t "refs/tags/$TAG")" = tag
+          version="${TAG#v}"
+          app_version="${version%-rc.*}"
+          if [ "$EVENT_NAME" = push ] && [ "$commit" != "$PUSH_COMMIT" ]; then
+            echo "::error::Tag target does not match pushed commit"
+            exit 1
+          fi
+          test "$(git rev-parse 'HEAD^{commit}')" = "$commit"
+          python - "$app_version" <<'PY'
+          import sys
+          from pathlib import Path
+          import stable_tag_gate
+          versions = stable_tag_gate.application_versions(Path('.'))
+          mismatches = [name for name, value in versions.items() if value != sys.argv[1]]
+          if mismatches:
+              raise SystemExit('RC tag does not match application version: ' + ', '.join(mismatches))
+          PY
+          {
+            echo "tag=$TAG"
+            echo "version=$version"
+            echo "app_version=$app_version"
+            echo "commit=$commit"
+            echo "tag_object=$tag_object"
+          } >> "$GITHUB_OUTPUT"
+      - name: Reject an existing draft or published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          jq -e --arg tag "$TAG" '([.[][] | select(.tag_name == $tag)] | length) == 0' \
+            releases.json >/dev/null
+
   build-tauri:
-    name: Build Tauri App
+    name: Build and smoke ${{ matrix.target }}
+    needs: validate-release-source
     permissions:
-      contents: write # Tauri creates the draft release and uploads installers.
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -34,27 +126,13 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
+          ref: ${{ needs.validate-release-source.outputs.commit }}
           fetch-depth: 0
-
-
-      - name: Get version from tag
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${GITHUB_EVENT_INPUTS_TAG}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          {
-            echo "tag=$TAG"
-            echo "version=${TAG#v}"
-          } >> "$GITHUB_OUTPUT"
-        env:
-          GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
@@ -66,8 +144,8 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "24"
-          cache: 'pnpm'
+          node-version: '24'
+          cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
 
       - name: Install dependencies (Ubuntu)
@@ -84,71 +162,192 @@ jobs:
         working-directory: ui
         run: pnpm build
 
-      - name: Build Tauri app
+      - name: Run tests (all features)
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test --locked --workspace --all-features
+
+      - name: Run tests (Intel macOS shipped features)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo test --locked --workspace
+
+      - name: Revalidate immutable tag binding
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate-release-source.outputs.commit }}
+          EXPECTED_TAG_OBJECT: ${{ needs.validate-release-source.outputs.tag_object }}
+          TAG: ${{ needs.validate-release-source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          remote_refs="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+          test "$(printf '%s\n' "$remote_refs" | awk 'NF { count++ } END { print count + 0 }')" -eq 2
+          remote_tag_object="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }')"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }')"
+          test "$remote_tag_object" = "$EXPECTED_TAG_OBJECT"
+          test "$remote_commit" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$EXPECTED_COMMIT"
+
+      - name: Build Tauri app without publishing
+        id: build
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: 'Marty Verifier ${{ steps.version.outputs.version }} (RC)'
-          releaseBody: 'Release Candidate - see changelog for details. macOS artifacts are unsigned and are not Apple-notarized; verify SHA256SUMS and GitHub build provenance before use.'
-          releaseDraft: false
-          prerelease: true
           args: --target ${{ matrix.target }}
 
+      - name: Run packaged startup smoke and bind release assets
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.validate-release-source.outputs.commit }}
+          APP_VERSION: ${{ needs.validate-release-source.outputs.app_version }}
+          RELEASE_VERSION: ${{ needs.validate-release-source.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          python scripts/packaged_startup_smoke.py stage \
+            --repository . \
+            --source-sha "$SOURCE_SHA" \
+            --application-version "$APP_VERSION" \
+            --release-version "$RELEASE_VERSION" \
+            --target "$TARGET" \
+            --runner-os "$RUNNER_OS_NAME" \
+            --output-dir packaged-release
+
+      - name: Upload smoke-gated release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: packaged-${{ matrix.target }}
+          path: packaged-release
+          if-no-files-found: error
+          retention-days: 7
+
   create-release:
-    name: Consolidate RC Release
-    permissions:
-      contents: write
-      id-token: write # Required for attestations.
-      attestations: write
-    needs: build-tauri
+    name: Publish smoke-gated RC release
+    needs:
+      - validate-release-source
+      - build-tauri
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
+          ref: ${{ needs.validate-release-source.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
 
-
-      - name: Get version from tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${GITHUB_EVENT_INPUTS_TAG}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          {
-            echo "tag=$TAG"
-            echo "version=${TAG#v}"
-          } >> "$GITHUB_OUTPUT"
+      - name: Download smoke-gated matrix payloads
+        shell: bash
         env:
-          GITHUB_EVENT_INPUTS_TAG: ${{ github.event.inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'packaged-*' --dir release-inputs
+
+      - name: Validate matrix evidence and consolidate assets
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.validate-release-source.outputs.commit }}
+          APP_VERSION: ${{ needs.validate-release-source.outputs.app_version }}
+          RELEASE_VERSION: ${{ needs.validate-release-source.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/packaged_startup_smoke.py consolidate \
+            --input-dir release-inputs \
+            --source-sha "$SOURCE_SHA" \
+            --application-version "$APP_VERSION" \
+            --release-version "$RELEASE_VERSION" \
+            --expected-target x86_64-apple-darwin \
+            --expected-target aarch64-apple-darwin \
+            --expected-target x86_64-unknown-linux-gnu \
+            --expected-target x86_64-pc-windows-msvc \
+            --release-dir release-assets
 
       - name: Generate release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.validate-release-source.outputs.tag }}
         run: |
+          set -euo pipefail
           cargo install git-cliff
-          git cliff --tag ${{ steps.version.outputs.tag }} --unreleased --strip all > RELEASE_NOTES.md
-
-      - name: Install cargo-cyclonedx for SBOM
-        run: cargo install cargo-cyclonedx
+          {
+            echo 'macOS artifacts are unsigned and are not Apple-notarized; verify SHA256SUMS, packaged startup evidence, and GitHub build provenance before use.'
+            echo
+            git cliff --tag "$TAG" --unreleased --strip all
+          } > RELEASE_NOTES.md
 
       - name: Generate SBOM
         run: |
+          cargo install cargo-cyclonedx
           cargo cyclonedx --format json --override-filename marty-verifier-sbom
-          # cargo-cyclonedx writes each workspace member's SBOM beside its Cargo.toml.
           cp src-tauri/marty-verifier-sbom.json marty-verifier-sbom.json
           test -s marty-verifier-sbom.json
-          jq -e '.metadata.component.name == "marty-verifier"' marty-verifier-sbom.json > /dev/null
+          jq -e '.metadata.component.name == "marty-verifier"' marty-verifier-sbom.json >/dev/null
 
-      - name: Download release assets
-        uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f
-        with:
-          tag: ${{ steps.version.outputs.tag }}
-          fileName: '*'
-          out-file-path: 'release-assets'
+      - name: Validate signing artifacts exist
+        run: |
+          set -euo pipefail
+          for pattern in \
+            '*_x64.app.tar.gz.sig' \
+            '*_aarch64.app.tar.gz.sig' \
+            '*_amd64.AppImage.tar.gz.sig' \
+            '*_x64-setup.nsis.zip.sig'; do
+            mapfile -t matches < <(find release-assets -maxdepth 1 -type f -name "$pattern")
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected one signing artifact matching $pattern, found ${#matches[@]}"
+              exit 1
+            fi
+          done
+
+      - name: Generate RC updater manifest
+        shell: bash
+        env:
+          TAG: ${{ needs.validate-release-source.outputs.tag }}
+          VERSION: ${{ needs.validate-release-source.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          base_url="https://github.com/${repo}/releases/download/${TAG}"
+          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          resolve_sig() {
+            local pattern="$1"
+            local match
+            match=$(find release-assets -maxdepth 1 -type f -name "$pattern" -print -quit)
+            test -n "$match"
+            printf '%s' "$match"
+          }
+
+          darwin_x64_sig=$(resolve_sig '*_x64.app.tar.gz.sig')
+          darwin_aarch64_sig=$(resolve_sig '*_aarch64.app.tar.gz.sig')
+          linux_x64_sig=$(resolve_sig '*_amd64.AppImage.tar.gz.sig')
+          windows_x64_sig=$(resolve_sig '*_x64-setup.nsis.zip.sig')
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See full release notes at https://github.com/${repo}/releases/tag/${TAG}" \
+            --arg pub_date "$pub_date" \
+            --arg sig_darwin_x64 "$(cat "$darwin_x64_sig")" \
+            --arg url_darwin_x64 "${base_url}/$(basename "${darwin_x64_sig%.sig}")" \
+            --arg sig_darwin_aarch64 "$(cat "$darwin_aarch64_sig")" \
+            --arg url_darwin_aarch64 "${base_url}/$(basename "${darwin_aarch64_sig%.sig}")" \
+            --arg sig_linux_x64 "$(cat "$linux_x64_sig")" \
+            --arg url_linux_x64 "${base_url}/$(basename "${linux_x64_sig%.sig}")" \
+            --arg sig_windows_x64 "$(cat "$windows_x64_sig")" \
+            --arg url_windows_x64 "${base_url}/$(basename "${windows_x64_sig%.sig}")" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-x86_64": { signature: $sig_darwin_x64, url: $url_darwin_x64 },
+                "darwin-aarch64": { signature: $sig_darwin_aarch64, url: $url_darwin_aarch64 },
+                "linux-x86_64": { signature: $sig_linux_x64, url: $url_linux_x64 },
+                "windows-x86_64": { signature: $sig_windows_x64, url: $url_windows_x64 }
+              }
+            }' > release-assets/latest.json
 
       - name: Generate checksums
         run: |
@@ -168,13 +367,30 @@ jobs:
             marty-verifier-sbom.json
             SHA256SUMS
 
-      - name: Update release
+      - name: Revalidate immutable tag before publication
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ needs.validate-release-source.outputs.commit }}
+          EXPECTED_TAG_OBJECT: ${{ needs.validate-release-source.outputs.tag_object }}
+          TAG: ${{ needs.validate-release-source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          remote_refs="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+          test "$(printf '%s\n' "$remote_refs" | awk 'NF { count++ } END { print count + 0 }')" -eq 2
+          remote_tag_object="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }')"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }')"
+          test "$remote_tag_object" = "$EXPECTED_TAG_OBJECT"
+          test "$remote_commit" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$EXPECTED_COMMIT"
+
+      - name: Create RC release after all packaged startup checks pass
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Marty Verifier ${{ steps.version.outputs.version }} (RC)
+          tag_name: ${{ needs.validate-release-source.outputs.tag }}
+          name: Marty Verifier ${{ needs.validate-release-source.outputs.version }} (RC)
           body_path: RELEASE_NOTES.md
           files: |
+            release-assets/*
             marty-verifier-sbom.json
             SHA256SUMS
           prerelease: true

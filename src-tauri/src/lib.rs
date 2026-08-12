@@ -6,9 +6,11 @@
 //!
 //! The binary entry point remains `main.rs`, which imports from this crate.
 
+pub mod app;
 pub mod commands;
 pub mod config;
 pub mod error;
 pub mod hardware;
 pub mod runtime_config;
+pub mod startup_self_check;
 pub mod state;

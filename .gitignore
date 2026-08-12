@@ -30,6 +30,7 @@ playwright-report/
 coverage/
 
 # Build artifacts
+__pycache__/
 *.dmg
 *.exe
 *.deb

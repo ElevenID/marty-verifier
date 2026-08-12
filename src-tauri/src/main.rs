@@ -5,12 +5,16 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use marty_verifier::commands;
 use marty_verifier::state::AppState;
+use marty_verifier::{app, commands, startup_self_check};
 use tauri::Manager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() {
+    if let Some(exit_code) = startup_self_check::run_if_requested() {
+        std::process::exit(exit_code);
+    }
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(
@@ -66,34 +70,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            // Verification commands
-            commands::verification::issue_liveness_challenge,
-            commands::verification::verify_credential,
-            commands::verification::get_verification_history,
-            commands::biometrics::verify_face_match,
-            #[cfg(feature = "biometrics")]
-            commands::biometrics::assess_face_quality,
-            // Storage commands
-            commands::storage::get_offline_queue_status,
-            commands::storage::clear_verification_history,
-            // Sync commands
-            commands::sync::sync_trust_anchors,
-            commands::sync::get_sync_status,
-            commands::sync::import_trust_anchors_usb,
-            // Profile sync commands
-            commands::profile_sync::sync_device_config,
-            commands::profile_sync::get_runtime_config,
-            // Hardware commands
-            commands::hardware::detect_hardware,
-            commands::hardware::get_hardware_tier,
-            // Config commands
-            commands::config::get_config,
-            commands::config::update_config,
-            // Update commands
-            commands::update::check_for_updates,
-            commands::update::download_and_install_update,
-        ])
+        .invoke_handler(app::command_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
