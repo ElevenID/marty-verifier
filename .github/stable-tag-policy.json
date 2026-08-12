@@ -19,7 +19,7 @@
     },
     {
       "path": ".github/workflows/license-compliance.yml",
-      "event": "push"
+      "event": "workflow_dispatch"
     },
     {
       "path": "dynamic/github-code-scanning/codeql",
