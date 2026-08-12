@@ -21,6 +21,7 @@ const CHECKS: [&str; 6] = [
     "runtime_storage_restore",
     "command_registration",
 ];
+const MAX_FAILURE_DIAGNOSTIC_CHARS: usize = 2_048;
 
 type LegacySecrets = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
@@ -108,7 +109,10 @@ pub fn run_if_requested() -> Option<i32> {
 
     let report_path = match parse_report_path(&args) {
         Ok(path) => path,
-        Err(_) => return Some(2),
+        Err(error) => {
+            emit_failure_diagnostic("arguments", &error);
+            return Some(2);
+        }
     };
 
     match perform_self_check() {
@@ -122,11 +126,43 @@ pub fn run_if_requested() -> Option<i32> {
             };
             match write_report(&report_path, &report) {
                 Ok(()) => Some(0),
-                Err(_) => Some(1),
+                Err(error) => {
+                    emit_failure_diagnostic("report", &error);
+                    Some(1)
+                }
             }
         }
-        Err(_) => Some(1),
+        Err(error) => {
+            emit_failure_diagnostic("startup", &error);
+            Some(1)
+        }
     }
+}
+
+fn emit_failure_diagnostic(stage: &str, error: &anyhow::Error) {
+    let bounded = failure_diagnostic(error);
+    eprintln!("marty-verifier self-check failed ({stage}): {bounded}");
+}
+
+fn failure_diagnostic(error: &anyhow::Error) -> String {
+    let detail = format!("{error:#}");
+    let mut bounded = String::with_capacity(detail.len().min(MAX_FAILURE_DIAGNOSTIC_CHARS));
+    let mut truncated = false;
+    for (index, character) in detail.chars().enumerate() {
+        if index == MAX_FAILURE_DIAGNOSTIC_CHARS {
+            truncated = true;
+            break;
+        }
+        match character {
+            '\n' | '\r' => bounded.push_str("; "),
+            character if character.is_control() => bounded.push(' '),
+            character => bounded.push(character),
+        }
+    }
+    if truncated {
+        bounded.push_str("...");
+    }
+    bounded
 }
 
 fn parse_report_path(args: &[OsString]) -> Result<PathBuf> {
@@ -293,5 +329,15 @@ mod tests {
         config.update_config.enabled = false;
         config.open_badge_trust.policy = OpenBadgeTrustPolicy::FailOpen;
         assert!(validate_safe_defaults(&config).is_err());
+    }
+
+    #[test]
+    fn failure_diagnostic_is_bounded_and_single_line() {
+        let error = anyhow!("{}\nprivate second line", "x".repeat(4_096));
+        let bounded = failure_diagnostic(&error);
+        assert_eq!(bounded.chars().count(), MAX_FAILURE_DIAGNOSTIC_CHARS + 3);
+        assert!(!bounded.contains('\n'));
+        assert!(!bounded.contains("private second line"));
+        assert!(bounded.ends_with("..."));
     }
 }

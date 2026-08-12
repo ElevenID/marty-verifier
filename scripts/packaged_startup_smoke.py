@@ -54,6 +54,8 @@ PUBLISHABLE_SUFFIXES = (
     ".nsis.zip",
     ".nsis.zip.sig",
 )
+MAX_PROCESS_DIAGNOSTIC_CHARS = 2_048
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class SmokeError(RuntimeError):
@@ -73,6 +75,18 @@ def require_one(paths: Iterable[Path], description: str) -> Path:
     if len(matches) != 1:
         raise SmokeError(f"expected exactly one {description}, found {len(matches)}")
     return matches[0]
+
+
+def process_failure_diagnostic(stderr: bytes) -> str:
+    detail = stderr.decode("utf-8", errors="replace")
+    detail = ANSI_ESCAPE.sub("", detail)
+    detail = "".join(character if character.isprintable() else " " for character in detail)
+    detail = " ".join(detail.split())
+    if not detail:
+        return "packaged process produced no stderr diagnostic"
+    if len(detail) > MAX_PROCESS_DIAGNOSTIC_CHARS:
+        return detail[:MAX_PROCESS_DIAGNOSTIC_CHARS] + "..."
+    return detail
 
 
 def validate_identity(
@@ -200,8 +214,10 @@ def stage(args: argparse.Namespace) -> None:
     except subprocess.TimeoutExpired as error:
         raise SmokeError("packaged startup self-check exceeded 90 seconds") from error
     if completed.returncode != 0:
+        diagnostic = process_failure_diagnostic(completed.stderr)
         raise SmokeError(
-            f"packaged startup self-check exited with code {completed.returncode}"
+            f"packaged startup self-check exited with code {completed.returncode}: "
+            f"{diagnostic}"
         )
     if not binary_report_path.is_file():
         raise SmokeError("packaged application did not produce self-check evidence")
