@@ -438,6 +438,21 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                     final_job_marker, 1
                 )[0]
                 self.assertIn("Build Tauri app without publishing", build_job)
+                self.assertIn("Retry Tauri app packaging once", build_job)
+                self.assertEqual(build_job.count("tauri-apps/tauri-action@"), 2)
+                primary = build_job.index("Build Tauri app without publishing")
+                retry = build_job.index("Retry Tauri app packaging once")
+                smoke = build_job.index(
+                    "Run packaged startup smoke and bind release assets"
+                )
+                self.assertLess(primary, retry)
+                self.assertLess(retry, smoke)
+                self.assertIn("continue-on-error: true", build_job[primary:retry])
+                self.assertIn(
+                    "if: steps.build.outcome == 'failure'",
+                    build_job[retry:smoke],
+                )
+                self.assertNotIn("continue-on-error: true", build_job[retry:smoke])
                 self.assertNotIn("tagName:", build_job)
                 self.assertNotIn("releaseName:", build_job)
                 self.assertNotIn("releaseDraft:", build_job)
