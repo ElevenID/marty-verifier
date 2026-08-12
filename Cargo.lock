@@ -4149,7 +4149,7 @@ name = "marty-app-storage"
 version = "0.1.4"
 dependencies = [
  "aes-gcm",
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "chrono",
  "directories",
@@ -4309,7 +4309,7 @@ dependencies = [
 name = "marty-sync"
 version = "0.1.4"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "blake3",
  "chrono",
  "der 0.7.10",
@@ -4399,7 +4399,7 @@ name = "marty-verifier"
 version = "0.1.4"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "directories",
  "keyring 3.6.3",
