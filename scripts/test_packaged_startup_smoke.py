@@ -170,6 +170,60 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                 },
             )
 
+    def test_macos_updater_assets_receive_architecture_qualified_names(self) -> None:
+        neutral_archive = Path("Marty Verifier.app.tar.gz")
+        neutral_signature = Path("Marty Verifier.app.tar.gz.sig")
+        cases = {
+            "x86_64-apple-darwin": "x64",
+            "aarch64-apple-darwin": "aarch64",
+        }
+        for target, architecture in cases.items():
+            with self.subTest(target=target):
+                expected = f"Marty Verifier_1.2.3_{architecture}.app.tar.gz"
+                self.assertEqual(
+                    SMOKE.release_asset_name(neutral_archive, target, "1.2.3"),
+                    expected,
+                )
+                self.assertEqual(
+                    SMOKE.release_asset_name(neutral_signature, target, "1.2.3"),
+                    f"{expected}.sig",
+                )
+
+        qualified = Path("Marty Verifier_1.2.3_x64.app.tar.gz")
+        self.assertEqual(
+            SMOKE.release_asset_name(qualified, "x86_64-apple-darwin", "1.2.3"),
+            qualified.name,
+        )
+
+    def test_consolidation_still_rejects_cross_target_name_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            for index, target in enumerate(SMOKE.TARGETS):
+                self.write_target(inputs, target, f"asset-{index}".encode())
+                target_dir = inputs / target
+                evidence_path = target_dir / "startup-smoke-evidence.json"
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                original = target_dir / "assets" / evidence["release_assets"][0]["name"]
+                collision = target_dir / "assets" / "same-name.bundle"
+                original.rename(collision)
+                evidence["release_assets"][0]["name"] = collision.name
+                evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                SMOKE.SmokeError, "duplicate cross-platform release asset"
+            ):
+                SMOKE.consolidate(
+                    Namespace(
+                        input_dir=inputs,
+                        source_sha="a" * 40,
+                        application_version="1.2.3",
+                        release_version="1.2.3-rc.1",
+                        expected_target=list(SMOKE.TARGETS),
+                        release_dir=root / "release",
+                    )
+                )
+
     def test_release_workflows_publish_only_after_matrix_consolidation(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         workflows = {
