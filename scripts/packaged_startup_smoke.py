@@ -252,7 +252,7 @@ def stage(args: argparse.Namespace) -> None:
         shutil.copy2(source, destination)
         release_assets.append(
             {
-                "name": source.name,
+                "name": destination.name,
                 "sha256": sha256_file(destination),
                 "size": destination.stat().st_size,
             }

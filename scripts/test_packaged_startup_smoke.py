@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).with_name("packaged_startup_smoke.py")
@@ -194,6 +196,75 @@ class PackagedStartupSmokeTests(unittest.TestCase):
             SMOKE.release_asset_name(qualified, "x86_64-apple-darwin", "1.2.3"),
             qualified.name,
         )
+
+    def test_stage_binds_evidence_to_normalized_macos_asset_names(self) -> None:
+        cases = {
+            "x86_64-apple-darwin": "x64",
+            "aarch64-apple-darwin": "aarch64",
+        }
+        for target, architecture in cases.items():
+            with (
+                self.subTest(target=target),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                repository = root / "repository"
+                bundle = SMOKE.bundle_root(repository, target) / "macos"
+                bundle.mkdir(parents=True)
+                archive = bundle / "Marty Verifier.app.tar.gz"
+                signature = bundle / "Marty Verifier.app.tar.gz.sig"
+                archive.write_bytes(f"archive-{target}".encode())
+                signature.write_bytes(f"signature-{target}".encode())
+                executable = repository / "marty-verifier"
+                executable.write_bytes(b"executable")
+                output = root / "staged"
+
+                def run_self_check(command: list[str], **_: object) -> CompletedProcess:
+                    report = Path(command[3])
+                    report.write_text(
+                        json.dumps(self.binary_report()), encoding="utf-8"
+                    )
+                    return CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+                with (
+                    patch.object(
+                        SMOKE,
+                        "resolve_execution",
+                        return_value=(executable, archive, {}),
+                    ),
+                    patch.object(SMOKE.subprocess, "run", side_effect=run_self_check),
+                ):
+                    SMOKE.stage(
+                        Namespace(
+                            repository=repository,
+                            source_sha="a" * 40,
+                            application_version="1.2.3",
+                            release_version="1.2.3-rc.1",
+                            target=target,
+                            runner_os="macOS",
+                            output_dir=output,
+                        )
+                    )
+
+                evidence_path = output / "startup-smoke-evidence.json"
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                expected_archive = f"Marty Verifier_1.2.3_{architecture}.app.tar.gz"
+                expected_names = {expected_archive, f"{expected_archive}.sig"}
+                self.assertEqual(
+                    {asset["name"] for asset in evidence["release_assets"]},
+                    expected_names,
+                )
+                self.assertEqual(
+                    {path.name for path in (output / "assets").iterdir()},
+                    expected_names,
+                )
+                SMOKE.validate_staged_evidence(
+                    evidence_path,
+                    evidence,
+                    "a" * 40,
+                    "1.2.3",
+                    "1.2.3-rc.1",
+                )
 
     def test_consolidation_still_rejects_cross_target_name_collisions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
