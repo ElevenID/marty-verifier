@@ -32,6 +32,14 @@ REQUIRED_CHECKS = {
 }
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 VERSION_PATTERN = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+RELEASE_ASSET_NAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
+)
+REPOSITORY_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?/"
+    r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$"
+)
+PUBLICATION_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 PUBLISHABLE_SUFFIXES = (
     ".dmg",
     ".dmg.sig",
@@ -103,6 +111,13 @@ def validate_identity(
         raise SmokeError("release version does not match application version")
     if target not in TARGETS:
         raise SmokeError(f"unsupported release target: {target}")
+
+
+def canonical_release_asset_name(name: str) -> str:
+    canonical = re.sub(r"\s+", ".", name)
+    if not RELEASE_ASSET_NAME_PATTERN.fullmatch(canonical):
+        raise SmokeError(f"release asset name is not publish-safe: {name}")
+    return canonical
 
 
 def validate_binary_report(report: dict[str, Any], version: str) -> list[str]:
@@ -184,16 +199,18 @@ def release_asset_name(source: Path, target: str, application_version: str) -> s
         "x86_64-apple-darwin": "x64",
         "aarch64-apple-darwin": "aarch64",
     }.get(target)
+    candidate = source.name
     if macos_arch is None:
-        return source.name
+        return canonical_release_asset_name(candidate)
 
     for suffix in (".app.tar.gz.sig", ".app.tar.gz"):
-        if source.name.endswith(suffix):
-            stem = source.name[: -len(suffix)]
+        if candidate.endswith(suffix):
+            stem = candidate[: -len(suffix)]
             if stem.endswith(("_x64", "_aarch64")):
-                return source.name
-            return f"{stem}_{application_version}_{macos_arch}{suffix}"
-    return source.name
+                break
+            candidate = f"{stem}_{application_version}_{macos_arch}{suffix}"
+            break
+    return canonical_release_asset_name(candidate)
 
 
 def stage(args: argparse.Namespace) -> None:
@@ -411,6 +428,100 @@ def consolidate(args: argparse.Namespace) -> None:
     )
 
 
+def generate_release_metadata(args: argparse.Namespace) -> None:
+    release_dir = args.release_dir.resolve()
+    sbom = args.sbom.resolve()
+    checksums = args.checksums.resolve()
+    if not release_dir.is_dir():
+        raise SmokeError("release asset directory is missing")
+    if not sbom.is_file():
+        raise SmokeError("release SBOM is missing")
+    if checksums.exists():
+        raise SmokeError("checksum output already exists")
+    if not VERSION_PATTERN.fullmatch(args.application_version):
+        raise SmokeError("application version is invalid")
+    release_version = args.tag.removeprefix("v")
+    allowed_release = re.compile(
+        rf"^{re.escape(args.application_version)}(?:-rc\.(?:0|[1-9]\d*))?$"
+    )
+    if not args.tag.startswith("v") or not allowed_release.fullmatch(release_version):
+        raise SmokeError("release tag does not match application version")
+    if not REPOSITORY_PATTERN.fullmatch(args.repository):
+        raise SmokeError("release repository identity is invalid")
+    if not PUBLICATION_DATE_PATTERN.fullmatch(args.pub_date):
+        raise SmokeError("release publication date is invalid")
+
+    original_assets = sorted(
+        (path for path in release_dir.iterdir() if path.is_file()),
+        key=lambda path: path.name,
+    )
+    if not original_assets:
+        raise SmokeError("release asset directory is empty")
+    for path in [*original_assets, sbom]:
+        if canonical_release_asset_name(path.name) != path.name:
+            raise SmokeError(f"release asset name is not canonical: {path.name}")
+    if sbom.name in {path.name for path in original_assets}:
+        raise SmokeError("release SBOM collides with a staged release asset")
+
+    signature_patterns = {
+        "darwin-x86_64": "*_x64.app.tar.gz.sig",
+        "darwin-aarch64": "*_aarch64.app.tar.gz.sig",
+        "linux-x86_64": "*_amd64.AppImage.tar.gz.sig",
+        "windows-x86_64": "*_x64-setup.nsis.zip.sig",
+    }
+    base_url = f"https://github.com/{args.repository}/releases/download/{args.tag}"
+    platforms: dict[str, dict[str, str]] = {}
+    for platform, pattern in signature_patterns.items():
+        signature = require_one(
+            release_dir.glob(pattern), f"{platform} updater signature"
+        )
+        payload = Path(str(signature)[: -len(".sig")])
+        if not payload.is_file():
+            raise SmokeError(f"updater payload is missing: {payload.name}")
+        signature_text = signature.read_text(encoding="utf-8").strip()
+        if not signature_text:
+            raise SmokeError(f"updater signature is empty: {signature.name}")
+        platforms[platform] = {
+            "signature": signature_text,
+            "url": f"{base_url}/{payload.name}",
+        }
+
+    manifest = release_dir / "latest.json"
+    if manifest.exists():
+        raise SmokeError("updater manifest already exists")
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": args.application_version,
+                "notes": (
+                    "See full release notes at "
+                    f"https://github.com/{args.repository}/releases/tag/{args.tag}"
+                ),
+                "pub_date": args.pub_date,
+                "platforms": platforms,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    checksum_assets = sorted(
+        (
+            path
+            for path in release_dir.iterdir()
+            if path.is_file() and not path.name.endswith(".sig")
+        ),
+        key=lambda path: path.name,
+    )
+    checksum_assets.append(sbom)
+    checksums.write_text(
+        "".join(f"{sha256_file(path)}  {path.name}\n" for path in checksum_assets),
+        encoding="utf-8",
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command", required=True)
@@ -435,6 +546,16 @@ def parser() -> argparse.ArgumentParser:
     )
     consolidate_parser.add_argument("--release-dir", type=Path, required=True)
     consolidate_parser.set_defaults(action=consolidate)
+
+    metadata_parser = commands.add_parser("metadata")
+    metadata_parser.add_argument("--release-dir", type=Path, required=True)
+    metadata_parser.add_argument("--repository", required=True)
+    metadata_parser.add_argument("--tag", required=True)
+    metadata_parser.add_argument("--application-version", required=True)
+    metadata_parser.add_argument("--pub-date", required=True)
+    metadata_parser.add_argument("--sbom", type=Path, required=True)
+    metadata_parser.add_argument("--checksums", type=Path, required=True)
+    metadata_parser.set_defaults(action=generate_release_metadata)
     return root
 
 
