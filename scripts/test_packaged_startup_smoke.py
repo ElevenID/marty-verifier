@@ -40,6 +40,21 @@ class PackagedStartupSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(SMOKE.SmokeError, "does not match"):
             SMOKE.validate_identity(source_sha, "1.2.3", "1.2.4-rc.1", target)
 
+    def test_process_failure_diagnostic_is_sanitized_and_bounded(self) -> None:
+        diagnostic = SMOKE.process_failure_diagnostic(
+            b"\x1b[31mstartup failed\x1b[0m\n\x00" + b"x" * 4_096
+        )
+        self.assertTrue(diagnostic.startswith("startup failed "))
+        self.assertNotIn("\x1b", diagnostic)
+        self.assertNotIn("\n", diagnostic)
+        self.assertEqual(len(diagnostic), SMOKE.MAX_PROCESS_DIAGNOSTIC_CHARS + 3)
+
+    def test_process_failure_diagnostic_handles_empty_stderr(self) -> None:
+        self.assertEqual(
+            SMOKE.process_failure_diagnostic(b""),
+            "packaged process produced no stderr diagnostic",
+        )
+
     def write_target(self, root: Path, target: str, content: bytes) -> None:
         target_dir = root / target
         assets = target_dir / "assets"
