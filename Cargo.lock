@@ -3615,7 +3615,7 @@ dependencies = [
  "permutohedron",
  "pretty_dtoa",
  "rdf-types",
- "ryu-js",
+ "ryu-js 0.2.2",
  "serde",
  "smallvec",
  "static-iref",
@@ -3687,7 +3687,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479dfd2ad8e4b4ae076b031f72ef2f3791f65e2a0f51e5f3408dbf716c4c2f82"
 dependencies = [
  "lexical",
- "ryu-js",
+ "ryu-js 0.2.2",
  "serde",
  "smallvec",
 ]
@@ -3728,7 +3728,7 @@ dependencies = [
  "json-number",
  "locspan",
  "locspan-derive",
- "ryu-js",
+ "ryu-js 0.2.2",
  "serde",
  "smallstr",
  "smallvec",
@@ -4317,7 +4317,7 @@ dependencies = [
  "marty-secure-storage",
  "marty-verification",
  "reqwest 0.12.28",
- "ryu-js",
+ "ryu-js 1.0.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -5171,7 +5171,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6286,6 +6286,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6518fc26bced4d53678a22d6e423e9d8716377def84545fe328236e3af070e7f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
 name = "ryu_floating_decimal"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6574,7 +6580,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cacecf649bc1a7c5f0e299cc813977c6a78116abda2b93b1ee01735b71ead9a8"
 dependencies = [
- "ryu-js",
+ "ryu-js 0.2.2",
  "serde",
  "serde_json",
 ]
