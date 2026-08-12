@@ -76,10 +76,12 @@ impl SecureStorage {
         let current_version = get_schema_version(&conn)?;
         migrate_schema(&conn, current_version)?;
 
-        // Store schema version
+        // App and Core storage share this marker. Never downgrade a newer
+        // version recorded by the other storage implementation.
+        let stored_version = current_version.max(SCHEMA_VERSION);
         conn.execute(
             "INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', ?)",
-            [SCHEMA_VERSION.to_string()],
+            [stored_version.to_string()],
         )?;
 
         tracing::info!(?db_path, "Secure storage initialized");
@@ -92,6 +94,12 @@ impl SecureStorage {
             conn: Arc::new(Mutex::new(conn)),
             pii_encryptor,
         })
+    }
+
+    /// Verify that startup migrations produced the schema required by the app.
+    pub async fn health_check(&self) -> Result<(), StorageError> {
+        let conn = self.conn.lock().await;
+        validate_schema(&conn)
     }
 
     /// Store a verification event
@@ -1027,6 +1035,179 @@ fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {
 }
 
 fn migrate_schema(conn: &Connection, current_version: i32) -> Result<(), StorageError> {
-    let _ = (conn, current_version);
+    let _ = current_version;
+
+    // App and Core storage intentionally share the encrypted database, but
+    // maintain independent schema-version histories. Inspect physical columns
+    // so a numerically newer version from either crate cannot skip migration.
+    for table in ["trust_anchors", "open_badge_keys"] {
+        for (column, definition) in [
+            ("trust_domain", "TEXT"),
+            ("package_sequence", "INTEGER"),
+            ("package_version", "TEXT"),
+            ("package_created_at", "TEXT"),
+            ("package_expires_at", "TEXT"),
+            ("package_signer_key_id", "TEXT"),
+            ("package_digest", "TEXT"),
+            ("package_imported_at", "TEXT"),
+        ] {
+            if !column_exists(conn, table, column)? {
+                conn.execute(
+                    &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+    }
+    conn.execute_batch(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_trust_anchors_trust_domain
+            ON trust_anchors(trust_domain);
+        CREATE INDEX IF NOT EXISTS idx_open_badge_keys_trust_domain
+            ON open_badge_keys(trust_domain);
+        "#,
+    )?;
     Ok(())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, StorageError> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn validate_schema(conn: &Connection) -> Result<(), StorageError> {
+    let version = get_schema_version(conn)?;
+    if version < SCHEMA_VERSION {
+        return Err(StorageError::Schema(format!(
+            "expected version {SCHEMA_VERSION} or newer, found {version}"
+        )));
+    }
+
+    for table in [
+        "verification_events",
+        "trust_anchors",
+        "open_badge_keys",
+        "trust_packages",
+        "crl_cache",
+        "ocsp_cache",
+        "offline_queue",
+        "audit_log",
+        "sync_state",
+        "config",
+        "presentation_policies",
+        "deployment_profiles",
+        "lanes",
+        "device_config",
+    ] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(StorageError::Schema(format!(
+                "required table is missing: {table}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod startup_schema_tests {
+    use super::*;
+
+    fn initialized_connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(SCHEMA).expect("initialize schema");
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('schema_version', ?)",
+            [SCHEMA_VERSION.to_string()],
+        )
+        .expect("record schema version");
+        conn
+    }
+
+    #[test]
+    fn startup_schema_validation_accepts_complete_current_schema() {
+        validate_schema(&initialized_connection()).expect("current schema must be healthy");
+    }
+
+    #[test]
+    fn startup_schema_validation_accepts_newer_shared_schema_version() {
+        let conn = initialized_connection();
+        conn.execute(
+            "UPDATE config SET value = ? WHERE key = 'schema_version'",
+            [(SCHEMA_VERSION + 1).to_string()],
+        )
+        .expect("record newer shared schema version");
+
+        validate_schema(&conn).expect("newer Core schema marker must remain compatible");
+    }
+
+    #[test]
+    fn startup_schema_validation_rejects_missing_migration_state() {
+        let conn = initialized_connection();
+        conn.execute("DELETE FROM config WHERE key = 'schema_version'", [])
+            .expect("remove migration marker");
+
+        let error = validate_schema(&conn).expect_err("missing migration state must fail");
+        assert!(error.to_string().contains("expected version"));
+    }
+
+    #[test]
+    fn startup_schema_validation_rejects_missing_required_table() {
+        let conn = initialized_connection();
+        conn.execute("DROP TABLE offline_queue", [])
+            .expect("remove required table");
+
+        let error = validate_schema(&conn).expect_err("missing table must fail");
+        assert!(error.to_string().contains("offline_queue"));
+    }
+
+    #[test]
+    fn startup_migration_upgrades_legacy_shared_trust_tables() {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE trust_anchors (
+                id TEXT PRIMARY KEY,
+                anchor_type TEXT NOT NULL,
+                jurisdiction TEXT NOT NULL,
+                certificate_der BLOB NOT NULL,
+                certificate_hash TEXT NOT NULL,
+                synced_at TEXT NOT NULL
+            );
+            CREATE TABLE open_badge_keys (
+                id TEXT PRIMARY KEY,
+                document_json TEXT NOT NULL,
+                synced_at TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("create legacy trust tables");
+
+        migrate_schema(&conn, 4).expect("upgrade legacy shared schema");
+        for table in ["trust_anchors", "open_badge_keys"] {
+            for column in [
+                "trust_domain",
+                "package_sequence",
+                "package_version",
+                "package_created_at",
+                "package_expires_at",
+                "package_signer_key_id",
+                "package_digest",
+                "package_imported_at",
+            ] {
+                assert!(column_exists(&conn, table, column).expect("inspect migrated column"));
+            }
+        }
+    }
 }

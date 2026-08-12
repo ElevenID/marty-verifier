@@ -66,7 +66,11 @@ impl AppState {
     /// Initialize application state
     pub fn new() -> AppResult<Self> {
         let config = AppConfig::load()?;
+        Self::from_config(config)
+    }
 
+    /// Initialize application state from an already-governed configuration.
+    pub fn from_config(config: AppConfig) -> AppResult<Self> {
         // Initialize secure storage (app-level: verification events, trust anchors)
         let storage = Arc::new(SecureStorage::new(&config.data_dir)?);
 

@@ -24,6 +24,9 @@ pub enum StorageError {
 
     #[error("Storage not initialized")]
     NotInitialized,
+
+    #[error("Storage schema validation failed: {0}")]
+    Schema(String),
 }
 
 impl serde::Serialize for StorageError {

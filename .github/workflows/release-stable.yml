@@ -143,10 +143,10 @@ jobs:
             releases.json >/dev/null
 
   build-tauri:
-    name: Build Tauri App
+    name: Build and smoke ${{ matrix.target }}
     needs: validate-release-source
     permissions:
-      contents: write # Tauri creates the draft release and uploads installers.
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +160,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -211,29 +212,54 @@ jobs:
           TAG: ${{ needs.validate-release-source.outputs.tag }}
         run: |
           set -euo pipefail
-          mapfile -t remote_refs < <(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
-          test "${#remote_refs[@]}" -eq 2
-          test "${remote_refs[0]%%[[:space:]]*}" = "$EXPECTED_TAG_OBJECT"
-          test "${remote_refs[1]%%[[:space:]]*}" = "$EXPECTED_COMMIT"
+          remote_refs="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+          test "$(printf '%s\n' "$remote_refs" | awk 'NF { count++ } END { print count + 0 }')" -eq 2
+          remote_tag_object="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }')"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }')"
+          test "$remote_tag_object" = "$EXPECTED_TAG_OBJECT"
+          test "$remote_commit" = "$EXPECTED_COMMIT"
           test "$(git rev-parse "HEAD^{commit}")" = "$EXPECTED_COMMIT"
 
-      - name: Build Tauri app
+      - name: Build Tauri app without publishing
+        id: build
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ needs.validate-release-source.outputs.tag }}
-          releaseName: 'Marty Verifier ${{ needs.validate-release-source.outputs.version }}'
-          releaseBody: 'See changelog for details. macOS artifacts are unsigned and are not Apple-notarized; verify SHA256SUMS and GitHub build provenance before use.'
-          releaseDraft: false
-          prerelease: false
           args: --target ${{ matrix.target }}
+
+      - name: Run packaged startup smoke and bind release assets
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.validate-release-source.outputs.commit }}
+          APP_VERSION: ${{ needs.validate-release-source.outputs.version }}
+          RELEASE_VERSION: ${{ needs.validate-release-source.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          python scripts/packaged_startup_smoke.py stage \
+            --repository . \
+            --source-sha "$SOURCE_SHA" \
+            --application-version "$APP_VERSION" \
+            --release-version "$RELEASE_VERSION" \
+            --target "$TARGET" \
+            --runner-os "$RUNNER_OS_NAME" \
+            --output-dir packaged-release
+
+      - name: Upload smoke-gated release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: packaged-${{ matrix.target }}
+          path: packaged-release
+          if-no-files-found: error
+          retention-days: 7
 
   create-updater-manifest:
     name: Create Auto-Updater Manifest
     permissions:
+      actions: read
       contents: write
       id-token: write # Required for attestations.
       attestations: write
@@ -266,12 +292,30 @@ jobs:
           test -s marty-verifier-sbom.json
           jq -e '.metadata.component.name == "marty-verifier"' marty-verifier-sbom.json > /dev/null
 
-      - name: Download release assets
-        uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f
-        with:
-          tag: ${{ needs.validate-release-source.outputs.tag }}
-          fileName: '*'
-          out-file-path: 'release-assets'
+      - name: Download smoke-gated matrix payloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'packaged-*' --dir release-inputs
+
+      - name: Validate matrix evidence and consolidate assets
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.validate-release-source.outputs.commit }}
+          APP_VERSION: ${{ needs.validate-release-source.outputs.version }}
+          RELEASE_VERSION: ${{ needs.validate-release-source.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/packaged_startup_smoke.py consolidate \
+            --input-dir release-inputs \
+            --source-sha "$SOURCE_SHA" \
+            --application-version "$APP_VERSION" \
+            --release-version "$RELEASE_VERSION" \
+            --expected-target x86_64-apple-darwin \
+            --expected-target aarch64-apple-darwin \
+            --expected-target x86_64-unknown-linux-gnu \
+            --expected-target x86_64-pc-windows-msvc \
+            --release-dir release-assets
 
       - name: Validate signing artifacts exist
         run: |
@@ -384,10 +428,12 @@ jobs:
           TAG: ${{ needs.validate-release-source.outputs.tag }}
         run: |
           set -euo pipefail
-          mapfile -t remote_refs < <(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
-          test "${#remote_refs[@]}" -eq 2
-          test "${remote_refs[0]%%[[:space:]]*}" = "$EXPECTED_TAG_OBJECT"
-          test "${remote_refs[1]%%[[:space:]]*}" = "$EXPECTED_COMMIT"
+          remote_refs="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+          test "$(printf '%s\n' "$remote_refs" | awk 'NF { count++ } END { print count + 0 }')" -eq 2
+          remote_tag_object="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }')"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/$TAG^{}" '$2 == ref { print $1 }')"
+          test "$remote_tag_object" = "$EXPECTED_TAG_OBJECT"
+          test "$remote_commit" = "$EXPECTED_COMMIT"
           test "$(git rev-parse "HEAD^{commit}")" = "$EXPECTED_COMMIT"
 
       - name: Update release with manifest and notes
@@ -397,7 +443,7 @@ jobs:
           name: Marty Verifier ${{ needs.validate-release-source.outputs.version }}
           body_path: RELEASE_NOTES.md
           files: |
-            latest.json
+            release-assets/*
             marty-verifier-sbom.json
             SHA256SUMS
           prerelease: false

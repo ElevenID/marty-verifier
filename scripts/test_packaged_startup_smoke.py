@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+
+import importlib.util
+import json
+import tempfile
+import unittest
+from argparse import Namespace
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).with_name("packaged_startup_smoke.py")
+SPEC = importlib.util.spec_from_file_location("packaged_startup_smoke", SCRIPT)
+assert SPEC and SPEC.loader
+SMOKE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(SMOKE)
+
+
+class PackagedStartupSmokeTests(unittest.TestCase):
+    def binary_report(self) -> dict:
+        return {
+            "schema_version": 1,
+            "application": "marty-verifier",
+            "version": "1.2.3",
+            "status": "passed",
+            "checks": sorted(SMOKE.REQUIRED_CHECKS),
+        }
+
+    def test_binary_report_requires_every_owned_startup_check(self) -> None:
+        report = self.binary_report()
+        SMOKE.validate_binary_report(report, "1.2.3")
+        report["checks"].remove("embedded_frontend")
+        with self.assertRaisesRegex(SMOKE.SmokeError, "complete check set"):
+            SMOKE.validate_binary_report(report, "1.2.3")
+
+    def test_identity_allows_matching_stable_and_rc_versions(self) -> None:
+        source_sha = "a" * 40
+        target = "x86_64-unknown-linux-gnu"
+        SMOKE.validate_identity(source_sha, "1.2.3", "1.2.3", target)
+        SMOKE.validate_identity(source_sha, "1.2.3", "1.2.3-rc.1", target)
+        with self.assertRaisesRegex(SMOKE.SmokeError, "does not match"):
+            SMOKE.validate_identity(source_sha, "1.2.3", "1.2.4-rc.1", target)
+
+    def write_target(self, root: Path, target: str, content: bytes) -> None:
+        target_dir = root / target
+        assets = target_dir / "assets"
+        assets.mkdir(parents=True)
+        asset = assets / f"marty-{target}.bundle"
+        asset.write_bytes(content)
+        evidence = {
+            "schema_version": 1,
+            "application": "marty-verifier",
+            "status": "passed",
+            "source_sha": "a" * 40,
+            "version": "1.2.3",
+            "release_version": "1.2.3-rc.1",
+            "runner_os": SMOKE.RUNNER_OS[SMOKE.TARGETS[target]],
+            "target": target,
+            "executed_binary": {
+                "name": asset.name,
+                "sha256": SMOKE.sha256_file(asset),
+                "size": len(content),
+            },
+            "packaged_payload": {
+                "name": asset.name,
+                "sha256": SMOKE.sha256_file(asset),
+                "size": len(content),
+            },
+            "checks": sorted(SMOKE.REQUIRED_CHECKS),
+            "release_assets": [
+                {
+                    "name": asset.name,
+                    "sha256": SMOKE.sha256_file(asset),
+                    "size": len(content),
+                }
+            ],
+        }
+        (target_dir / "startup-smoke-evidence.json").write_text(
+            json.dumps(evidence), encoding="utf-8"
+        )
+
+    def test_consolidation_requires_and_binds_all_four_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            for index, target in enumerate(SMOKE.TARGETS):
+                self.write_target(inputs, target, f"asset-{index}".encode())
+            output = root / "release"
+            SMOKE.consolidate(
+                Namespace(
+                    input_dir=inputs,
+                    source_sha="a" * 40,
+                    application_version="1.2.3",
+                    release_version="1.2.3-rc.1",
+                    expected_target=list(SMOKE.TARGETS),
+                    release_dir=output,
+                )
+            )
+            aggregate = json.loads(
+                (output / "PACKAGED_STARTUP_EVIDENCE.json").read_text()
+            )
+            self.assertEqual(
+                {item["target"] for item in aggregate["targets"]}, set(SMOKE.TARGETS)
+            )
+            self.assertEqual(aggregate["source_sha"], "a" * 40)
+            self.assertEqual(aggregate["version"], "1.2.3")
+            self.assertEqual(aggregate["release_version"], "1.2.3-rc.1")
+
+    def test_consolidation_rejects_asset_digest_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            for index, target in enumerate(SMOKE.TARGETS):
+                self.write_target(inputs, target, f"asset-{index}".encode())
+            first = next(inputs.rglob("*.bundle"))
+            first.write_bytes(b"tampered")
+            with self.assertRaisesRegex(SMOKE.SmokeError, "digest mismatch"):
+                SMOKE.consolidate(
+                    Namespace(
+                        input_dir=inputs,
+                        source_sha="a" * 40,
+                        application_version="1.2.3",
+                        release_version="1.2.3-rc.1",
+                        expected_target=list(SMOKE.TARGETS),
+                        release_dir=root / "release",
+                    )
+                )
+
+    def test_release_assets_preserve_linux_signatures_and_exclude_build_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            bundle = SMOKE.bundle_root(repository, "x86_64-unknown-linux-gnu")
+            bundle.mkdir(parents=True)
+            for name in [
+                "verifier.deb",
+                "verifier.deb.sig",
+                "verifier.rpm",
+                "verifier.rpm.sig",
+            ]:
+                (bundle / name).write_bytes(name.encode())
+            (bundle / "verifier.wixpdb").write_bytes(b"not a release asset")
+
+            names = {
+                path.name
+                for path in SMOKE.release_asset_paths(
+                    repository, "x86_64-unknown-linux-gnu"
+                )
+            }
+            self.assertEqual(
+                names,
+                {
+                    "verifier.deb",
+                    "verifier.deb.sig",
+                    "verifier.rpm",
+                    "verifier.rpm.sig",
+                },
+            )
+
+    def test_release_workflows_publish_only_after_matrix_consolidation(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        workflows = {
+            "release-rc.yml": "  create-release:",
+            "release-stable.yml": "  create-updater-manifest:",
+        }
+        for name, final_job_marker in workflows.items():
+            with self.subTest(workflow=name):
+                text = (repository / ".github" / "workflows" / name).read_text(
+                    encoding="utf-8"
+                )
+                build_job = text.split("  build-tauri:", 1)[1].split(
+                    final_job_marker, 1
+                )[0]
+                self.assertIn("Build Tauri app without publishing", build_job)
+                self.assertNotIn("tagName:", build_job)
+                self.assertNotIn("releaseName:", build_job)
+                self.assertNotIn("releaseDraft:", build_job)
+                self.assertNotIn("GITHUB_TOKEN:", build_job)
+                self.assertIn("packaged_startup_smoke.py stage", build_job)
+                final_job = text.split(final_job_marker, 1)[1]
+                self.assertIn("packaged_startup_smoke.py consolidate", final_job)
+                self.assertLess(
+                    final_job.index("packaged_startup_smoke.py consolidate"),
+                    final_job.index("softprops/action-gh-release@"),
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()
