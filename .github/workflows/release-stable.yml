@@ -339,80 +339,21 @@ jobs:
           fi
           echo "All signature files present."
 
-      - name: Generate updater manifest
+      - name: Generate canonical updater and integrity metadata
+        shell: bash
         env:
           TAG: ${{ needs.validate-release-source.outputs.tag }}
           VERSION: ${{ needs.validate-release-source.outputs.version }}
         run: |
-          REPO="${{ github.repository }}"
-          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
-          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          resolve_sig() {
-            local pattern="$1"
-            local match
-            match=$(find release-assets -maxdepth 1 -type f -name "$pattern" -print -quit)
-            if [ -z "$match" ]; then
-              echo "::error::No signing artifact matches $pattern" >&2
-              exit 1
-            fi
-            printf '%s' "$match"
-          }
-
-          DARWIN_X64_SIG=$(resolve_sig '*_x64.app.tar.gz.sig')
-          DARWIN_AARCH64_SIG=$(resolve_sig '*_aarch64.app.tar.gz.sig')
-          LINUX_X64_SIG=$(resolve_sig '*_amd64.AppImage.tar.gz.sig')
-          WINDOWS_X64_SIG=$(resolve_sig '*_x64-setup.nsis.zip.sig')
-
-          SIG_DARWIN_X64=$(cat "$DARWIN_X64_SIG")
-          SIG_DARWIN_AARCH64=$(cat "$DARWIN_AARCH64_SIG")
-          SIG_LINUX_X64=$(cat "$LINUX_X64_SIG")
-          SIG_WINDOWS_X64=$(cat "$WINDOWS_X64_SIG")
-
-          URL_DARWIN_X64="${BASE_URL}/$(basename "${DARWIN_X64_SIG%.sig}")"
-          URL_DARWIN_AARCH64="${BASE_URL}/$(basename "${DARWIN_AARCH64_SIG%.sig}")"
-          URL_LINUX_X64="${BASE_URL}/$(basename "${LINUX_X64_SIG%.sig}")"
-          URL_WINDOWS_X64="${BASE_URL}/$(basename "${WINDOWS_X64_SIG%.sig}")"
-
-          # Build manifest with real signatures using jq
-          jq -n \
-            --arg version "$VERSION" \
-            --arg notes "See full release notes at https://github.com/${REPO}/releases/tag/${TAG}" \
-            --arg pub_date "$PUB_DATE" \
-            --arg sig_darwin_x64 "$SIG_DARWIN_X64" \
-            --arg url_darwin_x64 "$URL_DARWIN_X64" \
-            --arg sig_darwin_aarch64 "$SIG_DARWIN_AARCH64" \
-            --arg url_darwin_aarch64 "$URL_DARWIN_AARCH64" \
-            --arg sig_linux_x64 "$SIG_LINUX_X64" \
-            --arg url_linux_x64 "$URL_LINUX_X64" \
-            --arg sig_windows_x64 "$SIG_WINDOWS_X64" \
-            --arg url_windows_x64 "$URL_WINDOWS_X64" \
-            '{
-              version: $version,
-              notes: $notes,
-              pub_date: $pub_date,
-              platforms: {
-                "darwin-x86_64": { signature: $sig_darwin_x64, url: $url_darwin_x64 },
-                "darwin-aarch64": { signature: $sig_darwin_aarch64, url: $url_darwin_aarch64 },
-                "linux-x86_64": { signature: $sig_linux_x64, url: $url_linux_x64 },
-                "windows-x86_64": { signature: $sig_windows_x64, url: $url_windows_x64 }
-              }
-            }' > latest.json
-
-          echo "Generated latest.json with real signatures:"
-          cat latest.json
-
-      - name: Generate checksums
-        run: |
-          # Replace the build-time updater manifest with the signed canonical manifest.
-          cp latest.json release-assets/latest.json
-          (
-            cd release-assets
-            find . -maxdepth 1 -type f ! -name '*.sig' -printf '%f\0' \
-              | sort -z \
-              | xargs -0 sha256sum
-          ) > SHA256SUMS
-          sha256sum marty-verifier-sbom.json >> SHA256SUMS
+          set -euo pipefail
+          python scripts/packaged_startup_smoke.py metadata \
+            --release-dir release-assets \
+            --repository "${{ github.repository }}" \
+            --tag "$TAG" \
+            --application-version "$VERSION" \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --sbom marty-verifier-sbom.json \
+            --checksums SHA256SUMS
 
       - name: Generate attestations for release artifacts
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018

@@ -302,63 +302,21 @@ jobs:
             fi
           done
 
-      - name: Generate RC updater manifest
+      - name: Generate canonical updater and integrity metadata
         shell: bash
         env:
           TAG: ${{ needs.validate-release-source.outputs.tag }}
           VERSION: ${{ needs.validate-release-source.outputs.app_version }}
         run: |
           set -euo pipefail
-          repo="${{ github.repository }}"
-          base_url="https://github.com/${repo}/releases/download/${TAG}"
-          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          resolve_sig() {
-            local pattern="$1"
-            local match
-            match=$(find release-assets -maxdepth 1 -type f -name "$pattern" -print -quit)
-            test -n "$match"
-            printf '%s' "$match"
-          }
-
-          darwin_x64_sig=$(resolve_sig '*_x64.app.tar.gz.sig')
-          darwin_aarch64_sig=$(resolve_sig '*_aarch64.app.tar.gz.sig')
-          linux_x64_sig=$(resolve_sig '*_amd64.AppImage.tar.gz.sig')
-          windows_x64_sig=$(resolve_sig '*_x64-setup.nsis.zip.sig')
-
-          jq -n \
-            --arg version "$VERSION" \
-            --arg notes "See full release notes at https://github.com/${repo}/releases/tag/${TAG}" \
-            --arg pub_date "$pub_date" \
-            --arg sig_darwin_x64 "$(cat "$darwin_x64_sig")" \
-            --arg url_darwin_x64 "${base_url}/$(basename "${darwin_x64_sig%.sig}")" \
-            --arg sig_darwin_aarch64 "$(cat "$darwin_aarch64_sig")" \
-            --arg url_darwin_aarch64 "${base_url}/$(basename "${darwin_aarch64_sig%.sig}")" \
-            --arg sig_linux_x64 "$(cat "$linux_x64_sig")" \
-            --arg url_linux_x64 "${base_url}/$(basename "${linux_x64_sig%.sig}")" \
-            --arg sig_windows_x64 "$(cat "$windows_x64_sig")" \
-            --arg url_windows_x64 "${base_url}/$(basename "${windows_x64_sig%.sig}")" \
-            '{
-              version: $version,
-              notes: $notes,
-              pub_date: $pub_date,
-              platforms: {
-                "darwin-x86_64": { signature: $sig_darwin_x64, url: $url_darwin_x64 },
-                "darwin-aarch64": { signature: $sig_darwin_aarch64, url: $url_darwin_aarch64 },
-                "linux-x86_64": { signature: $sig_linux_x64, url: $url_linux_x64 },
-                "windows-x86_64": { signature: $sig_windows_x64, url: $url_windows_x64 }
-              }
-            }' > release-assets/latest.json
-
-      - name: Generate checksums
-        run: |
-          (
-            cd release-assets
-            find . -maxdepth 1 -type f ! -name '*.sig' -printf '%f\0' \
-              | sort -z \
-              | xargs -0 sha256sum
-          ) > SHA256SUMS
-          sha256sum marty-verifier-sbom.json >> SHA256SUMS
+          python scripts/packaged_startup_smoke.py metadata \
+            --release-dir release-assets \
+            --repository "${{ github.repository }}" \
+            --tag "$TAG" \
+            --application-version "$VERSION" \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --sbom marty-verifier-sbom.json \
+            --checksums SHA256SUMS
 
       - name: Generate attestations for release artifacts
         uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018

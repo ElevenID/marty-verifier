@@ -181,7 +181,7 @@ class PackagedStartupSmokeTests(unittest.TestCase):
         }
         for target, architecture in cases.items():
             with self.subTest(target=target):
-                expected = f"Marty Verifier_1.2.3_{architecture}.app.tar.gz"
+                expected = f"Marty.Verifier_1.2.3_{architecture}.app.tar.gz"
                 self.assertEqual(
                     SMOKE.release_asset_name(neutral_archive, target, "1.2.3"),
                     expected,
@@ -194,27 +194,77 @@ class PackagedStartupSmokeTests(unittest.TestCase):
         qualified = Path("Marty Verifier_1.2.3_x64.app.tar.gz")
         self.assertEqual(
             SMOKE.release_asset_name(qualified, "x86_64-apple-darwin", "1.2.3"),
-            qualified.name,
+            "Marty.Verifier_1.2.3_x64.app.tar.gz",
+        )
+        self.assertEqual(
+            SMOKE.release_asset_name(
+                Path("Marty Verifier_1.2.3_amd64.AppImage.tar.gz"),
+                "x86_64-unknown-linux-gnu",
+                "1.2.3",
+            ),
+            "Marty.Verifier_1.2.3_amd64.AppImage.tar.gz",
+        )
+        self.assertEqual(
+            SMOKE.release_asset_name(
+                Path("Marty Verifier_1.2.3_x64-setup.nsis.zip"),
+                "x86_64-pc-windows-msvc",
+                "1.2.3",
+            ),
+            "Marty.Verifier_1.2.3_x64-setup.nsis.zip",
         )
 
-    def test_stage_binds_evidence_to_normalized_macos_asset_names(self) -> None:
+    def test_stage_binds_evidence_to_canonical_release_asset_names(self) -> None:
         cases = {
-            "x86_64-apple-darwin": "x64",
-            "aarch64-apple-darwin": "aarch64",
+            "x86_64-apple-darwin": (
+                ["Marty Verifier.app.tar.gz", "Marty Verifier.app.tar.gz.sig"],
+                {
+                    "Marty.Verifier_1.2.3_x64.app.tar.gz",
+                    "Marty.Verifier_1.2.3_x64.app.tar.gz.sig",
+                },
+            ),
+            "aarch64-apple-darwin": (
+                ["Marty Verifier.app.tar.gz", "Marty Verifier.app.tar.gz.sig"],
+                {
+                    "Marty.Verifier_1.2.3_aarch64.app.tar.gz",
+                    "Marty.Verifier_1.2.3_aarch64.app.tar.gz.sig",
+                },
+            ),
+            "x86_64-unknown-linux-gnu": (
+                [
+                    "Marty Verifier_1.2.3_amd64.AppImage.tar.gz",
+                    "Marty Verifier_1.2.3_amd64.AppImage.tar.gz.sig",
+                    "Marty Verifier_1.2.3_amd64.deb",
+                ],
+                {
+                    "Marty.Verifier_1.2.3_amd64.AppImage.tar.gz",
+                    "Marty.Verifier_1.2.3_amd64.AppImage.tar.gz.sig",
+                    "Marty.Verifier_1.2.3_amd64.deb",
+                },
+            ),
+            "x86_64-pc-windows-msvc": (
+                [
+                    "Marty Verifier_1.2.3_x64-setup.nsis.zip",
+                    "Marty Verifier_1.2.3_x64-setup.nsis.zip.sig",
+                    "Marty Verifier_1.2.3_x64_en-US.msi",
+                ],
+                {
+                    "Marty.Verifier_1.2.3_x64-setup.nsis.zip",
+                    "Marty.Verifier_1.2.3_x64-setup.nsis.zip.sig",
+                    "Marty.Verifier_1.2.3_x64_en-US.msi",
+                },
+            ),
         }
-        for target, architecture in cases.items():
+        for target, (source_names, expected_names) in cases.items():
             with (
                 self.subTest(target=target),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
                 repository = root / "repository"
-                bundle = SMOKE.bundle_root(repository, target) / "macos"
+                bundle = SMOKE.bundle_root(repository, target)
                 bundle.mkdir(parents=True)
-                archive = bundle / "Marty Verifier.app.tar.gz"
-                signature = bundle / "Marty Verifier.app.tar.gz.sig"
-                archive.write_bytes(f"archive-{target}".encode())
-                signature.write_bytes(f"signature-{target}".encode())
+                for index, name in enumerate(source_names):
+                    (bundle / name).write_bytes(f"asset-{target}-{index}".encode())
                 executable = repository / "marty-verifier"
                 executable.write_bytes(b"executable")
                 output = root / "staged"
@@ -230,7 +280,7 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                     patch.object(
                         SMOKE,
                         "resolve_execution",
-                        return_value=(executable, archive, {}),
+                        return_value=(executable, executable, {}),
                     ),
                     patch.object(SMOKE.subprocess, "run", side_effect=run_self_check),
                 ):
@@ -241,15 +291,13 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                             application_version="1.2.3",
                             release_version="1.2.3-rc.1",
                             target=target,
-                            runner_os="macOS",
+                            runner_os=SMOKE.RUNNER_OS[SMOKE.TARGETS[target]],
                             output_dir=output,
                         )
                     )
 
                 evidence_path = output / "startup-smoke-evidence.json"
                 evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-                expected_archive = f"Marty Verifier_1.2.3_{architecture}.app.tar.gz"
-                expected_names = {expected_archive, f"{expected_archive}.sig"}
                 self.assertEqual(
                     {asset["name"] for asset in evidence["release_assets"]},
                     expected_names,
@@ -264,6 +312,86 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                     "a" * 40,
                     "1.2.3",
                     "1.2.3-rc.1",
+                )
+
+    def test_release_metadata_binds_exact_canonical_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release_dir = root / "release-assets"
+            release_dir.mkdir()
+            updater_payloads = {
+                "darwin-x86_64": "Marty.Verifier_1.2.3_x64.app.tar.gz",
+                "darwin-aarch64": "Marty.Verifier_1.2.3_aarch64.app.tar.gz",
+                "linux-x86_64": "Marty.Verifier_1.2.3_amd64.AppImage.tar.gz",
+                "windows-x86_64": "Marty.Verifier_1.2.3_x64-setup.nsis.zip",
+            }
+            for platform, name in updater_payloads.items():
+                (release_dir / name).write_bytes(f"payload-{platform}".encode())
+                (release_dir / f"{name}.sig").write_text(
+                    f"signature-{platform}\n", encoding="utf-8"
+                )
+            evidence = release_dir / "PACKAGED_STARTUP_EVIDENCE.json"
+            evidence.write_text('{"status":"passed"}\n', encoding="utf-8")
+            sbom = root / "marty-verifier-sbom.json"
+            sbom.write_text('{"bomFormat":"CycloneDX"}\n', encoding="utf-8")
+            checksums = root / "SHA256SUMS"
+
+            SMOKE.generate_release_metadata(
+                Namespace(
+                    release_dir=release_dir,
+                    repository="ElevenID/marty-verifier",
+                    tag="v1.2.3-rc.1",
+                    application_version="1.2.3",
+                    pub_date="2026-08-12T18:33:26Z",
+                    sbom=sbom,
+                    checksums=checksums,
+                )
+            )
+
+            manifest = json.loads((release_dir / "latest.json").read_text())
+            self.assertEqual(set(manifest["platforms"]), set(updater_payloads))
+            for platform, payload_name in updater_payloads.items():
+                entry = manifest["platforms"][platform]
+                self.assertEqual(entry["url"].rsplit("/", 1)[1], payload_name)
+                self.assertEqual(entry["signature"], f"signature-{platform}")
+                self.assertTrue((release_dir / payload_name).is_file())
+
+            inventory = {
+                path.name: path
+                for path in release_dir.iterdir()
+                if path.is_file() and not path.name.endswith(".sig")
+            }
+            inventory[sbom.name] = sbom
+            declared = {}
+            for line in checksums.read_text(encoding="utf-8").splitlines():
+                digest, name = line.split("  ", 1)
+                declared[name] = digest
+            self.assertEqual(set(declared), set(inventory))
+            for name, path in inventory.items():
+                self.assertNotRegex(name, r"\s")
+                self.assertEqual(declared[name], SMOKE.sha256_file(path))
+
+    def test_release_metadata_rejects_noncanonical_inventory_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release_dir = root / "release-assets"
+            release_dir.mkdir()
+            (release_dir / "Marty Verifier_1.2.3_x64.app.tar.gz").write_bytes(
+                b"payload"
+            )
+            sbom = root / "marty-verifier-sbom.json"
+            sbom.write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(SMOKE.SmokeError, "not canonical"):
+                SMOKE.generate_release_metadata(
+                    Namespace(
+                        release_dir=release_dir,
+                        repository="ElevenID/marty-verifier",
+                        tag="v1.2.3",
+                        application_version="1.2.3",
+                        pub_date="2026-08-12T18:33:26Z",
+                        sbom=sbom,
+                        checksums=root / "SHA256SUMS",
+                    )
                 )
 
     def test_consolidation_still_rejects_cross_target_name_collisions(self) -> None:
@@ -317,8 +445,13 @@ class PackagedStartupSmokeTests(unittest.TestCase):
                 self.assertIn("packaged_startup_smoke.py stage", build_job)
                 final_job = text.split(final_job_marker, 1)[1]
                 self.assertIn("packaged_startup_smoke.py consolidate", final_job)
+                self.assertIn("packaged_startup_smoke.py metadata", final_job)
                 self.assertLess(
                     final_job.index("packaged_startup_smoke.py consolidate"),
+                    final_job.index("packaged_startup_smoke.py metadata"),
+                )
+                self.assertLess(
+                    final_job.index("packaged_startup_smoke.py metadata"),
                     final_job.index("softprops/action-gh-release@"),
                 )
 
