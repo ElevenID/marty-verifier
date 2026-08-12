@@ -13,6 +13,7 @@ sqlcipher = ["rusqlite/bundled-sqlcipher"]
 [dependencies]
 rusqlite = { workspace = true, features = ["bundled-sqlcipher"] }
 keyring.workspace = true
+keyring-core = "1.0"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
