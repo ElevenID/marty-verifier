@@ -8,7 +8,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "sunday"
+      time: "00:00"
+      timezone: "America/Denver"
     open-pull-requests-limit: 10
     groups:
       rust-dependencies:
@@ -29,7 +31,9 @@ updates:
     directory: "/src-tauri"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "sunday"
+      time: "01:00"
+      timezone: "America/Denver"
     open-pull-requests-limit: 10
     groups:
       rust-tauri-dependencies:
@@ -51,7 +55,9 @@ updates:
     directory: "/ui"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "sunday"
+      time: "02:00"
+      timezone: "America/Denver"
     open-pull-requests-limit: 10
     groups:
       npm-dependencies:
@@ -73,7 +79,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "sunday"
+      time: "03:00"
+      timezone: "America/Denver"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
