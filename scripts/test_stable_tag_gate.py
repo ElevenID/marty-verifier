@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,12 @@ SPEC = importlib.util.spec_from_file_location("stable_tag_gate", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 GATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GATE)
+
+RETRY_SCRIPT = Path(__file__).with_name("github_api_retry.py")
+RETRY_SPEC = importlib.util.spec_from_file_location("github_api_retry", RETRY_SCRIPT)
+assert RETRY_SPEC is not None and RETRY_SPEC.loader is not None
+RETRY = importlib.util.module_from_spec(RETRY_SPEC)
+RETRY_SPEC.loader.exec_module(RETRY)
 
 COMMIT = "a" * 40
 TAG_OBJECT = "b" * 40
@@ -202,6 +209,57 @@ class StableTagEvidenceTests(unittest.TestCase):
                 GATE.validate_application_version(root, "v1.2.3")
 
 
+class GitHubApiRetryTests(unittest.TestCase):
+    def test_transient_failure_retries_then_returns_payload(self) -> None:
+        outcomes = [
+            subprocess.CompletedProcess([], 1, b"", b"transient TLS failure"),
+            subprocess.CompletedProcess([], 0, b'{"ok":true}', b""),
+        ]
+        commands: list[list[str]] = []
+        delays: list[float] = []
+
+        def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+            commands.append(command)
+            return outcomes.pop(0)
+
+        payload = RETRY.request(
+            ["repos/ElevenID/marty-verifier/releases"],
+            attempts=3,
+            initial_delay_seconds=0.5,
+            run=fake_run,
+            sleep=delays.append,
+        )
+
+        self.assertEqual(payload, b'{"ok":true}')
+        self.assertEqual(commands, [["gh", "api", "repos/ElevenID/marty-verifier/releases"]] * 2)
+        self.assertEqual(delays, [0.5])
+
+    def test_retry_budget_exhaustion_fails_closed(self) -> None:
+        attempts = 0
+
+        def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+            nonlocal attempts
+            attempts += 1
+            self.assertEqual(command[:2], ["gh", "api"])
+            return subprocess.CompletedProcess(command, 1, b"", b"still unavailable")
+
+        with self.assertRaisesRegex(RETRY.GitHubApiRetryError, "after 3 attempts"):
+            RETRY.request(
+                ["repos/ElevenID/marty-verifier/releases"],
+                attempts=3,
+                initial_delay_seconds=0,
+                run=fake_run,
+                sleep=lambda _: None,
+            )
+        self.assertEqual(attempts, 3)
+
+    def test_mutating_api_arguments_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            RETRY.request(
+                ["--method", "DELETE", "repos/ElevenID/marty-verifier/releases/1"],
+                run=lambda *_args, **_kwargs: self.fail("request must not execute"),
+            )
+
 class StableTagWorkflowContractTests(unittest.TestCase):
     def test_prepare_and_release_workflows_are_evidence_bound(self) -> None:
         root = SCRIPT.parents[1]
@@ -231,6 +289,14 @@ class StableTagWorkflowContractTests(unittest.TestCase):
             self.assertIn(marker, release)
         self.assertNotIn("steps.version.outputs", release)
         self.assertNotIn("ref: main", release)
+
+        for workflow in (
+            prepare,
+            release,
+            (root / ".github/workflows/release-rc.yml").read_text(encoding="utf-8"),
+        ):
+            self.assertIn("scripts/github_api_retry.py", workflow)
+            self.assertNotIn("--insecure", workflow)
 
         paths = {item["path"] for item in policy["required_workflows"]}
         self.assertEqual(

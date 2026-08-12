@@ -103,8 +103,9 @@ jobs:
           TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
-          gh api --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          python scripts/github_api_retry.py --output releases.json -- \
+            --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100"
           jq -e --arg tag "$TAG" '([.[][] | select(.tag_name == $tag)] | length) == 0' \
             releases.json >/dev/null
 

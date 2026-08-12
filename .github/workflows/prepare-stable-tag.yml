@@ -66,9 +66,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100" \
-            > workflow-runs.json
+          python scripts/github_api_retry.py --output workflow-runs.json -- \
+            --paginate --slurp -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$COMMIT&per_page=100"
 
       - name: Require every configured exact-main gate
         shell: bash
@@ -141,9 +141,9 @@ jobs:
             fi
             echo "Release dispatch attempt $attempt failed" >&2
             sleep 2
-            gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/release-stable.yml/runs?branch=$TAG&event=workflow_dispatch" \
-              > release-dispatch-runs.json
+            python scripts/github_api_retry.py --output release-dispatch-runs.json -- \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/release-stable.yml/runs?branch=$TAG&event=workflow_dispatch"
             if jq -e --arg sha "$(git rev-parse "$TAG^{commit}")" \
               '[.workflow_runs[] | select(.head_sha == $sha)] | length > 0' \
               release-dispatch-runs.json >/dev/null; then
