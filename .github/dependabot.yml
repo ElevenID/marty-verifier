@@ -26,30 +26,6 @@ updates:
       prefix: "chore"
       include: "scope"
 
-  # Rust dependencies (src-tauri)
-  - package-ecosystem: "cargo"
-    directory: "/src-tauri"
-    schedule:
-      interval: "weekly"
-      day: "sunday"
-      time: "01:00"
-      timezone: "America/Denver"
-    open-pull-requests-limit: 10
-    groups:
-      rust-tauri-dependencies:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-    labels:
-      - "dependencies"
-      - "rust"
-      - "tauri"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-
   # NPM dependencies (UI)
   - package-ecosystem: "npm"
     directory: "/ui"
