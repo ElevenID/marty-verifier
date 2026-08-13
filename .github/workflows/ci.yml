@@ -32,16 +32,18 @@ jobs:
           python scripts/test_stable_tag_gate.py
 
   test-rust:
-    name: Rust Tests
+    name: Rust ${{ matrix.task }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
       CARGO_INCREMENTAL: 0
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_RW_MODE: ${{ (github.event_name == 'merge_group' || github.actor == 'dependabot[bot]') && 'READ_ONLY' || 'READ_WRITE' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        task: [tests, clippy]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
@@ -68,11 +70,21 @@ jobs:
           key: ${{ runner.os }}-cargo-inputs-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
+        if: matrix.task == 'tests'
         run: cargo test --workspace --all-features
 
       - name: Run clippy
+        if: matrix.task == 'clippy'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  rust-format:
+    name: Rust Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -198,7 +210,7 @@ jobs:
   ci-gate:
     name: CI Gate
     if: always()
-    needs: [dependency-automation-contract, test-rust, security, test-frontend-unit, test-frontend-e2e]
+    needs: [dependency-automation-contract, test-rust, rust-format, security, test-frontend-unit, test-frontend-e2e]
     runs-on: ubuntu-latest
     env:
       RESULTS: ${{ join(needs.*.result, ' ') }}
