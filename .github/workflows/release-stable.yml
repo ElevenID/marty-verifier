@@ -64,7 +64,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ steps.target.outputs.tag }}
           fetch-depth: 0
@@ -164,7 +164,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.validate-release-source.outputs.commit }}
           fetch-depth: 0
@@ -174,7 +174,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           version: 9
 
@@ -280,7 +280,7 @@ jobs:
       - build-tauri
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.validate-release-source.outputs.commit }}
           fetch-depth: 0
@@ -390,7 +390,7 @@ jobs:
           test "$(git rev-parse "HEAD^{commit}")" = "$EXPECTED_COMMIT"
 
       - name: Update release with manifest and notes
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: ${{ needs.validate-release-source.outputs.tag }}
           name: Marty Verifier ${{ needs.validate-release-source.outputs.version }}
