@@ -61,9 +61,9 @@
     "globals": "^17.8.0",
     "happy-dom": "^20.11.1",
     "javascript-obfuscator": "^5.5.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "terser": "^5.49.2",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
   },
