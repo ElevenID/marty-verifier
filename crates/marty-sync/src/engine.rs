@@ -1,6 +1,7 @@
 //! Sync engine
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -86,7 +87,17 @@ pub struct SyncResult {
 pub struct SyncEngine {
     storage: Arc<SecureStorage>,
     config: RwLock<SyncConfig>,
-    sync_in_progress: RwLock<bool>,
+    sync_in_progress: AtomicBool,
+}
+
+struct SyncLease<'a> {
+    in_progress: &'a AtomicBool,
+}
+
+impl Drop for SyncLease<'_> {
+    fn drop(&mut self) {
+        self.in_progress.store(false, Ordering::Release);
+    }
 }
 
 impl SyncEngine {
@@ -96,7 +107,7 @@ impl SyncEngine {
         Ok(Self {
             storage,
             config: RwLock::new(config),
-            sync_in_progress: RwLock::new(false),
+            sync_in_progress: AtomicBool::new(false),
         })
     }
 
@@ -116,7 +127,7 @@ impl SyncEngine {
     pub async fn get_status(&self) -> Result<SyncStatus, SyncError> {
         let config = self.config.read().await.clone();
         let state = self.storage.get_sync_state().await?;
-        let sync_in_progress = *self.sync_in_progress.read().await;
+        let sync_in_progress = self.sync_in_progress.load(Ordering::Acquire);
 
         // Count certificates
         let iaca_count = self
@@ -199,15 +210,16 @@ impl SyncEngine {
     }
 
     /// Perform sync
-    pub async fn sync(&self, force: bool) -> Result<SyncResult, SyncError> {
-        // Check if already in progress
-        {
-            let mut in_progress = self.sync_in_progress.write().await;
-            if *in_progress && !force {
-                return Err(SyncError::SyncInProgress);
-            }
-            *in_progress = true;
-        }
+    pub async fn sync(&self, _force: bool) -> Result<SyncResult, SyncError> {
+        // `force` may bypass a future scheduling interval, but must never bypass
+        // mutual exclusion. The lease also clears the flag when an awaited
+        // operation errors or the sync future is cancelled.
+        self.sync_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| SyncError::SyncInProgress)?;
+        let _lease = SyncLease {
+            in_progress: &self.sync_in_progress,
+        };
 
         let start = Instant::now();
         let mut result = SyncResult {
@@ -253,9 +265,6 @@ impl SyncEngine {
         self.storage.update_sync_state(&state).await?;
 
         result.duration_seconds = start.elapsed().as_secs_f64();
-
-        // Release lock
-        *self.sync_in_progress.write().await = false;
 
         tracing::info!(
             success = result.success,
@@ -450,6 +459,22 @@ mod tests {
             assert!(state.last_csca_sync.is_none());
             assert!(state.last_error.is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn force_never_bypasses_an_active_sync() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = test_storage(data_dir.path());
+        let engine = SyncEngine::new(storage, SyncConfig::default()).unwrap();
+        engine.sync_in_progress.store(true, Ordering::Release);
+
+        assert!(matches!(
+            engine.sync(true).await,
+            Err(SyncError::SyncInProgress)
+        ));
+        assert!(engine.sync_in_progress.load(Ordering::Acquire));
+
+        engine.sync_in_progress.store(false, Ordering::Release);
     }
 
     fn trust_anchor(bytes: &[u8], created_at: chrono::DateTime<Utc>) -> TrustAnchor {
