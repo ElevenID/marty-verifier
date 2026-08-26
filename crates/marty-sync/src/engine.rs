@@ -392,6 +392,14 @@ mod tests {
 
     use super::*;
 
+    fn test_storage(data_dir: &std::path::Path) -> Arc<SecureStorage> {
+        static PROCESS_LOCAL_KEYRING: std::sync::Once = std::sync::Once::new();
+        PROCESS_LOCAL_KEYRING.call_once(|| {
+            keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+        });
+        Arc::new(SecureStorage::new_with_process_local_keyring(data_dir).unwrap())
+    }
+
     #[test]
     fn cache_freshness_fails_closed_without_a_sync() {
         let error = ensure_cache_fresh_at(None, Utc::now(), 72, "CSCA").unwrap_err();
@@ -428,7 +436,7 @@ mod tests {
             },
         ] {
             let data_dir = tempfile::tempdir().unwrap();
-            let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+            let storage = test_storage(data_dir.path());
             let engine = SyncEngine::new(Arc::clone(&storage), config).unwrap();
 
             let result = engine.sync(false).await.unwrap();
@@ -613,7 +621,7 @@ mod tests {
     #[tokio::test]
     async fn verified_usb_package_uses_one_monotonic_whole_package_transition() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let first_anchor = trust_anchor(&[1, 2, 3], created_at);
@@ -662,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn signed_complete_package_advances_the_csca_freshness_clock() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
 
@@ -687,7 +695,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_config_update_changes_the_live_csca_freshness_gate() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let synced_at = Utc::now() - chrono::Duration::hours(1);
         storage
@@ -720,7 +728,7 @@ mod tests {
     #[tokio::test]
     async fn mismatched_usb_trust_domain_is_rejected_without_mutation() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let anchor = trust_anchor(&[7, 8, 9], created_at);
@@ -743,7 +751,7 @@ mod tests {
     #[tokio::test]
     async fn signed_next_signer_is_activated_once_and_old_signer_fails_closed() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let next_signer = format!("ed25519:{}", "b".repeat(64));

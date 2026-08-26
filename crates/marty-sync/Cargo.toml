@@ -46,3 +46,4 @@ rcgen = { version = "=0.14.7", optional = true }
 [dev-dependencies]
 tempfile = "3.14"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+keyring-core = "1.0"
