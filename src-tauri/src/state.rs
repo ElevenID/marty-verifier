@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use marty_app_storage::SecureStorage;
 use marty_entitlements::{AllowAllEntitlementProvider, EntitlementProvider};
+use marty_reporting::Reporter;
 use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use marty_sync::SyncEngine;
 
@@ -42,6 +43,9 @@ pub struct AppState {
 
     /// Sync engine for trust anchor updates
     pub sync_engine: Arc<SyncEngine>,
+
+    /// Durable, privacy-minimized reporting queue and reconnect uploader.
+    pub reporter: Arc<Reporter>,
 
     /// Runtime configuration (deployment profile, lane, UX settings)
     pub runtime_config: RuntimeConfig,
@@ -99,6 +103,10 @@ impl AppState {
             Arc::clone(&core_storage),
             config.sync_config.clone(),
         )?);
+        let reporter = Arc::new(Reporter::new(
+            Arc::clone(&core_storage),
+            config.reporting_config.clone(),
+        ));
 
         // Detect hardware
         let hardware = Arc::new(HardwareDetector::new());
@@ -119,6 +127,7 @@ impl AppState {
             trust_storage: core_storage,
             entitlements,
             sync_engine,
+            reporter,
             runtime_config: RuntimeConfig::new(),
             hardware,
             hardware_tier: RwLock::new(hardware_tier),

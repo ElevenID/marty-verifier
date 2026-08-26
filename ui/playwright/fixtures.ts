@@ -76,6 +76,13 @@ export interface TestFixtures {
 async function injectTauriMock(page: Page, commands: MockCommands = {}) {
   const mockCommands = {
     get_sync_status: defaultSyncStatus,
+    update_config: null,
+    set_network_status: {
+      online: true,
+      flushed_events: 0,
+      pending_events: 0,
+      reporting_error: null,
+    },
     get_hardware_tier: 'simple',
     detect_hardware: defaultHardwareCapabilities,
     get_config: {

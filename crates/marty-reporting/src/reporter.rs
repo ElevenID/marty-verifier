@@ -13,7 +13,7 @@ use crate::events::VerificationEvent;
 /// Reporter for sending events to configured destinations
 pub struct Reporter {
     storage: Arc<SecureStorage>,
-    config: ReportingConfig,
+    config: RwLock<ReportingConfig>,
     device_id: Option<String>,
     org_id: RwLock<Option<String>>,
 }
@@ -23,7 +23,7 @@ impl Reporter {
     pub fn new(storage: Arc<SecureStorage>, config: ReportingConfig) -> Self {
         Self {
             storage,
-            config,
+            config: RwLock::new(config),
             device_id: None,
             org_id: RwLock::new(None),
         }
@@ -39,9 +39,15 @@ impl Reporter {
         *self.org_id.write().await = Some(org_id);
     }
 
+    /// Replace runtime reporting policy after the application configuration is saved.
+    pub async fn set_config(&self, config: ReportingConfig) {
+        *self.config.write().await = config;
+    }
+
     /// Queue an event for reporting
     pub async fn queue_event(&self, mut event: VerificationEvent) -> Result<(), ReportingError> {
-        if !self.config.enabled {
+        let config = self.config.read().await.clone();
+        if !config.enabled {
             return Err(ReportingError::Disabled);
         }
 
@@ -51,6 +57,14 @@ impl Reporter {
 
         // Redact sensitive fields
         let event = self.redact_event(event);
+
+        let queue_status = self.storage.get_queue_status().await?;
+        if queue_status.pending_events >= config.max_queue_size {
+            return Err(ReportingError::QueueFull {
+                size: queue_status.pending_events,
+                max: config.max_queue_size,
+            });
+        }
 
         // Store in queue
         let payload = serde_json::to_value(&event)?;
@@ -64,21 +78,13 @@ impl Reporter {
             "Event queued for reporting"
         );
 
-        // Try immediate send if API endpoint configured and not local-only
-        #[cfg(feature = "api")]
-        if !self.config.local_only {
-            if let Some(ref _endpoint) = self.config.api_endpoint {
-                // TODO: Implement async send with retry
-                // For now, events stay in queue until batch upload
-            }
-        }
-
         Ok(())
     }
 
     /// Process queued events (batch upload)
     pub async fn flush(&self) -> Result<usize, ReportingError> {
-        if !self.config.enabled || self.config.local_only {
+        let config = self.config.read().await.clone();
+        if !config.enabled || config.local_only {
             return Ok(0);
         }
 
@@ -88,19 +94,91 @@ impl Reporter {
             return Ok(0);
         }
 
-        tracing::info!(count = events.len(), "Flushing queued events");
+        #[cfg(not(feature = "api"))]
+        return Err(ReportingError::Configuration(
+            "remote reporting requires the marty-reporting api feature".to_string(),
+        ));
 
-        // TODO: Implement actual upload to API/batch endpoint
-        // For now, just mark as processed
+        #[cfg(feature = "api")]
+        {
+            let destination = config
+                .api_endpoint
+                .as_ref()
+                .map(|endpoint| (endpoint, false))
+                .or_else(|| {
+                    config
+                        .batch_endpoint
+                        .as_ref()
+                        .map(|endpoint| (endpoint, true))
+                })
+                .ok_or_else(|| {
+                    ReportingError::Configuration(
+                        "remote reporting is enabled but no endpoint is configured".to_string(),
+                    )
+                })?;
 
-        let mut processed = 0;
-        for event in events {
-            // Simulate successful upload
-            self.storage.remove_queued_event(&event.id).await?;
-            processed += 1;
+            tracing::info!(count = events.len(), "Flushing queued events");
+            let body = serde_json::json!({
+                "events": events
+                .iter()
+                .map(|event| event.payload.clone())
+                .collect::<Vec<_>>(),
+            });
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|error| ReportingError::Network(error.to_string()))?;
+            let mut last_error = None;
+
+            let max_retries = config.max_retries.min(10);
+            for attempt in 0..=max_retries {
+                let mut request = if destination.1 {
+                    // Presigned object-store batch destinations use PUT.
+                    client.put(destination.0).json(&body)
+                } else {
+                    client.post(destination.0).json(&body)
+                };
+                if !destination.1 {
+                    if let Some(api_key) = config.api_key.as_deref() {
+                        request = request.bearer_auth(api_key);
+                    }
+                }
+
+                let retryable = match request.send().await {
+                    Ok(response) if response.status().is_success() => {
+                        last_error = None;
+                        break;
+                    }
+                    Ok(response) => {
+                        let status = response.status();
+                        last_error = Some(format!("reporting endpoint returned HTTP {}", status));
+                        status.as_u16() == 429 || status.is_server_error()
+                    }
+                    Err(error) => {
+                        last_error = Some(error.to_string());
+                        true
+                    }
+                };
+
+                if retryable && attempt < max_retries {
+                    let backoff_ms = 100_u64.saturating_mul(1_u64 << attempt.min(4));
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(error) = last_error {
+                return Err(ReportingError::Network(error));
+            }
+
+            // Delete only after the whole ordered batch was acknowledged.
+            for event in &events {
+                self.storage.remove_queued_event(&event.id).await?;
+            }
+
+            Ok(events.len())
         }
-
-        Ok(processed)
     }
 
     /// Redact sensitive fields from event
@@ -113,16 +191,17 @@ impl Reporter {
 
     /// Get reporting status
     pub async fn get_status(&self) -> Result<ReportingStatus, ReportingError> {
+        let config = self.config.read().await.clone();
         let queue_status = self.storage.get_queue_status().await?;
 
         Ok(ReportingStatus {
-            enabled: self.config.enabled,
-            local_only: self.config.local_only,
+            enabled: config.enabled,
+            local_only: config.local_only,
             pending_events: queue_status.pending_events,
             oldest_event: queue_status.oldest_event,
             last_successful_upload: queue_status.last_successful_sync,
-            api_configured: self.config.api_endpoint.is_some(),
-            batch_configured: self.config.batch_endpoint.is_some(),
+            api_configured: config.api_endpoint.is_some(),
+            batch_configured: config.batch_endpoint.is_some(),
         })
     }
 }
@@ -143,6 +222,61 @@ pub struct ReportingStatus {
 mod tests {
     use super::*;
     use crate::config::ReportingConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn reporter_with_config(
+        config: ReportingConfig,
+    ) -> (tempfile::TempDir, Arc<SecureStorage>, Reporter) {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let reporter = Reporter::new(Arc::clone(&storage), config);
+        (data_dir, storage, reporter)
+    }
+
+    async fn one_response_server(status: &str) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_string();
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 2048];
+            loop {
+                let read = socket.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().to_string())
+                    })
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).to_string();
+            socket
+                .write_all(
+                    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            request
+        });
+        (format!("http://{address}/events"), task)
+    }
 
     #[test]
     fn test_reporting_config_default() {
@@ -206,6 +340,132 @@ mod tests {
         assert!(status.oldest_event.is_none());
     }
 
-    // Note: Full Reporter tests require mocking SecureStorage
-    // which would be done in integration tests
+    #[tokio::test]
+    async fn empty_queue_does_not_require_a_remote_endpoint() {
+        let (_data_dir, _storage, reporter) = reporter_with_config(ReportingConfig::default());
+        assert_eq!(reporter.flush().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn queue_limit_is_enforced_before_an_event_is_persisted() {
+        let config = ReportingConfig {
+            max_queue_size: 0,
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        let error = reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-1".to_string(),
+                "emrtd".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ReportingError::QueueFull { size: 0, max: 0 }
+        ));
+        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_configuration_changes_take_effect_without_restart() {
+        let config = ReportingConfig {
+            enabled: false,
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        let event = VerificationEvent::verification(
+            "verification-runtime-config".to_string(),
+            "emrtd".to_string(),
+            "valid".to_string(),
+        );
+
+        assert!(matches!(
+            reporter.queue_event(event.clone()).await,
+            Err(ReportingError::Disabled)
+        ));
+        reporter.set_config(ReportingConfig::default()).await;
+        reporter.queue_event(event).await.unwrap();
+
+        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 1);
+        assert!(reporter.get_status().await.unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn failed_upload_keeps_the_durable_event() {
+        let (endpoint, server) = one_response_server("503 Service Unavailable").await;
+        let config = ReportingConfig {
+            api_endpoint: Some(endpoint),
+            max_retries: 0,
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-1".to_string(),
+                "emrtd".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let error = reporter.flush().await.unwrap_err();
+        assert!(error.to_string().contains("HTTP 503"));
+        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 1);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn acknowledged_upload_removes_the_exact_durable_batch() {
+        let (endpoint, server) = one_response_server("204 No Content").await;
+        let config = ReportingConfig {
+            api_endpoint: Some(endpoint),
+            api_key: Some("test-reporting-token".to_string()),
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-1".to_string(),
+                "emrtd".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(reporter.flush().await.unwrap(), 1);
+        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 0);
+        let request = server.await.unwrap();
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-reporting-token"));
+        assert!(request.contains("verification-1"));
+    }
+
+    #[tokio::test]
+    async fn presigned_batch_destination_uses_put() {
+        let (endpoint, server) = one_response_server("200 OK").await;
+        let config = ReportingConfig {
+            batch_endpoint: Some(endpoint),
+            api_key: Some("must-not-be-sent-to-presigned-destination".to_string()),
+            max_retries: 0,
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, _storage, reporter) = reporter_with_config(config);
+        reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-2".to_string(),
+                "dtc".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(reporter.flush().await.unwrap(), 1);
+        let request = server.await.unwrap();
+        assert!(request.starts_with("PUT /events HTTP/1.1"));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+    }
 }

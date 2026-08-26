@@ -159,11 +159,12 @@ channels are validated before they are incorporated into an update URL.
 
 ### Online Sync
 
-The application syncs trust anchors from:
-- **AAMVA DTS**: IACA certificates for US driver's licenses
-- **ICAO PKD**: CSCA/DSC certificates for passports
-
-Sync runs automatically based on `sync_interval_hours` configuration.
+The configuration reserves endpoints for AAMVA DTS, ICAO PKD, and Open Badge
+trust sources. Those source-specific adapters do not yet authenticate and apply
+a complete signed package, so the current release fails a cloud-sync request
+closed instead of advancing the cache clock without new trust material.
+`sync_interval_hours` is reserved for the authenticated adapters. Signed package
+import is the supported provisioning path below.
 
 ### USB Import (Air-Gapped)
 
@@ -234,6 +235,23 @@ key and import a higher-sequence recovery-signed package that authorizes a
 distinct next operational signer. The recovery key id cannot change after it is
 first committed, and an unauthorized signer or recovery change leaves all trust
 state untouched.
+
+Passport and DTC verification consume this same governed store. They reject a
+cache that has never synchronized, is future-dated, exceeds
+`max_offline_hours`, has passed its signed package expiry, or contains a trust
+record outside its certificate validity window.
+
+## Offline Audit Delivery
+
+When reporting and deployment-profile auditing are enabled, every verification
+queues a privacy-minimized event in encrypted local storage. The webview reports
+connectivity transitions to the Rust runtime. On reconnect, the runtime uploads
+the ordered batch to `reporting_config.api_endpoint` with `POST`, or to a
+presigned `batch_endpoint` with `PUT`. API delivery uses the configured bearer
+token; presigned destinations do not receive that token. Events are deleted only
+after a successful HTTP response. Network, rate-limit, and server failures use
+bounded retries and leave the batch durable for the next reconnect. The Sync
+page shows uploaded and pending event counts or the delivery error.
 
 ## Security
 

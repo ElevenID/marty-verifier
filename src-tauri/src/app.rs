@@ -17,6 +17,7 @@ pub fn command_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Se
         commands::storage::clear_verification_history,
         commands::sync::sync_trust_anchors,
         commands::sync::get_sync_status,
+        commands::sync::set_network_status,
         commands::sync::import_trust_anchors_usb,
         commands::profile_sync::sync_device_config,
         commands::profile_sync::get_runtime_config,

@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject duplicate-member, oversized, malformed, partially parsed, private-key-bearing, or future-dated USB trust packages before returning any derived records, and bind record freshness to the signed package timestamp.
 - Bind each signed envelope to the configured trust domain and actual pinned-key identity, derive one RFC 8785 canonical package digest, require monotonic sequence and signed expiry, and commit all certificate/key records, package state, sync metadata, and minimized audit evidence through one atomic core storage operation.
 - Authenticate an explicit one-step next-signer authorization and stable recovery-signer identity in every USB package, and route rotation or recovery through the same atomic trust-state transition.
+- Fail closed when the CSCA cache is missing, future-dated, or older than the configured offline window, and prevent placeholder network adapters from advancing freshness without authenticated trust material.
+
+### Fixed
+
+- Make passport and DTC verification consume the same governed core trust store populated by signed package import.
+- Exclude expired, unauthenticated, stale, and certificate-invalid CSCA records from verification.
 
 ## [0.1.0] - 2026-01-07
 

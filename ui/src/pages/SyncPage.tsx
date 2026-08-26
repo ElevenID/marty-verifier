@@ -35,7 +35,7 @@ export default function SyncPage() {
   const [result, setResult] = useState<SyncResult | UsbImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openBadgePolicy, setOpenBadgePolicy] = useState<string | null>(null);
-  const { sync, loadSyncStatus, isOnline } = useAppStore();
+  const { sync, syncError, loadSyncStatus, isOnline, networkTransition, networkError } = useAppStore();
 
   useEffect(() => {
     getConfig()
@@ -217,11 +217,23 @@ export default function SyncPage() {
             Sync Actions
           </Typography>
 
-          {error && (
+          {(error || syncError || networkError) && (
             <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+              {error || networkError || syncError}
             </Alert>
           )}
+
+          {networkTransition &&
+            !networkTransition.reporting_error &&
+            (networkTransition.flushed_events > 0 || networkTransition.pending_events > 0) && (
+              <Alert
+                severity={networkTransition.pending_events === 0 ? 'success' : 'warning'}
+                sx={{ mb: 2 }}
+              >
+                Reconnect audit sync: {networkTransition.flushed_events} uploaded,{' '}
+                {networkTransition.pending_events} pending.
+              </Alert>
+            )}
 
           {result && 'iaca_updated' in result && (
             <Alert severity={result.success ? 'success' : 'warning'} sx={{ mb: 2 }}>

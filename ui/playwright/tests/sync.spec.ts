@@ -120,6 +120,34 @@ test.describe('Sync Status Variations', () => {
     await expect(page.getByText(/dsc certificates/i).locator('..').getByRole('heading', { name: '0' })).toBeVisible();
     await expect(page.getByText(/open badge keys/i).locator('..').getByRole('heading', { name: '0' })).toBeVisible();
   });
+
+  test('should show reconnect audit delivery evidence', async ({ page, mockTauri }) => {
+    await mockTauri({
+      set_network_status: {
+        online: true,
+        flushed_events: 4,
+        pending_events: 0,
+        reporting_error: null,
+      },
+    });
+    await page.goto('/#/sync');
+
+    await expect(page.getByText(/reconnect audit sync: 4 uploaded, 0 pending/i)).toBeVisible();
+  });
+
+  test('should surface reconnect audit delivery failures', async ({ page, mockTauri }) => {
+    await mockTauri({
+      set_network_status: {
+        online: true,
+        flushed_events: 0,
+        pending_events: 4,
+        reporting_error: 'Reporting endpoint returned HTTP 503',
+      },
+    });
+    await page.goto('/#/sync');
+
+    await expect(page.getByText(/reporting endpoint returned http 503/i)).toBeVisible();
+  });
 });
 
 test.describe('Sync Actions', () => {

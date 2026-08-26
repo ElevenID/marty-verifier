@@ -4,9 +4,11 @@ import {
   HardwareTier,
   HardwareCapabilities,
   VerificationResult,
+  NetworkTransitionResult,
   getSyncStatus,
   getHardwareTier,
   detectHardware,
+  setNetworkStatus,
 } from '@/services/tauri-api';
 
 interface AppState {
@@ -21,6 +23,8 @@ interface AppState {
 
   // Online status
   isOnline: boolean;
+  networkTransition: NetworkTransitionResult | null;
+  networkError: string | null;
 
   // Verification state
   lastVerification: VerificationResult | null;
@@ -29,7 +33,7 @@ interface AppState {
   // Actions
   loadSyncStatus: () => Promise<void>;
   loadHardwareInfo: () => Promise<void>;
-  setOnlineStatus: (online: boolean) => void;
+  setOnlineStatus: (online: boolean) => Promise<void>;
   setLastVerification: (result: VerificationResult | null) => void;
   setVerificationInProgress: (inProgress: boolean) => void;
   initialize: () => Promise<void>;
@@ -45,6 +49,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   hardwareCapabilities: null,
 
   isOnline: false,
+  networkTransition: null,
+  networkError: null,
 
   lastVerification: null,
   verificationInProgress: false,
@@ -75,8 +81,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  setOnlineStatus: (online: boolean) => {
+  setOnlineStatus: async (online: boolean) => {
     set({ isOnline: online });
+    try {
+      const transition = await setNetworkStatus(online);
+      set({
+        networkTransition: transition,
+        networkError: transition.reporting_error,
+      });
+    } catch (error) {
+      set({
+        networkTransition: null,
+        networkError: error instanceof Error ? error.message : 'Failed to update network status',
+      });
+    }
   },
 
   setLastVerification: (result: VerificationResult | null) => {

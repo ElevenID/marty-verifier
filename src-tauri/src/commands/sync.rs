@@ -1,5 +1,6 @@
 //! Trust anchor sync commands
 
+use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
@@ -7,6 +8,47 @@ use crate::state::AppState;
 
 // Re-export types from the sync crate
 pub use marty_sync::{SyncResult, SyncStatus, UsbImportResult};
+
+#[derive(Debug, Serialize)]
+pub struct NetworkTransitionResult {
+    pub online: bool,
+    pub flushed_events: usize,
+    pub pending_events: usize,
+    pub reporting_error: Option<String>,
+}
+
+/// Keep the Rust runtime's connectivity posture aligned with the webview and
+/// drain durable audit evidence only after connectivity has actually returned.
+#[tauri::command]
+pub async fn set_network_status(
+    online: bool,
+    state: State<'_, AppState>,
+) -> AppResult<NetworkTransitionResult> {
+    state.set_online(online).await;
+
+    #[cfg(feature = "reporting")]
+    let (flushed_events, reporting_error) = if online {
+        match state.reporter.flush().await {
+            Ok(count) => (count, None),
+            Err(error) => {
+                tracing::warn!(%error, "Reconnect audit flush did not complete");
+                (0, Some(error.to_string()))
+            }
+        }
+    } else {
+        (0, None)
+    };
+    #[cfg(not(feature = "reporting"))]
+    let (flushed_events, reporting_error) = (0, None);
+    let pending_events = state.trust_storage.get_queue_status().await?.pending_events;
+
+    Ok(NetworkTransitionResult {
+        online,
+        flushed_events,
+        pending_events,
+        reporting_error,
+    })
+}
 
 /// Trigger trust anchor sync
 #[tauri::command]

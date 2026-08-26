@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -169,6 +169,21 @@ impl SyncEngine {
         })
     }
 
+    /// Require a recently synchronized CSCA cache before a verification path
+    /// consumes locally stored passport or DTC trust anchors.
+    ///
+    /// A configured network connection is not itself evidence that the cache
+    /// is current: verification remains fail-closed until a signed package has
+    /// actually advanced the CSCA synchronization timestamp.
+    pub async fn ensure_csca_cache_fresh(&self) -> Result<(), SyncError> {
+        let last_sync = self
+            .storage
+            .get_sync_state()
+            .await?
+            .and_then(|state| state.last_csca_sync);
+        ensure_cache_fresh_at(last_sync, Utc::now(), self.config.max_offline_hours, "CSCA")
+    }
+
     /// Perform sync
     pub async fn sync(&self, force: bool) -> Result<SyncResult, SyncError> {
         // Check if already in progress
@@ -242,36 +257,31 @@ impl SyncEngine {
     }
 
     async fn do_sync(&self, _result: &mut SyncResult) -> Result<(), SyncError> {
-        // Sync IACA from AAMVA DTS
-        #[cfg(feature = "aamva")]
-        if let Some(ref url) = self.config.aamva_dts_url {
-            tracing::info!(url, "Syncing IACA from AAMVA DTS");
-            // TODO: Implement actual sync
-            // For now, just log
+        let configured_sources = [
+            self.config.aamva_dts_url.as_deref().map(|_| "AAMVA DTS"),
+            self.config.icao_pkd_url.as_deref().map(|_| "ICAO PKD"),
+            self.config
+                .open_badge_keys_url
+                .as_deref()
+                .map(|_| "Open Badge trust"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        if configured_sources.is_empty() {
+            return Err(SyncError::SourceUnavailable(
+                "no network trust source is configured; import a signed trust package".to_string(),
+            ));
         }
 
-        // Sync CSCA/DSC from ICAO PKD
-        #[cfg(feature = "icao")]
-        if let Some(ref url) = self.config.icao_pkd_url {
-            tracing::info!(url, "Syncing CSCA/DSC from ICAO PKD");
-            // TODO: Implement actual sync
-        }
-
-        // Sync Open Badge verification methods
-        if let Some(ref url) = self.config.open_badge_keys_url {
-            tracing::info!(url, "Syncing Open Badge verification methods");
-            // TODO: Implement trust store sync from endpoint
-        }
-
-        // If no sources configured, that's still a "success" (offline mode)
-        if self.config.aamva_dts_url.is_none()
-            && self.config.icao_pkd_url.is_none()
-            && self.config.open_badge_keys_url.is_none()
-        {
-            tracing::warn!("No sync sources configured - operating in offline mode");
-        }
-
-        Ok(())
+        // The network source adapters are not yet capable of authenticating a
+        // complete trust-package transition. Never refresh the freshness clock
+        // merely because a URL was configured or reachable.
+        Err(SyncError::SourceUnavailable(format!(
+            "authenticated network synchronization is unavailable for {}",
+            configured_sources.join(", ")
+        )))
     }
 
     /// Import trust anchors from USB
@@ -318,6 +328,33 @@ impl SyncEngine {
     }
 }
 
+fn ensure_cache_fresh_at(
+    last_sync: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    max_offline_hours: u32,
+    cache_name: &str,
+) -> Result<(), SyncError> {
+    let last_sync = last_sync.ok_or_else(|| {
+        SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache has never been synchronized"
+        ))
+    })?;
+    if last_sync > now {
+        return Err(SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache timestamp is in the future"
+        )));
+    }
+
+    let age = now - last_sync;
+    if age > chrono::Duration::hours(i64::from(max_offline_hours)) {
+        return Err(SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache is expired; maximum offline age is {max_offline_hours} hours"
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use marty_secure_storage::{
@@ -326,6 +363,58 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn cache_freshness_fails_closed_without_a_sync() {
+        let error = ensure_cache_fresh_at(None, Utc::now(), 72, "CSCA").unwrap_err();
+        assert!(error.to_string().contains("never been synchronized"));
+    }
+
+    #[test]
+    fn cache_freshness_accepts_the_configured_boundary() {
+        let now = Utc::now();
+        ensure_cache_fresh_at(Some(now - chrono::Duration::hours(72)), now, 72, "CSCA").unwrap();
+    }
+
+    #[test]
+    fn cache_freshness_rejects_expired_and_future_timestamps() {
+        let now = Utc::now();
+        let expired =
+            ensure_cache_fresh_at(Some(now - chrono::Duration::hours(73)), now, 72, "CSCA")
+                .unwrap_err();
+        assert!(expired.to_string().contains("expired"));
+
+        let future =
+            ensure_cache_fresh_at(Some(now + chrono::Duration::seconds(1)), now, 72, "CSCA")
+                .unwrap_err();
+        assert!(future.to_string().contains("future"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_network_sync_never_advances_the_trust_clock() {
+        for config in [
+            SyncConfig::default(),
+            SyncConfig {
+                icao_pkd_url: Some("https://pkd.example.test/trust".to_string()),
+                ..SyncConfig::default()
+            },
+        ] {
+            let data_dir = tempfile::tempdir().unwrap();
+            let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+            let engine = SyncEngine::new(Arc::clone(&storage), config).unwrap();
+
+            let result = engine.sync(false).await.unwrap();
+            assert!(!result.success);
+            assert!(result.error.as_deref().is_some_and(|error| {
+                error.contains("no network trust source")
+                    || error.contains("authenticated network synchronization")
+            }));
+            let state = storage.get_sync_state().await.unwrap().unwrap();
+            assert!(state.last_iaca_sync.is_none());
+            assert!(state.last_csca_sync.is_none());
+            assert!(state.last_error.is_some());
+        }
+    }
 
     fn trust_anchor(bytes: &[u8], created_at: chrono::DateTime<Utc>) -> TrustAnchor {
         let digest = blake3::hash(bytes).to_hex().to_string();
@@ -540,6 +629,31 @@ mod tests {
             .unwrap();
         assert_eq!(anchors_after_replay.len(), 1);
         assert_eq!(anchors_after_replay[0].anchor.id, replacement.id);
+    }
+
+    #[tokio::test]
+    async fn signed_complete_package_advances_the_csca_freshness_clock() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+
+        engine
+            .apply_verified_package(verified_package(
+                1,
+                created_at,
+                '7',
+                vec![trust_anchor(&[21, 22, 23], created_at)],
+                vec![],
+            ))
+            .await
+            .unwrap();
+
+        engine.ensure_csca_cache_fresh().await.unwrap();
+        let state = storage.get_sync_state().await.unwrap().unwrap();
+        assert_eq!(state.last_iaca_sync, Some(created_at));
+        assert_eq!(state.last_csca_sync, Some(created_at));
+        assert_eq!(state.csca_version.as_deref(), Some("1.0.0"));
     }
 
     #[tokio::test]

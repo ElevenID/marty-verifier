@@ -106,6 +106,21 @@ describe('Tauri API', () => {
       expect(result.success).toBe(true);
       expect(result.iaca_updated).toBe(5);
     });
+
+    it('should update the Rust network posture and return audit flush status', async () => {
+      const mockResult = {
+        online: true,
+        flushed_events: 3,
+        pending_events: 0,
+        reporting_error: null,
+      };
+      mockTauriCommands({ set_network_status: mockResult });
+
+      const { setNetworkStatus } = await import('@/services/tauri-api');
+      const result = await setNetworkStatus(true);
+
+      expect(result).toEqual(mockResult);
+    });
   });
 
   describe('Hardware API', () => {

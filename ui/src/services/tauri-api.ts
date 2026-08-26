@@ -168,6 +168,13 @@ export interface OfflineQueueStatus {
   last_successful_sync: string | null;
 }
 
+export interface NetworkTransitionResult {
+  online: boolean;
+  flushed_events: number;
+  pending_events: number;
+  reporting_error: string | null;
+}
+
 export interface AppConfig {
   data_dir: string;
   liveness_retention: LivenessRetentionConfig;
@@ -354,6 +361,10 @@ export async function syncTrustAnchors(force?: boolean): Promise<SyncResult> {
 
 export async function getSyncStatus(): Promise<SyncStatus> {
   return invoke('get_sync_status');
+}
+
+export async function setNetworkStatus(online: boolean): Promise<NetworkTransitionResult> {
+  return invoke('set_network_status', { online });
 }
 
 export async function importTrustAnchorsUsb(path: string): Promise<UsbImportResult> {

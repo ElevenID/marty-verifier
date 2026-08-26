@@ -16,9 +16,13 @@ pub async fn get_config(state: State<'_, AppState>) -> AppResult<AppConfig> {
 /// Update configuration
 #[tauri::command]
 pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) -> AppResult<()> {
+    new_config.save()?;
+    state
+        .reporter
+        .set_config(new_config.reporting_config.clone())
+        .await;
     let mut config = state.config.write().await;
     *config = new_config;
-    config.save()?;
     tracing::info!("Configuration updated");
     Ok(())
 }
