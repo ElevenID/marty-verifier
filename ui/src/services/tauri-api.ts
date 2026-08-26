@@ -166,6 +166,7 @@ export interface OfflineQueueStatus {
   data_size_bytes: number;
   last_sync_attempt: string | null;
   last_successful_sync: string | null;
+  last_error: string | null;
 }
 
 export interface NetworkTransitionResult {

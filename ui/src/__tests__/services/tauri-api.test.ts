@@ -166,6 +166,7 @@ describe('Tauri API', () => {
         data_size_bytes: 50000,
         last_sync_attempt: '2025-12-19T08:00:00Z',
         last_successful_sync: '2025-12-19T08:00:00Z',
+        last_error: null,
       };
 
       mockTauriCommands({

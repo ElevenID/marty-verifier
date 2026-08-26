@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Delete queued evidence only after remote acknowledgement, retain failed batches, enforce queue bounds, and cap configured retry loops.
+- Delete queued evidence only through an atomic exact-batch acknowledgement, retain failed batches with durable retry/error metadata, sanitize request failures so destination credentials are never persisted, enforce queue bounds, and cap configured retry loops.
 
 ## [0.1.0] - 2026-01-07
 

@@ -127,7 +127,9 @@ impl Reporter {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
-                .map_err(|error| ReportingError::Network(error.to_string()))?;
+                .map_err(|_| {
+                    ReportingError::Network("reporting client initialization failed".to_string())
+                })?;
             let mut last_error = None;
 
             let max_retries = config.max_retries.min(10);
@@ -155,7 +157,7 @@ impl Reporter {
                         status.as_u16() == 429 || status.is_server_error()
                     }
                     Err(error) => {
-                        last_error = Some(error.to_string());
+                        last_error = Some(summarize_request_error(&error));
                         true
                     }
                 };
@@ -169,15 +171,21 @@ impl Reporter {
             }
 
             if let Some(error) = last_error {
+                let ids = events
+                    .iter()
+                    .map(|event| event.id.clone())
+                    .collect::<Vec<_>>();
+                self.storage
+                    .record_queue_batch_failure(&ids, &error)
+                    .await?;
                 return Err(ReportingError::Network(error));
             }
 
-            // Delete only after the whole ordered batch was acknowledged.
-            for event in &events {
-                self.storage.remove_queued_event(&event.id).await?;
-            }
-
-            Ok(events.len())
+            let ids = events
+                .iter()
+                .map(|event| event.id.clone())
+                .collect::<Vec<_>>();
+            Ok(self.storage.acknowledge_queue_batch(&ids).await?)
         }
     }
 
@@ -200,6 +208,7 @@ impl Reporter {
             pending_events: queue_status.pending_events,
             oldest_event: queue_status.oldest_event,
             last_successful_upload: queue_status.last_successful_sync,
+            last_error: queue_status.last_error,
             api_configured: config.api_endpoint.is_some(),
             batch_configured: config.batch_endpoint.is_some(),
         })
@@ -214,8 +223,22 @@ pub struct ReportingStatus {
     pub pending_events: usize,
     pub oldest_event: Option<String>,
     pub last_successful_upload: Option<String>,
+    pub last_error: Option<String>,
     pub api_configured: bool,
     pub batch_configured: bool,
+}
+
+#[cfg(feature = "api")]
+fn summarize_request_error(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "reporting request timed out".to_string()
+    } else if error.is_connect() {
+        "reporting connection failed".to_string()
+    } else if let Some(status) = error.status() {
+        format!("reporting request failed with HTTP {status}")
+    } else {
+        "reporting request failed".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +338,7 @@ mod tests {
             pending_events: 10,
             oldest_event: Some("2025-01-01T00:00:00Z".to_string()),
             last_successful_upload: Some("2025-01-01T00:30:00Z".to_string()),
+            last_error: None,
             api_configured: true,
             batch_configured: true,
         };
@@ -332,6 +356,7 @@ mod tests {
             pending_events: 0,
             oldest_event: None,
             last_successful_upload: None,
+            last_error: None,
             api_configured: false,
             batch_configured: false,
         };
@@ -413,8 +438,53 @@ mod tests {
 
         let error = reporter.flush().await.unwrap_err();
         assert!(error.to_string().contains("HTTP 503"));
-        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 1);
+        let queue_status = storage.get_queue_status().await.unwrap();
+        assert_eq!(queue_status.pending_events, 1);
+        assert!(queue_status.last_sync_attempt.is_some());
+        assert!(queue_status.last_successful_sync.is_none());
+        assert_eq!(
+            queue_status.last_error.as_deref(),
+            Some("reporting endpoint returned HTTP 503 Service Unavailable")
+        );
+        let pending = storage.get_pending_events(10).await.unwrap();
+        assert_eq!(pending[0].retry_count, 1);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_failures_do_not_persist_destination_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let secret = "presigned-secret-must-not-persist";
+        let config = ReportingConfig {
+            batch_endpoint: Some(format!("http://{address}/events?token={secret}")),
+            max_retries: 0,
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-no-secret".to_string(),
+                "dtc".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let error = reporter.flush().await.unwrap_err().to_string();
+        assert!(!error.contains(secret));
+        assert!(!error.contains("token="));
+        let pending = storage.get_pending_events(10).await.unwrap();
+        assert!(!pending[0].error.as_deref().unwrap().contains(secret));
+        assert!(!storage
+            .get_queue_status()
+            .await
+            .unwrap()
+            .last_error
+            .as_deref()
+            .unwrap()
+            .contains(secret));
     }
 
     #[tokio::test]
@@ -436,7 +506,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(reporter.flush().await.unwrap(), 1);
-        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 0);
+        let queue_status = storage.get_queue_status().await.unwrap();
+        assert_eq!(queue_status.pending_events, 0);
+        assert!(queue_status.last_successful_sync.is_some());
+        assert!(queue_status.last_error.is_none());
         let request = server.await.unwrap();
         assert!(request
             .to_ascii_lowercase()
