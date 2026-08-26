@@ -2963,6 +2963,37 @@ fn unsupported_result(request: &VerifyRequest, reason: &str) -> VerificationResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "demo-fixtures")]
+    #[test]
+    fn generated_dtc_passes_the_exact_app_payload_adapter_with_governed_csca() {
+        let output = tempfile::tempdir().unwrap();
+        let manifest = match std::env::var_os("MARTY_DEMO_FIXTURE_DIRECTORY") {
+            Some(directory) => serde_json::from_str(
+                &std::fs::read_to_string(std::path::PathBuf::from(directory).join("manifest.json"))
+                    .unwrap(),
+            )
+            .unwrap(),
+            None => marty_sync::demo_fixtures::generate_demo_fixtures(output.path()).unwrap(),
+        };
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(manifest.dtc_path).unwrap()).unwrap();
+        let package: Value =
+            serde_json::from_str(&std::fs::read_to_string(manifest.trust_package_path).unwrap())
+                .unwrap();
+        let certificate_der = BASE64_STANDARD
+            .decode(
+                package["csca_certificates"][0]["certificate_der_b64"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        let payload =
+            build_dtc_verify_payload(&raw, &[certificate_der_to_pem(&certificate_der)]).unwrap();
+        let verified = marty_verification::dtc::verify_dtc_json(&payload.to_string()).unwrap();
+        let verified: Value = serde_json::from_str(&verified).unwrap();
+        assert_eq!(verified["is_valid"], true, "{verified:#}");
+    }
     use serde_json::json;
 
     fn sample_challenge() -> LivenessChallenge {

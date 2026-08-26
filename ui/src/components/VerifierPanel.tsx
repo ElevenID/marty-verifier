@@ -10,9 +10,6 @@ import {
   Chip,
   Stack,
   FormControl,
-  InputLabel,
-  MenuItem,
-  Select,
   Checkbox,
   FormControlLabel,
   TextField,
@@ -37,6 +34,7 @@ import {
 } from '@/services/tauri-api';
 import { useAppStore } from '@/store';
 import VerificationResultCard from './VerificationResultCard';
+import { errorMessage } from '@/utils/errors';
 
 /**
  * Normalize OID4VP credential data before sending to the backend.
@@ -74,7 +72,7 @@ export default function VerifierPanel({
   credentialType = 'mdl',
   onVerificationComplete,
 }: VerifierPanelProps) {
-  const [selectedType, setSelectedType] = useState(credentialType);
+  const selectedType = credentialType;
   const [useNfc, setUseNfc] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -170,7 +168,7 @@ export default function VerifierPanel({
       setLastVerification(verificationResult);
       onVerificationComplete?.(verificationResult);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verification failed');
+      setError(errorMessage(err, 'Verification failed'));
     } finally {
       setScanning(false);
       setVerifying(false);
@@ -269,7 +267,7 @@ export default function VerifierPanel({
       setLastVerification(verificationResult);
       onVerificationComplete?.(verificationResult);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verification failed');
+      setError(errorMessage(err, 'Verification failed'));
     } finally {
       setVerifying(false);
       setVerificationInProgress(false);
@@ -311,6 +309,7 @@ export default function VerifierPanel({
       <Box>
         <VerificationResultCard result={result} />
         <Button
+          data-testid="verify-another-button"
           variant="outlined"
           fullWidth
           onClick={handleReset}
@@ -329,24 +328,6 @@ export default function VerifierPanel({
           <Typography variant="h5">
             {selectedType.toUpperCase()} Verification
           </Typography>
-
-          <FormControl fullWidth>
-            <InputLabel id="credential-type-label">Credential Type</InputLabel>
-            <Select
-              labelId="credential-type-label"
-              value={selectedType}
-              label="Credential Type"
-              onChange={(e) => setSelectedType(e.target.value)}
-              data-testid="credential-type-select"
-            >
-              <MenuItem value="mdl">mDL</MenuItem>
-              <MenuItem value="emrtd">eMRTD (Passport)</MenuItem>
-              <MenuItem value="oid4vp">OID4VP</MenuItem>
-              <MenuItem value="sd-jwt">SD-JWT</MenuItem>
-              <MenuItem value="dtc">DTC</MenuItem>
-              <MenuItem value="open-badge">Open Badge</MenuItem>
-            </Select>
-          </FormControl>
 
           {selectedType === 'emrtd' && (
             <FormControlLabel
@@ -479,7 +460,7 @@ export default function VerifierPanel({
             fullWidth
             multiline
             minRows={3}
-            data-testid="credential-data-input"
+            slotProps={{ htmlInput: { 'data-testid': 'credential-data-input' } }}
           />
 
           <Chip

@@ -227,4 +227,16 @@ test.describe('Sync Actions', () => {
       args: { path: packagePath },
     });
   });
+
+  test('should surface the signed package rejection reason', async ({ page, mockTauri }) => {
+    await mockTauri({
+      import_trust_anchors_usb: { __error: 'Trust package signature is invalid' },
+    });
+    await page.goto('/#/sync');
+
+    await page.getByLabel(/signed trust package path/i).fill('E:\\Marty\\rejected-package.json');
+    await page.getByRole('button', { name: /import from usb/i }).click();
+
+    await expect(page.getByText(/trust package signature is invalid/i)).toBeVisible();
+  });
 });

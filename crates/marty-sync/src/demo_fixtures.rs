@@ -207,11 +207,21 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 fn absolute_display(path: &Path) -> Result<String> {
-    Ok(path
+    let absolute = path
         .canonicalize()
         .with_context(|| format!("resolve {}", path.display()))?
         .to_string_lossy()
-        .into_owned())
+        .into_owned();
+    #[cfg(windows)]
+    {
+        if let Some(unc) = absolute.strip_prefix("\\\\?\\UNC\\") {
+            return Ok(format!("\\\\{unc}"));
+        }
+        if let Some(drive_path) = absolute.strip_prefix("\\\\?\\") {
+            return Ok(drive_path.to_string());
+        }
+    }
+    Ok(absolute)
 }
 
 #[cfg(test)]
@@ -256,6 +266,7 @@ mod tests {
             manifest.usb_signing_public_key_path,
             manifest.usb_recovery_public_key_path,
         ] {
+            assert!(!path.starts_with("\\\\?\\"));
             let contents = fs::read_to_string(path).unwrap();
             assert!(!contents.contains("PRIVATE KEY"));
             assert!(!contents.contains("signing_key_pem"));

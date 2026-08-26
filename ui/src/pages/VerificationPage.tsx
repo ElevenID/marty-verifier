@@ -20,6 +20,7 @@ const credentialTypes = [
   { value: 'mdl', label: 'mDL', icon: <MdlIcon /> },
   { value: 'emrtd', label: 'eMRTD', icon: <EmrtdIcon /> },
   { value: 'oid4vp', label: 'OID4VP', icon: <OidIcon /> },
+  { value: 'sd-jwt', label: 'SD-JWT', icon: <OidIcon /> },
   { value: 'dtc', label: 'DTC', icon: <DtcIcon /> },
   { value: 'open-badge', label: 'Open Badge', icon: <OpenBadgeIcon /> },
 ];
@@ -64,6 +65,7 @@ export default function VerificationPage() {
                 key={type.value}
                 value={type.value}
                 aria-label={type.label}
+                data-testid={`credential-type-${type.value}`}
               >
                 {type.icon}
                 <Box sx={{ ml: 1 }}>{type.label}</Box>

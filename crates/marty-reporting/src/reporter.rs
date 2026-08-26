@@ -245,11 +245,17 @@ fn summarize_request_error(error: &reqwest::Error) -> String {
 mod tests {
     use super::*;
     use crate::config::ReportingConfig;
+    use std::sync::Once;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    static INSTALL_MOCK_KEYRING: Once = Once::new();
 
     fn reporter_with_config(
         config: ReportingConfig,
     ) -> (tempfile::TempDir, Arc<SecureStorage>, Reporter) {
+        INSTALL_MOCK_KEYRING.call_once(|| {
+            keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        });
         let data_dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
         let reporter = Reporter::new(Arc::clone(&storage), config);

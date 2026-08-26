@@ -29,6 +29,7 @@ import {
   UsbImportResult,
 } from '@/services/tauri-api';
 import { useAppStore } from '@/store';
+import { errorMessage } from '@/utils/errors';
 
 export default function SyncPage() {
   const [syncing, setSyncing] = useState(false);
@@ -58,7 +59,7 @@ export default function SyncPage() {
       }
       await loadSyncStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sync failed');
+      setError(errorMessage(err, 'Sync failed'));
     } finally {
       setSyncing(false);
     }
@@ -83,7 +84,7 @@ export default function SyncPage() {
       }
       await loadSyncStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'USB import failed');
+      setError(errorMessage(err, 'USB import failed'));
     } finally {
       setImporting(false);
     }

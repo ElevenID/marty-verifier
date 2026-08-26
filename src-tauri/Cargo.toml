@@ -23,6 +23,7 @@ ble = []            # BLE for mDL device engagement
 
 # Optional modules
 reporting = ["marty-reporting/api", "marty-reporting/batch"]
+demo-fixtures = ["marty-sync/demo-fixtures"]
 
 # Build variants
 no-reporting = []   # Explicitly exclude reporting from build
