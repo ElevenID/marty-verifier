@@ -11,11 +11,22 @@ repository.workspace = true
 default = ["aamva", "icao"]
 aamva = []  # AAMVA DTS sync
 icao = []   # ICAO PKD sync
-demo-fixtures = ["dep:anyhow", "dep:const-oid", "dep:getrandom", "dep:rcgen"]
+demo-fixtures = [
+    "dep:anyhow",
+    "dep:const-oid",
+    "dep:getrandom",
+    "dep:marty-crypto",
+    "dep:rcgen",
+]
 
 [[bin]]
 name = "marty-demo-fixtures"
 path = "src/bin/marty-demo-fixtures.rs"
+required-features = ["demo-fixtures"]
+
+[[bin]]
+name = "marty-emrtd-demo-fixtures"
+path = "src/bin/marty-emrtd-demo-fixtures.rs"
 required-features = ["demo-fixtures"]
 
 [dependencies]
@@ -30,6 +41,7 @@ reqwest = { workspace = true, features = ["json"] }
 
 marty-secure-storage.workspace = true
 marty-verification.workspace = true
+marty-crypto = { workspace = true, optional = true, features = ["sod-builder"] }
 
 # Certificate parsing
 x509-cert = "0.2"
