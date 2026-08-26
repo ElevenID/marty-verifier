@@ -123,9 +123,12 @@ async function injectTauriMock(page: Page, commands: MockCommands = {}) {
   };
 
   await page.addInitScript((cmds) => {
+    (window as any).__TAURI_MOCK_INVOCATIONS__ = [];
+
     // Create Tauri mock
     const mockInvoke = (command: string, args?: unknown) => {
       console.log(`[Tauri Mock] invoke: ${command}`, args);
+      (window as any).__TAURI_MOCK_INVOCATIONS__.push({ command, args });
       if (command in cmds) {
         const handler = cmds[command as keyof typeof cmds];
         if (

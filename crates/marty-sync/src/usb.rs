@@ -814,11 +814,11 @@ fn load_trusted_recovery_public_key() -> Result<[u8; 32], SyncError> {
         .map_err(|_| SyncError::UsbImport("USB recovery public key must be 32 bytes".to_string()))
 }
 
-fn signer_key_id(public_key: &[u8; 32]) -> String {
+pub(crate) fn signer_key_id(public_key: &[u8; 32]) -> String {
     format!("ed25519:{}", blake3::hash(public_key).to_hex())
 }
 
-fn canonical_signed_payload(package_value: &Value) -> Result<Vec<u8>, SyncError> {
+pub(crate) fn canonical_signed_payload(package_value: &Value) -> Result<Vec<u8>, SyncError> {
     let mut signed = package_value.clone();
     let object = signed
         .as_object_mut()

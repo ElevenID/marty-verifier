@@ -12,6 +12,7 @@ import {
   Chip,
   Grid,
   Divider,
+  TextField,
 } from '@mui/material';
 import {
   Sync as SyncIcon,
@@ -34,6 +35,7 @@ export default function SyncPage() {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<SyncResult | UsbImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usbPackagePath, setUsbPackagePath] = useState('');
   const [openBadgePolicy, setOpenBadgePolicy] = useState<string | null>(null);
   const { sync, syncError, loadSyncStatus, isOnline, networkTransition, networkError } = useAppStore();
 
@@ -63,9 +65,11 @@ export default function SyncPage() {
   };
 
   const handleUsbImport = async () => {
-    // TODO: Open file picker via Tauri dialog
-    // For now, use a hardcoded path for demonstration
-    const path = '/Volumes/USB/trust_anchors.json';
+    const path = usbPackagePath.trim();
+    if (!path) {
+      setError('Enter the path to a signed trust package.');
+      return;
+    }
 
     setImporting(true);
     setError(null);
@@ -253,26 +257,39 @@ export default function SyncPage() {
 
           {(syncing || importing) && <LinearProgress sx={{ mb: 2 }} />}
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <Button
-              variant="contained"
-              startIcon={<SyncIcon />}
-              onClick={handleSync}
-              disabled={syncing || importing || !isOnline}
-              fullWidth
-            >
-              {syncing ? 'Syncing...' : 'Sync from Cloud'}
-            </Button>
-
-            <Button
-              variant="outlined"
-              startIcon={<UsbIcon />}
-              onClick={handleUsbImport}
+          <Stack spacing={2}>
+            <TextField
+              label="Signed trust package path"
+              value={usbPackagePath}
+              onChange={(event) => setUsbPackagePath(event.target.value)}
+              placeholder="Path to trust_anchors.json on removable media"
+              helperText="Enter the full path to the signed package on the mounted USB drive."
+              slotProps={{ htmlInput: { 'data-testid': 'usb-package-path' } }}
               disabled={syncing || importing}
               fullWidth
-            >
-              {importing ? 'Importing...' : 'Import from USB'}
-            </Button>
+            />
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <Button
+                variant="contained"
+                startIcon={<SyncIcon />}
+                onClick={handleSync}
+                disabled={syncing || importing || !isOnline}
+                fullWidth
+              >
+                {syncing ? 'Syncing...' : 'Sync from Cloud'}
+              </Button>
+
+              <Button
+                variant="outlined"
+                startIcon={<UsbIcon />}
+                onClick={handleUsbImport}
+                disabled={syncing || importing || !usbPackagePath.trim()}
+                fullWidth
+              >
+                {importing ? 'Importing...' : 'Import from USB'}
+              </Button>
+            </Stack>
           </Stack>
 
           {!isOnline && (

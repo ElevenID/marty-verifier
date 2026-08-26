@@ -106,12 +106,34 @@ cargo build --release --no-default-features --features "iaca,oid4vp"
 cargo build --release --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting,nfc,ble"
 ```
 
+### Native Demo Qualification Fixtures
+
+The `marty-sync` crate has an opt-in `demo-fixtures` feature for native release
+qualification. It generates a fresh signed USB package and a DTC whose signer
+chains to the package CSCA by calling the production canonicalization and DTC
+signing code. Private keys remain process-local; the output contains only public
+keys and signed synthetic artifacts.
+
+```bash
+cargo build -p marty-sync --features demo-fixtures --bin marty-demo-fixtures
+./target/debug/marty-demo-fixtures ./temporary-output
+```
+
+Normal verifier builds do not compile this feature.
+
 ## Configuration
 
 Configuration is stored in the app data directory:
 - macOS: `~/Library/Application Support/com.marty.verifier/config.json`
 - Windows: `%APPDATA%\com.marty.verifier\config.json`
 - Linux: `~/.config/com.marty.verifier/config.json`
+
+For an isolated test, demo recording, or parallel kiosk instance, set
+`MARTY_VERIFIER_CONFIG_PATH` to an explicit config file and
+`MARTY_VERIFIER_DATA_DIR` to a dedicated data directory before starting the
+process. The data-directory override takes precedence over `data_dir` persisted
+in that config file. Use both variables together so the isolated process cannot
+read or modify the operator's normal configuration or encrypted database.
 
 ### Example Configuration
 

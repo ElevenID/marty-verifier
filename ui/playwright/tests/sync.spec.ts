@@ -44,6 +44,7 @@ test.describe('Sync Page', () => {
   test('should have sync actions', async ({ page }) => {
     await expect(page.getByRole('button', { name: /sync from cloud/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /import from usb/i })).toBeVisible();
+    await expect(page.getByLabel(/signed trust package path/i)).toBeVisible();
   });
 });
 
@@ -63,7 +64,8 @@ test.describe('Sync Status Variations', () => {
     // Cloud sync should be disabled when offline
     await expect(page.getByRole('button', { name: /sync from cloud/i })).toBeDisabled();
     
-    // USB import should still be enabled
+    // USB import remains available offline once a package is selected.
+    await page.getByLabel(/signed trust package path/i).fill('E:\\trust_anchors.json');
     await expect(page.getByRole('button', { name: /import from usb/i })).toBeEnabled();
   });
 
@@ -193,11 +195,36 @@ test.describe('Sync Actions', () => {
     await expect(page.getByText(/connection refused/i)).toBeVisible();
   });
 
-  test('should show USB import button', async ({ page, mockTauri }) => {
-    await mockTauri();
+  test('should import the exact signed package path', async ({ page, mockTauri }) => {
+    await mockTauri({
+      import_trust_anchors_usb: {
+        success: true,
+        certificates_imported: 1,
+        open_badge_keys_imported: 0,
+        package_version: 'demo-1',
+        error: null,
+      },
+    });
     await page.goto('/#/sync');
+
+    const packagePath = 'E:\\Marty\\signed trust package.json';
     const usbButton = page.getByRole('button', { name: /import from usb/i });
     await expect(usbButton).toBeVisible();
+    await expect(usbButton).toBeDisabled();
+
+    await page.getByLabel(/signed trust package path/i).fill(`  ${packagePath}  `);
     await expect(usbButton).toBeEnabled();
+    await usbButton.click();
+
+    await expect(page.getByText(/usb import: 1 certificates/i)).toBeVisible();
+    const invocation = await page.evaluate(() =>
+      (window as any).__TAURI_MOCK_INVOCATIONS__.find(
+        (entry: { command: string }) => entry.command === 'import_trust_anchors_usb'
+      )
+    );
+    expect(invocation).toEqual({
+      command: 'import_trust_anchors_usb',
+      args: { path: packagePath },
+    });
   });
 });

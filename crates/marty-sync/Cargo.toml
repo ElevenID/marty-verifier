@@ -11,6 +11,12 @@ repository.workspace = true
 default = ["aamva", "icao"]
 aamva = []  # AAMVA DTS sync
 icao = []   # ICAO PKD sync
+demo-fixtures = ["dep:anyhow", "dep:const-oid", "dep:getrandom", "dep:rcgen"]
+
+[[bin]]
+name = "marty-demo-fixtures"
+path = "src/bin/marty-demo-fixtures.rs"
+required-features = ["demo-fixtures"]
 
 [dependencies]
 serde.workspace = true
@@ -31,6 +37,11 @@ der = { version = "0.7", features = ["std"] }
 base64 = "0.22"
 blake3 = "1.5"
 ed25519-dalek = { workspace = true }
+anyhow = { workspace = true, optional = true }
+const-oid = { version = "0.9", optional = true }
+getrandom = { version = "0.3", optional = true }
+# 0.14.8+ requires Rust 1.88; the verifier's documented MSRV is 1.87.
+rcgen = { version = "=0.14.7", optional = true }
 
 [dev-dependencies]
 tempfile = "3.14"
