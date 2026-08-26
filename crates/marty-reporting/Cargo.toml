@@ -27,4 +27,4 @@ marty-secure-storage.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile = "3.14"
-keyring = { version = "3.6", default-features = false }
+keyring-core = "1.0"

@@ -246,6 +246,7 @@ mod tests {
     use super::*;
     use crate::config::ReportingConfig;
     use std::sync::Once;
+    #[cfg(feature = "api")]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     static INSTALL_MOCK_KEYRING: Once = Once::new();
@@ -254,14 +255,16 @@ mod tests {
         config: ReportingConfig,
     ) -> (tempfile::TempDir, Arc<SecureStorage>, Reporter) {
         INSTALL_MOCK_KEYRING.call_once(|| {
-            keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+            keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
         });
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage =
+            Arc::new(SecureStorage::new_with_process_local_keyring(data_dir.path()).unwrap());
         let reporter = Reporter::new(Arc::clone(&storage), config);
         (data_dir, storage, reporter)
     }
 
+    #[cfg(feature = "api")]
     async fn one_response_server(status: &str) -> (String, tokio::task::JoinHandle<String>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -425,6 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "api")]
     async fn failed_upload_keeps_the_durable_event() {
         let (endpoint, server) = one_response_server("503 Service Unavailable").await;
         let config = ReportingConfig {
@@ -458,6 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "api")]
     async fn request_failures_do_not_persist_destination_credentials() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -494,6 +499,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "api")]
     async fn acknowledged_upload_removes_the_exact_durable_batch() {
         let (endpoint, server) = one_response_server("204 No Content").await;
         let config = ReportingConfig {
@@ -524,6 +530,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "api")]
     async fn presigned_batch_destination_uses_put() {
         let (endpoint, server) = one_response_server("200 OK").await;
         let config = ReportingConfig {
@@ -546,5 +553,27 @@ mod tests {
         let request = server.await.unwrap();
         assert!(request.starts_with("PUT /events HTTP/1.1"));
         assert!(!request.to_ascii_lowercase().contains("authorization:"));
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "api"))]
+    async fn remote_flush_fails_closed_without_api_support_and_preserves_the_event() {
+        let config = ReportingConfig {
+            api_endpoint: Some("https://reporting.invalid/events".to_string()),
+            ..ReportingConfig::default()
+        };
+        let (_data_dir, storage, reporter) = reporter_with_config(config);
+        reporter
+            .queue_event(VerificationEvent::verification(
+                "verification-no-api".to_string(),
+                "emrtd".to_string(),
+                "valid".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let error = reporter.flush().await.unwrap_err();
+        assert!(matches!(error, ReportingError::Configuration(_)));
+        assert_eq!(storage.get_queue_status().await.unwrap().pending_events, 1);
     }
 }
