@@ -30,6 +30,7 @@ jobs:
         run: |
           python scripts/test_update_core_dependencies.py
           python scripts/test_stable_tag_gate.py
+          python scripts/test_native_build_contract.py
 
   test-rust:
     name: Rust ${{ matrix.task }} (${{ matrix.os }})
@@ -166,6 +167,9 @@ jobs:
 
       - name: Type check
         run: pnpm type-check
+
+      - name: Build production frontend
+        run: pnpm build:obfuscate
 
       - name: Lint
         run: pnpm lint

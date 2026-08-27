@@ -4,8 +4,14 @@
   "identifier": "com.marty.verifier",
   "version": "0.1.4",
   "build": {
-    "beforeBuildCommand": "",
-    "beforeDevCommand": "",
+    "beforeBuildCommand": {
+      "script": "pnpm build:obfuscate",
+      "cwd": "../ui"
+    },
+    "beforeDevCommand": {
+      "script": "pnpm dev",
+      "cwd": "../ui"
+    },
     "devUrl": "http://localhost:5173",
     "frontendDist": "../ui/dist"
   },

@@ -45,8 +45,7 @@ goto unknown
 echo [BUILD] Building for Simple Kiosk (camera only)...
 set CARGO_FEATURES=iaca,oid4vp
 cd ui
-call pnpm tauri build -- --features "%CARGO_FEATURES%"
-call pnpm run obfuscate
+call pnpm tauri build -- --no-default-features --features "%CARGO_FEATURES%"
 cd ..
 echo [BUILD] Simple Kiosk build complete!
 goto end
@@ -56,7 +55,6 @@ echo [BUILD] Building for Complex Kiosk (full features)...
 set CARGO_FEATURES=iaca,csca,oid4vp,sd-jwt,biometrics,reporting,nfc,ble
 cd ui
 call pnpm tauri build -- --features "%CARGO_FEATURES%"
-call pnpm run obfuscate
 cd ..
 echo [BUILD] Complex Kiosk build complete!
 goto end
