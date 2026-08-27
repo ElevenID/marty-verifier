@@ -56,30 +56,36 @@ marty-verifier/
 
 ### Prerequisites
 - Rust 1.87+
-- Node.js 20+
+- Node.js 24+
 - pnpm 8+
 
 ### Development
 
 ```bash
-# Install UI dependencies
-cd ui
-pnpm install
+# Install exact UI dependencies
+pnpm --dir ui install --frozen-lockfile
 
 # Run development server
-pnpm tauri dev
+pnpm --dir ui tauri dev
 ```
 
 ### Production Build
 
 ```bash
 # Build for current platform
-pnpm tauri build
+pnpm --dir ui tauri build
 
-# Build with specific features
-cd src-tauri
-cargo build --release --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting"
+# Build a debug executable without an installer
+pnpm --dir ui tauri build --debug --no-bundle
+
+# Build with specific features through the same frontend hook
+pnpm --dir ui tauri build --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting"
 ```
+
+Both Tauri build commands run the configured frontend hook first. The hook
+rebuilds and obfuscates `ui/dist` from the current checkout before Rust embeds
+it, so an older ignored `dist` directory cannot be silently packaged. Release
+workflows and local wrapper scripts use this same build contract.
 
 ### Feature Flags
 
@@ -97,13 +103,13 @@ cargo build --release --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting"
 ### Minimal Build (Simple Kiosk)
 
 ```bash
-cargo build --release --no-default-features --features "iaca,oid4vp"
+pnpm --dir ui tauri build -- --no-default-features --features "iaca,oid4vp"
 ```
 
 ### Full Build (Complex Kiosk)
 
 ```bash
-cargo build --release --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting,nfc,ble"
+pnpm --dir ui tauri build --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting,nfc,ble"
 ```
 
 ### Native Demo Qualification Fixtures

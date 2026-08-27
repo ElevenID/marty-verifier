@@ -62,7 +62,7 @@ build_simple() {
     export CARGO_FEATURES="iaca,oid4vp"
     
     cd ui
-    pnpm tauri build -- --features "$CARGO_FEATURES"
+    pnpm tauri build -- --no-default-features --features "$CARGO_FEATURES"
     cd ..
     
     print_status "Simple Kiosk build complete!"
@@ -90,17 +90,6 @@ build_dev() {
     cd ..
 }
 
-# Apply code obfuscation to built UI
-apply_obfuscation() {
-    print_status "Applying JavaScript obfuscation..."
-    
-    cd ui
-    pnpm run obfuscate
-    cd ..
-    
-    print_status "Obfuscation complete!"
-}
-
 # Main
 main() {
     local BUILD_TYPE="${1:-dev}"
@@ -111,11 +100,9 @@ main() {
     case "$BUILD_TYPE" in
         simple)
             build_simple
-            apply_obfuscation
             ;;
         complex)
             build_complex
-            apply_obfuscation
             ;;
         dev)
             build_dev

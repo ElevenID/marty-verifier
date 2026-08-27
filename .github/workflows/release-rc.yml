@@ -159,10 +159,6 @@ jobs:
         working-directory: ui
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend
-        working-directory: ui
-        run: pnpm build
-
       - name: Run tests (all features)
         if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test --locked --workspace --all-features
