@@ -38,6 +38,48 @@ struct GeneratedFixtures {
     recovery_public_key: [u8; 32],
 }
 
+pub(crate) struct SignedTrustPackage {
+    pub trust_package: Value,
+    pub signing_public_key: [u8; 32],
+    pub recovery_public_key: [u8; 32],
+}
+
+pub(crate) fn signed_trust_package(
+    csca_certificates: Vec<Value>,
+    now: chrono::DateTime<Utc>,
+    version: &str,
+) -> Result<SignedTrustPackage> {
+    let signing_key = random_ed25519_key()?;
+    let recovery_key = random_ed25519_key()?;
+    let signing_public_key = signing_key.verifying_key().to_bytes();
+    let recovery_public_key = recovery_key.verifying_key().to_bytes();
+    let mut trust_package = json!({
+        "trust_domain": "usb:default",
+        "sequence": now.timestamp_millis().unsigned_abs(),
+        "version": version,
+        "created_at": now.to_rfc3339(),
+        "expires_at": (now + Duration::days(7)).to_rfc3339(),
+        "signer_key_id": signer_key_id(&signing_public_key),
+        "next_signer_key_id": Value::Null,
+        "recovery_signer_key_id": signer_key_id(&recovery_public_key),
+        "signing_cert": "ephemeral-demo-key",
+        "signature": "",
+        "iaca_certificates": [],
+        "csca_certificates": csca_certificates,
+        "dsc_certificates": [],
+        "open_badge_verification_methods": []
+    });
+    let payload = canonical_signed_payload(&trust_package).context("canonicalize trust package")?;
+    trust_package["signature"] = STANDARD
+        .encode(signing_key.sign(&payload).to_bytes())
+        .into();
+    Ok(SignedTrustPackage {
+        trust_package,
+        signing_public_key,
+        recovery_public_key,
+    })
+}
+
 /// Generate a fresh signed trust package and DTC chain in `output_dir`.
 ///
 /// No private key material is serialized or returned.
@@ -75,11 +117,6 @@ pub fn generate_demo_fixtures(output_dir: &Path) -> Result<DemoFixtureManifest> 
 }
 
 fn generate_values() -> Result<GeneratedFixtures> {
-    let signing_key = random_ed25519_key()?;
-    let recovery_key = random_ed25519_key()?;
-    let signing_public_key = signing_key.verifying_key().to_bytes();
-    let recovery_public_key = recovery_key.verifying_key().to_bytes();
-
     let mut ca_params = CertificateParams::default();
     ca_params
         .distinguished_name
@@ -109,32 +146,17 @@ fn generate_values() -> Result<GeneratedFixtures> {
         .context("generate demo DTC signer certificate")?;
 
     let now = Utc::now();
-    let mut trust_package = json!({
-        "trust_domain": "usb:default",
-        "sequence": now.timestamp_millis().unsigned_abs(),
-        "version": "demo-1",
-        "created_at": now.to_rfc3339(),
-        "expires_at": (now + Duration::days(7)).to_rfc3339(),
-        "signer_key_id": signer_key_id(&signing_public_key),
-        "next_signer_key_id": Value::Null,
-        "recovery_signer_key_id": signer_key_id(&recovery_public_key),
-        "signing_cert": "ephemeral-demo-key",
-        "signature": "",
-        "iaca_certificates": [],
-        "csca_certificates": [{
+    let signed_trust = signed_trust_package(
+        vec![json!({
             "jurisdiction": "UTO",
             "subject": "Marty Demo CSCA",
             "issuer": "Marty Demo CSCA",
             "serial": Value::Null,
             "certificate_der_b64": STANDARD.encode(ca_cert.der().as_ref())
-        }],
-        "dsc_certificates": [],
-        "open_badge_verification_methods": []
-    });
-    let payload = canonical_signed_payload(&trust_package).context("canonicalize trust package")?;
-    trust_package["signature"] = STANDARD
-        .encode(signing_key.sign(&payload).to_bytes())
-        .into();
+        })],
+        now,
+        "demo-1",
+    )?;
 
     let request = json!({
         "passport_number": "D09DEMO1",
@@ -186,12 +208,12 @@ fn generate_values() -> Result<GeneratedFixtures> {
     }
 
     Ok(GeneratedFixtures {
-        trust_package,
+        trust_package: signed_trust.trust_package,
         dtc,
         #[cfg(test)]
         csca_pem: ca_cert.pem(),
-        signing_public_key,
-        recovery_public_key,
+        signing_public_key: signed_trust.signing_public_key,
+        recovery_public_key: signed_trust.recovery_public_key,
     })
 }
 
@@ -201,12 +223,12 @@ fn random_ed25519_key() -> Result<SigningKey> {
     Ok(SigningKey::from_bytes(&seed))
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
-fn absolute_display(path: &Path) -> Result<String> {
+pub(crate) fn absolute_display(path: &Path) -> Result<String> {
     let absolute = path
         .canonicalize()
         .with_context(|| format!("resolve {}", path.display()))?

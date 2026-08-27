@@ -109,14 +109,19 @@ cargo build --release --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporting,n
 ### Native Demo Qualification Fixtures
 
 The `marty-sync` crate has an opt-in `demo-fixtures` feature for native release
-qualification. It generates a fresh signed USB package and a DTC whose signer
-chains to the package CSCA by calling the production canonicalization and DTC
-signing code. Private keys remain process-local; the output contains only public
-keys and signed synthetic artifacts.
+qualification. Its DTC lane generates a fresh signed USB package and a DTC whose
+signer chains to the package CSCA by calling the production canonicalization and
+DTC signing code. Its eMRTD lane creates a real EF.SOD, DSC chain, and data
+groups, then proves both the trusted passport and DG-tampered denial through the
+canonical Rust verifier before emitting them. Private keys remain process-local;
+the output contains only public keys and signed synthetic artifacts.
 
 ```bash
 cargo build -p marty-sync --features demo-fixtures --bin marty-demo-fixtures
 ./target/debug/marty-demo-fixtures ./temporary-output
+
+cargo build -p marty-sync --features demo-fixtures --bin marty-emrtd-demo-fixtures
+./target/debug/marty-emrtd-demo-fixtures ./temporary-emrtd-output
 ```
 
 Normal verifier builds do not compile this feature.

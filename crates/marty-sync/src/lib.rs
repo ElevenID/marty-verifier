@@ -13,6 +13,8 @@ mod usb;
 
 #[cfg(feature = "demo-fixtures")]
 pub mod demo_fixtures;
+#[cfg(feature = "demo-fixtures")]
+pub mod emrtd_demo_fixtures;
 
 pub use engine::{SyncConfig, SyncEngine, SyncResult, SyncStatus};
 pub use error::SyncError;
