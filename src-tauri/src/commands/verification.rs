@@ -782,8 +782,13 @@ pub async fn verify_credential(
         "Verifying credential"
     );
 
-    // Check provider-neutral capability policy and hardware support.
-    state.check_feature(&request.credential_type).await?;
+    // Keep the credential entitlement distinct from its acquisition hardware.
+    // A complete eMRTD payload can be verified cryptographically without an
+    // NFC reader; NFC acquisition continues to require the complex tier.
+    let hardware_feature = verification_hardware_feature(&request.credential_type, request.use_nfc);
+    state
+        .check_feature_with_hardware(&request.credential_type, hardware_feature)
+        .await?;
 
     let mut liveness_result: Option<LivenessResultPayload> = None;
     if request.require_liveness || request.liveness_challenge.is_some() {
@@ -965,6 +970,14 @@ pub async fn verify_credential(
     }
 
     Ok(result)
+}
+
+fn verification_hardware_feature(credential_type: &str, use_nfc: bool) -> &str {
+    if credential_type.eq_ignore_ascii_case("emrtd") && !use_nfc {
+        "basic_verification"
+    } else {
+        credential_type
+    }
 }
 
 async fn verify_dtc_payload(
@@ -2963,6 +2976,37 @@ fn unsupported_result(request: &VerifyRequest, reason: &str) -> VerificationResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn software_emrtd_verification_uses_the_simple_hardware_path() {
+        let hardware_feature = verification_hardware_feature("emrtd", false);
+
+        assert_eq!(hardware_feature, "basic_verification");
+        assert!(crate::hardware::HardwareTier::Simple.supports_feature(hardware_feature));
+    }
+
+    #[test]
+    fn software_emrtd_hardware_selection_is_case_insensitive() {
+        assert_eq!(
+            verification_hardware_feature("eMRTD", false),
+            "basic_verification"
+        );
+    }
+
+    #[test]
+    fn nfc_emrtd_verification_still_requires_complex_hardware() {
+        let hardware_feature = verification_hardware_feature("emrtd", true);
+
+        assert_eq!(hardware_feature, "emrtd");
+        assert!(!crate::hardware::HardwareTier::Simple.supports_feature(hardware_feature));
+        assert!(crate::hardware::HardwareTier::Complex.supports_feature(hardware_feature));
+    }
+
+    #[test]
+    fn unrelated_credential_hardware_requirements_are_unchanged() {
+        assert_eq!(verification_hardware_feature("dtc", false), "dtc");
+        assert_eq!(verification_hardware_feature("oid4vp", false), "oid4vp");
+    }
 
     #[cfg(feature = "demo-fixtures")]
     #[test]

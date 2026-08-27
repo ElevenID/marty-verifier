@@ -196,6 +196,20 @@ impl AppState {
 
     /// Check if a compiled feature is enabled and the hardware supports it.
     pub async fn check_feature(&self, feature: &str) -> AppResult<()> {
+        self.check_feature_with_hardware(feature, feature).await
+    }
+
+    /// Check a provider-neutral capability while allowing its hardware path to
+    /// differ from the capability name.
+    ///
+    /// Some credential formats can be verified from an already acquired
+    /// payload on simple hardware, while acquisition through NFC or another
+    /// sensor still requires the corresponding complex-hardware capability.
+    pub async fn check_feature_with_hardware(
+        &self,
+        feature: &str,
+        hardware_feature: &str,
+    ) -> AppResult<()> {
         let decision = self.entitlements.check(feature);
         if !decision.allowed {
             return Err(crate::error::AppError::EntitlementDenied {
@@ -206,9 +220,9 @@ impl AppState {
 
         // Check hardware tier requirements
         let tier = self.hardware_tier.read().await;
-        if !tier.supports_feature(feature) {
+        if !tier.supports_feature(hardware_feature) {
             return Err(crate::error::AppError::InsufficientHardware {
-                required: feature.to_string(),
+                required: hardware_feature.to_string(),
                 available: format!("{:?}", *tier),
             });
         }
