@@ -7,7 +7,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use marty_app_storage::{OpenBadgeVerificationMethod, TrustAnchorType};
+use marty_app_storage::OpenBadgeVerificationMethod;
 #[cfg(feature = "oid4vp")]
 use marty_oid4vci::verifier::{
     PresentationDefinition, PresentationSubmission, VerificationCheckStatus as Oid4vpCheckStatus,
@@ -775,6 +775,8 @@ pub async fn verify_credential(
     request: VerifyRequest,
     state: State<'_, AppState>,
 ) -> AppResult<VerificationResult> {
+    #[cfg(feature = "reporting")]
+    let started_at = std::time::Instant::now();
     tracing::info!(
         credential_type = %request.credential_type,
         "Verifying credential"
@@ -841,6 +843,9 @@ pub async fn verify_credential(
     let is_online = *state.is_online.read().await;
 
     let credential_type = request.credential_type.to_lowercase();
+    if matches!(credential_type.as_str(), "emrtd" | "dtc") {
+        state.sync_engine.ensure_csca_cache_fresh().await?;
+    }
     let mut result = match credential_type.as_str() {
         "emrtd" => verify_emrtd_payload(&request, &state, is_online).await?,
         "dtc" => verify_dtc_payload(&request, &state, is_online).await?,
@@ -922,12 +927,42 @@ pub async fn verify_credential(
     }
 
     // Store verification event
+    result.verification_id = verification_id.clone();
     state
         .storage
         .store_verification_event(&verification_id, &request.credential_type, &result.status)
         .await?;
 
-    // TODO: Queue for reporting if enabled and reporter is added to AppState
+    #[cfg(feature = "reporting")]
+    if state.config.read().await.reporting_config.enabled
+        && state.runtime_config.should_audit_all_events().await
+    {
+        let event = marty_reporting::VerificationEvent::verification(
+            verification_id,
+            request.credential_type.clone(),
+            format!("{:?}", result.status).to_lowercase(),
+        )
+        .with_verification_context(
+            result
+                .issuer
+                .as_ref()
+                .and_then(|issuer| issuer.jurisdiction.clone()),
+            Some(result.trust_chain.chain_type.clone()),
+            result.trust_chain.offline_verified,
+            Some(
+                started_at
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            ),
+            result
+                .face_match
+                .as_ref()
+                .map(|match_result| match_result.verified),
+        );
+        state.reporter.queue_event(event).await?;
+    }
 
     Ok(result)
 }
@@ -943,7 +978,9 @@ async fn verify_dtc_payload(
         .trust_storage
         .get_trust_anchor_records(CoreTrustAnchorType::Csca, None)
         .await?;
-    let (governed_trust_anchors, rejected_records) = build_governed_dtc_csca_store(&records)?;
+    let max_offline_hours = state.config.read().await.sync_config.max_offline_hours;
+    let (governed_trust_anchors, rejected_records) =
+        build_governed_dtc_csca_store(&records, Utc::now(), max_offline_hours)?;
     let payload = build_dtc_verify_payload(&raw, &governed_trust_anchors)?;
     let verify_json = serde_json::to_string(&payload)?;
     let verify_result = marty_verification::dtc::verify_dtc_json(&verify_json)
@@ -1205,13 +1242,17 @@ fn dtc_contains_presented_trust_anchors(raw: &Value) -> bool {
             .is_some_and(|dtc| dtc.contains_key("trust_anchors_pem"))
 }
 
-fn build_governed_dtc_csca_store(records: &[TrustAnchorRecord]) -> AppResult<(Vec<String>, usize)> {
+fn build_governed_dtc_csca_store(
+    records: &[TrustAnchorRecord],
+    now: DateTime<Utc>,
+    max_offline_hours: u32,
+) -> AppResult<(Vec<String>, usize)> {
     let mut anchors = Vec::new();
     let mut seen = HashSet::new();
     let mut rejected_records = 0;
 
     for record in records {
-        if record.provenance.is_none() {
+        if !governed_csca_record_is_usable(record, now, max_offline_hours) {
             rejected_records += 1;
             continue;
         }
@@ -1226,6 +1267,25 @@ fn build_governed_dtc_csca_store(records: &[TrustAnchorRecord]) -> AppResult<(Ve
     }
 
     Ok((anchors, rejected_records))
+}
+
+fn governed_csca_record_is_usable(
+    record: &TrustAnchorRecord,
+    now: DateTime<Utc>,
+    max_offline_hours: u32,
+) -> bool {
+    let Some(provenance) = record.provenance.as_ref() else {
+        return false;
+    };
+    let maximum_age = Duration::hours(i64::from(max_offline_hours));
+    provenance.created_at <= now
+        && provenance.imported_at <= now
+        && provenance.created_at < provenance.expires_at
+        && provenance.expires_at > now
+        && now - provenance.created_at <= maximum_age
+        && record.anchor.synced_at == provenance.created_at
+        && record.anchor.not_before.is_none_or(|value| value <= now)
+        && record.anchor.not_after.is_none_or(|value| value > now)
 }
 
 fn certificate_der_to_pem(certificate_der: &[u8]) -> String {
@@ -2903,6 +2963,37 @@ fn unsupported_result(request: &VerifyRequest, reason: &str) -> VerificationResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "demo-fixtures")]
+    #[test]
+    fn generated_dtc_passes_the_exact_app_payload_adapter_with_governed_csca() {
+        let output = tempfile::tempdir().unwrap();
+        let manifest = match std::env::var_os("MARTY_DEMO_FIXTURE_DIRECTORY") {
+            Some(directory) => serde_json::from_str(
+                &std::fs::read_to_string(std::path::PathBuf::from(directory).join("manifest.json"))
+                    .unwrap(),
+            )
+            .unwrap(),
+            None => marty_sync::demo_fixtures::generate_demo_fixtures(output.path()).unwrap(),
+        };
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(manifest.dtc_path).unwrap()).unwrap();
+        let package: Value =
+            serde_json::from_str(&std::fs::read_to_string(manifest.trust_package_path).unwrap())
+                .unwrap();
+        let certificate_der = BASE64_STANDARD
+            .decode(
+                package["csca_certificates"][0]["certificate_der_b64"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        let payload =
+            build_dtc_verify_payload(&raw, &[certificate_der_to_pem(&certificate_der)]).unwrap();
+        let verified = marty_verification::dtc::verify_dtc_json(&payload.to_string()).unwrap();
+        let verified: Value = serde_json::from_str(&verified).unwrap();
+        assert_eq!(verified["is_valid"], true, "{verified:#}");
+    }
     use serde_json::json;
 
     fn sample_challenge() -> LivenessChallenge {
@@ -3190,8 +3281,8 @@ mod tests {
             provenance: None,
         };
 
-        let (anchors, rejected) =
-            build_governed_dtc_csca_store(&[record]).expect("legacy record is ignored");
+        let (anchors, rejected) = build_governed_dtc_csca_store(&[record], Utc::now(), 72)
+            .expect("legacy record is ignored");
 
         assert!(anchors.is_empty());
         assert_eq!(rejected, 1);
@@ -3235,12 +3326,49 @@ mod tests {
         };
 
         let (anchors, rejected) =
-            build_governed_dtc_csca_store(&[record]).expect("governed record");
+            build_governed_dtc_csca_store(&[record], now, 72).expect("governed record");
 
         assert_eq!(rejected, 0);
         assert_eq!(anchors.len(), 1);
         assert!(anchors[0].starts_with("-----BEGIN CERTIFICATE-----\n"));
         assert!(anchors[0].ends_with("-----END CERTIFICATE-----\n"));
+    }
+
+    #[test]
+    fn governed_dtc_store_rejects_expired_package_provenance() {
+        let now = Utc::now();
+        let record = TrustAnchorRecord {
+            anchor: marty_secure_storage::TrustAnchor {
+                id: "expired".to_string(),
+                anchor_type: CoreTrustAnchorType::Csca,
+                jurisdiction: "USA".to_string(),
+                subject: None,
+                issuer: None,
+                serial_number: None,
+                not_before: None,
+                not_after: None,
+                certificate_der: vec![1, 2, 3],
+                certificate_hash: "expired".to_string(),
+                source: marty_secure_storage::TrustAnchorSource::UsbImport,
+                synced_at: now - Duration::hours(73),
+            },
+            provenance: Some(TrustPackageProvenance {
+                trust_domain: "usb:expired-test".to_string(),
+                sequence: 1,
+                package_version: "1.0.0".to_string(),
+                created_at: now - Duration::hours(73),
+                expires_at: now + Duration::hours(1),
+                signer_key_id: "expired-test-signer".to_string(),
+                package_digest: "a".repeat(64),
+                imported_at: now - Duration::hours(73),
+            }),
+        };
+
+        let (anchors, rejected) = build_governed_dtc_csca_store(&[record], now, 72)
+            .expect("expired record is ignored before parsing its certificate");
+
+        assert!(anchors.is_empty());
+        assert_eq!(rejected, 1);
     }
 
     #[tokio::test]
@@ -3983,13 +4111,19 @@ async fn verify_emrtd_payload(
 }
 
 async fn build_csca_registry(state: &AppState) -> AppResult<CscaRegistry> {
-    let anchors = state
-        .storage
-        .get_trust_anchors(TrustAnchorType::Csca, None)
+    let records = state
+        .trust_storage
+        .get_trust_anchor_records(CoreTrustAnchorType::Csca, None)
         .await?;
+    let max_offline_hours = state.config.read().await.sync_config.max_offline_hours;
+    let now = Utc::now();
 
     let mut registry = CscaRegistry::new();
-    for anchor in anchors {
+    for record in records
+        .into_iter()
+        .filter(|record| governed_csca_record_is_usable(record, now, max_offline_hours))
+    {
+        let anchor = record.anchor;
         let cert = Certificate::from_der(&anchor.certificate_der).map_err(|e| {
             AppError::Verification(format!(
                 "Failed to parse CSCA certificate {}: {}",

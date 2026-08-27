@@ -20,6 +20,9 @@ test.describe('Verification Page', () => {
     await expect(page.getByRole('button', { name: /mdl/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /emrtd/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /oid4vp/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /sd-jwt/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^dtc$/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /open badge/i })).toBeVisible();
   });
 
   test('should allow selecting different credential types', async ({ page }) => {
@@ -33,6 +36,14 @@ test.describe('Verification Page', () => {
     await emrtdButton.click();
     await expect(emrtdButton).toHaveAttribute('aria-pressed', 'true');
     await expect(mdlButton).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('heading', { name: /emrtd verification/i })).toBeVisible();
+
+    const dtcButton = page.getByTestId('credential-type-dtc');
+    await dtcButton.click();
+    await expect(dtcButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('heading', { name: /dtc verification/i })).toBeVisible();
+    await page.getByTestId('credential-data-input').fill('{"synthetic":"dtc"}');
+    await expect(page.getByTestId('credential-data-input')).toHaveValue('{"synthetic":"dtc"}');
   });
 
   test('should show scan button when ready', async ({ page }) => {
@@ -117,5 +128,6 @@ test.describe('Verification Flow', () => {
     
     // Should show result
     await expect(page.getByTestId('verification-result')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('verify-another-button')).toBeVisible();
   });
 });

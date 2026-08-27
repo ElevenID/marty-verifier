@@ -527,9 +527,10 @@ fn parse_certificate_entry(
         ));
     }
 
-    // Hash the certificate for ID
-    let hash = blake3::hash(&certificate_der);
-    let id = format!("{}-{}", anchor_type, &hash.to_hex()[..16]);
+    // Secure storage uses the full certificate digest as both the stable ID and
+    // integrity hash. Keep this producer aligned with that persistence contract.
+    let certificate_hash = certificate_digest(&certificate_der);
+    let id = certificate_hash.clone();
 
     Ok(TrustAnchor {
         id,
@@ -541,10 +542,14 @@ fn parse_certificate_entry(
         not_before,
         not_after,
         certificate_der,
-        certificate_hash: hash.to_hex().to_string(),
+        certificate_hash,
         source: marty_secure_storage::TrustAnchorSource::UsbImport,
         synced_at: package_created_at,
     })
+}
+
+fn certificate_digest(certificate_der: &[u8]) -> String {
+    blake3::hash(certificate_der).to_hex().to_string()
 }
 
 fn parse_open_badge_method(
@@ -814,11 +819,11 @@ fn load_trusted_recovery_public_key() -> Result<[u8; 32], SyncError> {
         .map_err(|_| SyncError::UsbImport("USB recovery public key must be 32 bytes".to_string()))
 }
 
-fn signer_key_id(public_key: &[u8; 32]) -> String {
+pub(crate) fn signer_key_id(public_key: &[u8; 32]) -> String {
     format!("ed25519:{}", blake3::hash(public_key).to_hex())
 }
 
-fn canonical_signed_payload(package_value: &Value) -> Result<Vec<u8>, SyncError> {
+pub(crate) fn canonical_signed_payload(package_value: &Value) -> Result<Vec<u8>, SyncError> {
     let mut signed = package_value.clone();
     let object = signed
         .as_object_mut()
@@ -1276,5 +1281,14 @@ mod tests {
         )
         .expect_err("malformed DER must fail");
         assert!(matches!(error, SyncError::Certificate(_)));
+    }
+
+    #[test]
+    fn stored_anchor_identity_matches_the_full_certificate_digest_contract() {
+        let certificate_der = b"synthetic certificate bytes";
+        let digest = certificate_digest(certificate_der);
+        assert_eq!(digest, blake3::hash(certificate_der).to_hex().to_string());
+        assert_eq!(digest.len(), 64);
+        assert!(!digest.contains('-'));
     }
 }

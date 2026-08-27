@@ -1,10 +1,11 @@
 //! Sync engine
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -85,25 +86,48 @@ pub struct SyncResult {
 /// Sync engine for trust anchor updates
 pub struct SyncEngine {
     storage: Arc<SecureStorage>,
-    config: SyncConfig,
-    sync_in_progress: RwLock<bool>,
+    config: RwLock<SyncConfig>,
+    sync_in_progress: AtomicBool,
+}
+
+struct SyncLease<'a> {
+    in_progress: &'a AtomicBool,
+}
+
+impl Drop for SyncLease<'_> {
+    fn drop(&mut self) {
+        self.in_progress.store(false, Ordering::Release);
+    }
 }
 
 impl SyncEngine {
     /// Create new sync engine
     pub fn new(storage: Arc<SecureStorage>, config: SyncConfig) -> Result<Self, SyncError> {
-        validate_trust_domain(&config.usb_trust_domain)?;
+        Self::validate_config(&config)?;
         Ok(Self {
             storage,
-            config,
-            sync_in_progress: RwLock::new(false),
+            config: RwLock::new(config),
+            sync_in_progress: AtomicBool::new(false),
         })
+    }
+
+    /// Validate a configuration before it is persisted or activated.
+    pub fn validate_config(config: &SyncConfig) -> Result<(), SyncError> {
+        validate_trust_domain(&config.usb_trust_domain)
+    }
+
+    /// Atomically replace the live sync and trust-freshness configuration.
+    pub async fn set_config(&self, config: SyncConfig) -> Result<(), SyncError> {
+        Self::validate_config(&config)?;
+        *self.config.write().await = config;
+        Ok(())
     }
 
     /// Get current sync status
     pub async fn get_status(&self) -> Result<SyncStatus, SyncError> {
+        let config = self.config.read().await.clone();
         let state = self.storage.get_sync_state().await?;
-        let sync_in_progress = *self.sync_in_progress.read().await;
+        let sync_in_progress = self.sync_in_progress.load(Ordering::Acquire);
 
         // Count certificates
         let iaca_count = self
@@ -132,7 +156,7 @@ impl SyncEngine {
 
         // Check if sync is overdue
         let sync_overdue = hours_since_sync
-            .map(|h| h > self.config.max_offline_hours as f64)
+            .map(|h| h > config.max_offline_hours as f64)
             .unwrap_or(true);
 
         let (open_badge_last_sync_str, open_badge_hours_since_sync) =
@@ -146,7 +170,7 @@ impl SyncEngine {
             };
 
         let open_badge_sync_overdue = open_badge_hours_since_sync
-            .map(|h| h > self.config.max_offline_hours as f64)
+            .map(|h| h > config.max_offline_hours as f64)
             .unwrap_or(true);
 
         Ok(SyncStatus {
@@ -169,16 +193,33 @@ impl SyncEngine {
         })
     }
 
+    /// Require a recently synchronized CSCA cache before a verification path
+    /// consumes locally stored passport or DTC trust anchors.
+    ///
+    /// A configured network connection is not itself evidence that the cache
+    /// is current: verification remains fail-closed until a signed package has
+    /// actually advanced the CSCA synchronization timestamp.
+    pub async fn ensure_csca_cache_fresh(&self) -> Result<(), SyncError> {
+        let max_offline_hours = self.config.read().await.max_offline_hours;
+        let last_sync = self
+            .storage
+            .get_sync_state()
+            .await?
+            .and_then(|state| state.last_csca_sync);
+        ensure_cache_fresh_at(last_sync, Utc::now(), max_offline_hours, "CSCA")
+    }
+
     /// Perform sync
-    pub async fn sync(&self, force: bool) -> Result<SyncResult, SyncError> {
-        // Check if already in progress
-        {
-            let mut in_progress = self.sync_in_progress.write().await;
-            if *in_progress && !force {
-                return Err(SyncError::SyncInProgress);
-            }
-            *in_progress = true;
-        }
+    pub async fn sync(&self, _force: bool) -> Result<SyncResult, SyncError> {
+        // `force` may bypass a future scheduling interval, but must never bypass
+        // mutual exclusion. The lease also clears the flag when an awaited
+        // operation errors or the sync future is cancelled.
+        self.sync_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| SyncError::SyncInProgress)?;
+        let _lease = SyncLease {
+            in_progress: &self.sync_in_progress,
+        };
 
         let start = Instant::now();
         let mut result = SyncResult {
@@ -225,9 +266,6 @@ impl SyncEngine {
 
         result.duration_seconds = start.elapsed().as_secs_f64();
 
-        // Release lock
-        *self.sync_in_progress.write().await = false;
-
         tracing::info!(
             success = result.success,
             iaca = result.iaca_updated,
@@ -242,57 +280,66 @@ impl SyncEngine {
     }
 
     async fn do_sync(&self, _result: &mut SyncResult) -> Result<(), SyncError> {
-        // Sync IACA from AAMVA DTS
-        #[cfg(feature = "aamva")]
-        if let Some(ref url) = self.config.aamva_dts_url {
-            tracing::info!(url, "Syncing IACA from AAMVA DTS");
-            // TODO: Implement actual sync
-            // For now, just log
+        let config = self.config.read().await.clone();
+        let configured_sources = [
+            config.aamva_dts_url.as_deref().map(|_| "AAMVA DTS"),
+            config.icao_pkd_url.as_deref().map(|_| "ICAO PKD"),
+            config
+                .open_badge_keys_url
+                .as_deref()
+                .map(|_| "Open Badge trust"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        if configured_sources.is_empty() {
+            return Err(SyncError::SourceUnavailable(
+                "no network trust source is configured; import a signed trust package".to_string(),
+            ));
         }
 
-        // Sync CSCA/DSC from ICAO PKD
-        #[cfg(feature = "icao")]
-        if let Some(ref url) = self.config.icao_pkd_url {
-            tracing::info!(url, "Syncing CSCA/DSC from ICAO PKD");
-            // TODO: Implement actual sync
-        }
-
-        // Sync Open Badge verification methods
-        if let Some(ref url) = self.config.open_badge_keys_url {
-            tracing::info!(url, "Syncing Open Badge verification methods");
-            // TODO: Implement trust store sync from endpoint
-        }
-
-        // If no sources configured, that's still a "success" (offline mode)
-        if self.config.aamva_dts_url.is_none()
-            && self.config.icao_pkd_url.is_none()
-            && self.config.open_badge_keys_url.is_none()
-        {
-            tracing::warn!("No sync sources configured - operating in offline mode");
-        }
-
-        Ok(())
+        // The network source adapters are not yet capable of authenticating a
+        // complete trust-package transition. Never refresh the freshness clock
+        // merely because a URL was configured or reachable.
+        Err(SyncError::SourceUnavailable(format!(
+            "authenticated network synchronization is unavailable for {}",
+            configured_sources.join(", ")
+        )))
     }
 
     /// Import trust anchors from USB
     pub async fn import_from_usb(&self, path: &str) -> Result<UsbImportResult, SyncError> {
-        if !self.config.enable_usb_import {
+        let config = self.config.read().await.clone();
+        if !config.enable_usb_import {
             return Err(SyncError::UsbImport("USB import disabled".to_string()));
         }
 
         let path = Path::new(path);
         let package = import_from_usb(path).await?;
-        self.apply_verified_package(package).await
+        self.apply_verified_package_for_domain(package, &config.usb_trust_domain)
+            .await
     }
 
+    #[cfg(test)]
     async fn apply_verified_package(
         &self,
         package: VerifiedTrustPackage,
     ) -> Result<UsbImportResult, SyncError> {
-        if package.provenance.trust_domain != self.config.usb_trust_domain {
+        let trust_domain = self.config.read().await.usb_trust_domain.clone();
+        self.apply_verified_package_for_domain(package, &trust_domain)
+            .await
+    }
+
+    async fn apply_verified_package_for_domain(
+        &self,
+        package: VerifiedTrustPackage,
+        trust_domain: &str,
+    ) -> Result<UsbImportResult, SyncError> {
+        if package.provenance.trust_domain != trust_domain {
             return Err(SyncError::UsbImport(format!(
                 "Package trust domain {} does not match configured domain {}",
-                package.provenance.trust_domain, self.config.usb_trust_domain
+                package.provenance.trust_domain, trust_domain
             )));
         }
 
@@ -318,6 +365,33 @@ impl SyncEngine {
     }
 }
 
+fn ensure_cache_fresh_at(
+    last_sync: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    max_offline_hours: u32,
+    cache_name: &str,
+) -> Result<(), SyncError> {
+    let last_sync = last_sync.ok_or_else(|| {
+        SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache has never been synchronized"
+        ))
+    })?;
+    if last_sync > now {
+        return Err(SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache timestamp is in the future"
+        )));
+    }
+
+    let age = now - last_sync;
+    if age > chrono::Duration::hours(i64::from(max_offline_hours)) {
+        return Err(SyncError::SourceUnavailable(format!(
+            "{cache_name} trust cache is expired; maximum offline age is {max_offline_hours} hours"
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use marty_secure_storage::{
@@ -326,6 +400,82 @@ mod tests {
     };
 
     use super::*;
+
+    fn test_storage(data_dir: &std::path::Path) -> Arc<SecureStorage> {
+        static PROCESS_LOCAL_KEYRING: std::sync::Once = std::sync::Once::new();
+        PROCESS_LOCAL_KEYRING.call_once(|| {
+            keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+        });
+        Arc::new(SecureStorage::new_with_process_local_keyring(data_dir).unwrap())
+    }
+
+    #[test]
+    fn cache_freshness_fails_closed_without_a_sync() {
+        let error = ensure_cache_fresh_at(None, Utc::now(), 72, "CSCA").unwrap_err();
+        assert!(error.to_string().contains("never been synchronized"));
+    }
+
+    #[test]
+    fn cache_freshness_accepts_the_configured_boundary() {
+        let now = Utc::now();
+        ensure_cache_fresh_at(Some(now - chrono::Duration::hours(72)), now, 72, "CSCA").unwrap();
+    }
+
+    #[test]
+    fn cache_freshness_rejects_expired_and_future_timestamps() {
+        let now = Utc::now();
+        let expired =
+            ensure_cache_fresh_at(Some(now - chrono::Duration::hours(73)), now, 72, "CSCA")
+                .unwrap_err();
+        assert!(expired.to_string().contains("expired"));
+
+        let future =
+            ensure_cache_fresh_at(Some(now + chrono::Duration::seconds(1)), now, 72, "CSCA")
+                .unwrap_err();
+        assert!(future.to_string().contains("future"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_network_sync_never_advances_the_trust_clock() {
+        for config in [
+            SyncConfig::default(),
+            SyncConfig {
+                icao_pkd_url: Some("https://pkd.example.test/trust".to_string()),
+                ..SyncConfig::default()
+            },
+        ] {
+            let data_dir = tempfile::tempdir().unwrap();
+            let storage = test_storage(data_dir.path());
+            let engine = SyncEngine::new(Arc::clone(&storage), config).unwrap();
+
+            let result = engine.sync(false).await.unwrap();
+            assert!(!result.success);
+            assert!(result.error.as_deref().is_some_and(|error| {
+                error.contains("no network trust source")
+                    || error.contains("authenticated network synchronization")
+            }));
+            let state = storage.get_sync_state().await.unwrap().unwrap();
+            assert!(state.last_iaca_sync.is_none());
+            assert!(state.last_csca_sync.is_none());
+            assert!(state.last_error.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn force_never_bypasses_an_active_sync() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = test_storage(data_dir.path());
+        let engine = SyncEngine::new(storage, SyncConfig::default()).unwrap();
+        engine.sync_in_progress.store(true, Ordering::Release);
+
+        assert!(matches!(
+            engine.sync(true).await,
+            Err(SyncError::SyncInProgress)
+        ));
+        assert!(engine.sync_in_progress.load(Ordering::Acquire));
+
+        engine.sync_in_progress.store(false, Ordering::Release);
+    }
 
     fn trust_anchor(bytes: &[u8], created_at: chrono::DateTime<Utc>) -> TrustAnchor {
         let digest = blake3::hash(bytes).to_hex().to_string();
@@ -496,7 +646,7 @@ mod tests {
     #[tokio::test]
     async fn verified_usb_package_uses_one_monotonic_whole_package_transition() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let first_anchor = trust_anchor(&[1, 2, 3], created_at);
@@ -543,9 +693,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signed_complete_package_advances_the_csca_freshness_clock() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = test_storage(data_dir.path());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let created_at = Utc::now();
+
+        engine
+            .apply_verified_package(verified_package(
+                1,
+                created_at,
+                '7',
+                vec![trust_anchor(&[21, 22, 23], created_at)],
+                vec![],
+            ))
+            .await
+            .unwrap();
+
+        engine.ensure_csca_cache_fresh().await.unwrap();
+        let state = storage.get_sync_state().await.unwrap().unwrap();
+        assert_eq!(state.last_iaca_sync, Some(created_at));
+        assert_eq!(state.last_csca_sync, Some(created_at));
+        assert_eq!(state.csca_version.as_deref(), Some("1.0.0"));
+    }
+
+    #[tokio::test]
+    async fn runtime_config_update_changes_the_live_csca_freshness_gate() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = test_storage(data_dir.path());
+        let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
+        let synced_at = Utc::now() - chrono::Duration::hours(1);
+        storage
+            .update_sync_state(&SyncState {
+                last_iaca_sync: None,
+                last_csca_sync: Some(synced_at),
+                last_crl_sync: None,
+                iaca_version: None,
+                csca_version: Some("runtime-test".to_string()),
+                sync_in_progress: false,
+                last_error: None,
+            })
+            .await
+            .unwrap();
+
+        engine.ensure_csca_cache_fresh().await.unwrap();
+        engine
+            .set_config(SyncConfig {
+                max_offline_hours: 0,
+                ..SyncConfig::default()
+            })
+            .await
+            .unwrap();
+
+        let error = engine.ensure_csca_cache_fresh().await.unwrap_err();
+        assert!(error.to_string().contains("maximum offline age is 0 hours"));
+        assert!(engine.get_status().await.unwrap().sync_overdue);
+    }
+
+    #[tokio::test]
     async fn mismatched_usb_trust_domain_is_rejected_without_mutation() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let anchor = trust_anchor(&[7, 8, 9], created_at);
@@ -568,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn signed_next_signer_is_activated_once_and_old_signer_fails_closed() {
         let data_dir = tempfile::tempdir().unwrap();
-        let storage = Arc::new(SecureStorage::new(data_dir.path()).unwrap());
+        let storage = test_storage(data_dir.path());
         let engine = SyncEngine::new(storage.clone(), SyncConfig::default()).unwrap();
         let created_at = Utc::now();
         let next_signer = format!("ed25519:{}", "b".repeat(64));

@@ -22,7 +22,8 @@ nfc = []            # NFC reader for eMRTD chip
 ble = []            # BLE for mDL device engagement
 
 # Optional modules
-reporting = ["marty-reporting"]
+reporting = ["marty-reporting/api", "marty-reporting/batch"]
+demo-fixtures = ["marty-sync/demo-fixtures"]
 
 # Build variants
 no-reporting = []   # Explicitly exclude reporting from build
@@ -63,7 +64,7 @@ marty-sync.workspace = true
 
 # Optional crates
 marty-biometrics = { workspace = true, optional = true }
-marty-reporting = { workspace = true, optional = true }
+marty-reporting.workspace = true
 
 # Verification crates from marty-core (via workspace)
 marty-verification.workspace = true

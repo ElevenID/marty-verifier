@@ -12,6 +12,7 @@ import {
   Chip,
   Grid,
   Divider,
+  TextField,
 } from '@mui/material';
 import {
   Sync as SyncIcon,
@@ -28,14 +29,16 @@ import {
   UsbImportResult,
 } from '@/services/tauri-api';
 import { useAppStore } from '@/store';
+import { errorMessage } from '@/utils/errors';
 
 export default function SyncPage() {
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<SyncResult | UsbImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usbPackagePath, setUsbPackagePath] = useState('');
   const [openBadgePolicy, setOpenBadgePolicy] = useState<string | null>(null);
-  const { sync, loadSyncStatus, isOnline } = useAppStore();
+  const { sync, syncError, loadSyncStatus, isOnline, networkTransition, networkError } = useAppStore();
 
   useEffect(() => {
     getConfig()
@@ -56,16 +59,18 @@ export default function SyncPage() {
       }
       await loadSyncStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sync failed');
+      setError(errorMessage(err, 'Sync failed'));
     } finally {
       setSyncing(false);
     }
   };
 
   const handleUsbImport = async () => {
-    // TODO: Open file picker via Tauri dialog
-    // For now, use a hardcoded path for demonstration
-    const path = '/Volumes/USB/trust_anchors.json';
+    const path = usbPackagePath.trim();
+    if (!path) {
+      setError('Enter the path to a signed trust package.');
+      return;
+    }
 
     setImporting(true);
     setError(null);
@@ -79,7 +84,7 @@ export default function SyncPage() {
       }
       await loadSyncStatus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'USB import failed');
+      setError(errorMessage(err, 'USB import failed'));
     } finally {
       setImporting(false);
     }
@@ -217,11 +222,23 @@ export default function SyncPage() {
             Sync Actions
           </Typography>
 
-          {error && (
+          {(error || syncError || networkError) && (
             <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+              {error || networkError || syncError}
             </Alert>
           )}
+
+          {networkTransition &&
+            !networkTransition.reporting_error &&
+            (networkTransition.flushed_events > 0 || networkTransition.pending_events > 0) && (
+              <Alert
+                severity={networkTransition.pending_events === 0 ? 'success' : 'warning'}
+                sx={{ mb: 2 }}
+              >
+                Reconnect audit sync: {networkTransition.flushed_events} uploaded,{' '}
+                {networkTransition.pending_events} pending.
+              </Alert>
+            )}
 
           {result && 'iaca_updated' in result && (
             <Alert severity={result.success ? 'success' : 'warning'} sx={{ mb: 2 }}>
@@ -241,26 +258,39 @@ export default function SyncPage() {
 
           {(syncing || importing) && <LinearProgress sx={{ mb: 2 }} />}
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-            <Button
-              variant="contained"
-              startIcon={<SyncIcon />}
-              onClick={handleSync}
-              disabled={syncing || importing || !isOnline}
-              fullWidth
-            >
-              {syncing ? 'Syncing...' : 'Sync from Cloud'}
-            </Button>
-
-            <Button
-              variant="outlined"
-              startIcon={<UsbIcon />}
-              onClick={handleUsbImport}
+          <Stack spacing={2}>
+            <TextField
+              label="Signed trust package path"
+              value={usbPackagePath}
+              onChange={(event) => setUsbPackagePath(event.target.value)}
+              placeholder="Path to trust_anchors.json on removable media"
+              helperText="Enter the full path to the signed package on the mounted USB drive."
+              slotProps={{ htmlInput: { 'data-testid': 'usb-package-path' } }}
               disabled={syncing || importing}
               fullWidth
-            >
-              {importing ? 'Importing...' : 'Import from USB'}
-            </Button>
+            />
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <Button
+                variant="contained"
+                startIcon={<SyncIcon />}
+                onClick={handleSync}
+                disabled={syncing || importing || !isOnline}
+                fullWidth
+              >
+                {syncing ? 'Syncing...' : 'Sync from Cloud'}
+              </Button>
+
+              <Button
+                variant="outlined"
+                startIcon={<UsbIcon />}
+                onClick={handleUsbImport}
+                disabled={syncing || importing || !usbPackagePath.trim()}
+                fullWidth
+              >
+                {importing ? 'Importing...' : 'Import from USB'}
+              </Button>
+            </Stack>
           </Stack>
 
           {!isOnline && (

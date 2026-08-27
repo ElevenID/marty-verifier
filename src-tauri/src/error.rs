@@ -14,6 +14,9 @@ pub enum AppError {
     #[error("Sync error: {0}")]
     Sync(#[from] marty_sync::SyncError),
 
+    #[error("Reporting error: {0}")]
+    Reporting(#[from] marty_reporting::ReportingError),
+
     #[error("Verification error: {0}")]
     Verification(String),
 

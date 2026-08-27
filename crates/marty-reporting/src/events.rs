@@ -109,6 +109,25 @@ impl VerificationEvent {
         }
     }
 
+    /// Attach non-PII verification context before the event is queued.
+    pub fn with_verification_context(
+        mut self,
+        jurisdiction: Option<String>,
+        trust_chain_type: Option<String>,
+        offline_verified: bool,
+        processing_time_ms: Option<u64>,
+        biometric_verified: Option<bool>,
+    ) -> Self {
+        if let EventPayload::Verification(payload) = &mut self.payload {
+            payload.jurisdiction = jurisdiction;
+            payload.trust_chain_type = trust_chain_type;
+            payload.offline_verified = offline_verified;
+            payload.processing_time_ms = processing_time_ms;
+            payload.biometric_verified = biometric_verified;
+        }
+        self
+    }
+
     /// Create a sync event
     pub fn sync(sync_type: String, success: bool, certificates_updated: usize) -> Self {
         Self {

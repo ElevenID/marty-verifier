@@ -6,12 +6,12 @@ use crate::error::AppResult;
 use crate::state::AppState;
 
 // Re-export from storage crate
-pub use marty_app_storage::OfflineQueueStatus;
+pub use marty_secure_storage::OfflineQueueStatus;
 
 /// Get offline queue status
 #[tauri::command]
 pub async fn get_offline_queue_status(state: State<'_, AppState>) -> AppResult<OfflineQueueStatus> {
-    let status = state.storage.get_queue_status().await?;
+    let status = state.trust_storage.get_queue_status().await?;
     Ok(status)
 }
 

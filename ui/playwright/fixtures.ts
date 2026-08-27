@@ -76,6 +76,13 @@ export interface TestFixtures {
 async function injectTauriMock(page: Page, commands: MockCommands = {}) {
   const mockCommands = {
     get_sync_status: defaultSyncStatus,
+    update_config: null,
+    set_network_status: {
+      online: true,
+      flushed_events: 0,
+      pending_events: 0,
+      reporting_error: null,
+    },
     get_hardware_tier: 'simple',
     detect_hardware: defaultHardwareCapabilities,
     get_config: {
@@ -116,9 +123,12 @@ async function injectTauriMock(page: Page, commands: MockCommands = {}) {
   };
 
   await page.addInitScript((cmds) => {
+    (window as any).__TAURI_MOCK_INVOCATIONS__ = [];
+
     // Create Tauri mock
     const mockInvoke = (command: string, args?: unknown) => {
       console.log(`[Tauri Mock] invoke: ${command}`, args);
+      (window as any).__TAURI_MOCK_INVOCATIONS__.push({ command, args });
       if (command in cmds) {
         const handler = cmds[command as keyof typeof cmds];
         if (

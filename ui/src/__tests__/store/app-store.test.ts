@@ -18,6 +18,8 @@ describe('AppStore', () => {
       expect(state.hardwareTier).toBeNull();
       expect(state.hardwareCapabilities).toBeNull();
       expect(state.isOnline).toBe(false);
+      expect(state.networkTransition).toBeNull();
+      expect(state.networkError).toBeNull();
       expect(state.lastVerification).toBeNull();
       expect(state.verificationInProgress).toBe(false);
     });
@@ -25,12 +27,21 @@ describe('AppStore', () => {
 
   describe('Actions', () => {
     it('should set online status', async () => {
+      mockTauriCommands({
+        set_network_status: {
+          online: true,
+          flushed_events: 0,
+          pending_events: 0,
+          reporting_error: null,
+        },
+      });
       const { useAppStore } = await import('@/store/app-store');
 
-      useAppStore.getState().setOnlineStatus(true);
+      await useAppStore.getState().setOnlineStatus(true);
       expect(useAppStore.getState().isOnline).toBe(true);
+      expect(useAppStore.getState().networkTransition?.online).toBe(true);
 
-      useAppStore.getState().setOnlineStatus(false);
+      await useAppStore.getState().setOnlineStatus(false);
       expect(useAppStore.getState().isOnline).toBe(false);
     });
 

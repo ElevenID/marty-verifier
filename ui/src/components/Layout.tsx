@@ -54,7 +54,9 @@ export default function Layout({ children }: LayoutProps) {
       return;
     }
 
-    const updateStatus = () => setOnlineStatus(navigator.onLine);
+    const updateStatus = () => {
+      void setOnlineStatus(navigator.onLine);
+    };
     updateStatus();
 
     window.addEventListener('online', updateStatus);

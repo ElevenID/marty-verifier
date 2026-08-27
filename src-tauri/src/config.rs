@@ -1,11 +1,14 @@
 //! Application configuration
 
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
+
+const CONFIG_PATH_ENV: &str = "MARTY_VERIFIER_CONFIG_PATH";
+const DATA_DIR_ENV: &str = "MARTY_VERIFIER_DATA_DIR";
 
 // Re-export crate types for convenience
 pub use marty_reporting::ReportingConfig;
@@ -311,15 +314,23 @@ impl AppConfig {
     pub fn load() -> AppResult<Self> {
         let config_path = default_config_path();
 
-        if config_path.exists() {
+        let mut config = if config_path.exists() {
             let contents = std::fs::read_to_string(&config_path)?;
-            let config: AppConfig = serde_json::from_str(&contents)?;
-            Ok(config)
+            serde_json::from_str(&contents)?
         } else {
             let config = AppConfig::default();
             config.save()?;
-            Ok(config)
+            config
+        };
+
+        // A process-level data override must win over a value persisted in the
+        // selected config file. This keeps demos, tests, and parallel kiosk
+        // instances from ever opening the operator's normal database.
+        if let Some(data_dir) = path_override(std::env::var_os(DATA_DIR_ENV)) {
+            config.data_dir = data_dir;
         }
+
+        Ok(config)
     }
 
     /// Save configuration to disk
@@ -337,13 +348,46 @@ impl AppConfig {
 }
 
 fn default_data_dir() -> PathBuf {
+    if let Some(path) = path_override(std::env::var_os(DATA_DIR_ENV)) {
+        return path;
+    }
+
     ProjectDirs::from("com", "marty", "verifier")
         .map(|dirs| dirs.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("./data"))
 }
 
 fn default_config_path() -> PathBuf {
+    if let Some(path) = path_override(std::env::var_os(CONFIG_PATH_ENV)) {
+        return path;
+    }
+
     ProjectDirs::from("com", "marty", "verifier")
         .map(|dirs| dirs.config_dir().join("config.json"))
         .unwrap_or_else(|| PathBuf::from("./config.json"))
+}
+
+fn path_override(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_override;
+    use std::{ffi::OsString, path::PathBuf};
+
+    #[test]
+    fn path_override_accepts_non_empty_platform_paths() {
+        let expected = PathBuf::from("isolated/demo/state");
+        assert_eq!(
+            path_override(Some(OsString::from("isolated/demo/state"))),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn path_override_ignores_empty_values() {
+        assert_eq!(path_override(Some(OsString::new())), None);
+        assert_eq!(path_override(None), None);
+    }
 }

@@ -69,17 +69,17 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # External crates from marty-core
-marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad", features = ["serde"] }
-marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "c8ea296bb301befff4a5b6d09d7369ea802c12ad", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", default-features = false }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["native", "onnx"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }
 marty-sync = { version = "0.1.4", path = "crates/marty-sync" }
-marty-reporting = { path = "crates/marty-reporting" }
+marty-reporting = { path = "crates/marty-reporting", default-features = false }
 marty-app-storage = { path = "crates/marty-app-storage" }
 
 [profile.release]
