@@ -25,9 +25,9 @@ blake3.workspace = true
 directories.workspace = true
 
 # Encryption
-aes-gcm = "0.10"
-rand = "0.8"
-base64 = "0.22"
+aes-gcm = "0.11"
+rand = "0.10"
+base64 = "0.23"
 hex = "0.4"
 marty-types.workspace = true
 marty-sync.workspace = true
