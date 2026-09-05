@@ -4379,7 +4379,6 @@ dependencies = [
  "keyring-core",
  "marty-secure-storage",
  "marty-sync",
- "marty-types",
  "marty-verification",
  "rusqlite",
  "serde",
@@ -4387,8 +4386,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

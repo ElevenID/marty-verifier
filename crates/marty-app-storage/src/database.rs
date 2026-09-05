@@ -7,7 +7,6 @@ use chrono::Utc;
 use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::models::*;
@@ -112,76 +111,22 @@ impl SecureStorage {
 
     /// Get offline queue status
     pub async fn get_queue_status(&self) -> Result<OfflineQueueStatus, StorageError> {
-        self.core
-            .with_connection(|conn| {
-                let pending_events: i64 =
-                    conn.query_row("SELECT COUNT(*) FROM offline_queue", [], |row| row.get(0))?;
-                let pending_events = usize::try_from(pending_events).unwrap_or_default();
-
-                let oldest_event: Option<String> = conn
-                    .query_row("SELECT MIN(created_at) FROM offline_queue", [], |row| {
-                        row.get(0)
-                    })
-                    .ok();
-
-                // Estimate data size
-                let data_size_bytes: i64 = conn.query_row(
-                    "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM offline_queue",
-                    [],
-                    |row| row.get(0),
-                )?;
-                let data_size_bytes = usize::try_from(data_size_bytes).unwrap_or_default();
-
-                // Get last sync times from sync_state
-                let (last_sync_attempt, last_successful_sync): (Option<String>, Option<String>) =
-                    conn.query_row(
-                        "SELECT last_error, last_iaca_sync FROM sync_state WHERE id = 'current'",
-                        [],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .unwrap_or((None, None));
-
-                Ok(OfflineQueueStatus {
-                    pending_events,
-                    oldest_event,
-                    data_size_bytes,
-                    last_sync_attempt,
-                    last_successful_sync,
-                })
-            })
-            .await
+        let status = self.core.get_queue_status().await?;
+        Ok(OfflineQueueStatus {
+            pending_events: status.pending_events,
+            oldest_event: status.oldest_event,
+            data_size_bytes: status.data_size_bytes,
+            last_sync_attempt: status.last_sync_attempt,
+            last_successful_sync: status.last_successful_sync,
+        })
     }
 
     /// Store a trust anchor certificate
     pub async fn store_trust_anchor(&self, anchor: &TrustAnchor) -> Result<(), StorageError> {
         self.core
-            .with_connection(|conn| {
-                conn.execute(
-                    r#"
-            INSERT OR REPLACE INTO trust_anchors 
-                (id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                 not_before, not_after, certificate_der, certificate_hash, source, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-                    rusqlite::params![
-                        anchor.id,
-                        anchor.anchor_type.to_string(),
-                        anchor.jurisdiction,
-                        anchor.subject,
-                        anchor.issuer,
-                        anchor.serial_number,
-                        anchor.not_before.map(|dt| dt.to_rfc3339()),
-                        anchor.not_after.map(|dt| dt.to_rfc3339()),
-                        anchor.certificate_der,
-                        anchor.certificate_hash,
-                        anchor.source.to_string(),
-                        anchor.synced_at.to_rfc3339(),
-                    ],
-                )?;
-
-                Ok(())
-            })
+            .store_trust_anchor(anchor)
             .await
+            .map_err(Into::into)
     }
 
     /// Store a trusted Open Badge verification method
@@ -189,32 +134,10 @@ impl SecureStorage {
         &self,
         method: &OpenBadgeVerificationMethod,
     ) -> Result<(), StorageError> {
-        self.core.with_connection(|conn| {
-
-        let document_json = serde_json::to_string(&method.document)?;
-
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO open_badge_keys
-                (id, document_json, controller, issuer, kid, not_before, not_after, status, source, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![
-                method.id,
-                document_json,
-                method.controller,
-                method.issuer,
-                method.kid,
-                method.not_before.map(|dt| dt.to_rfc3339()),
-                method.not_after.map(|dt| dt.to_rfc3339()),
-                method.status,
-                method.source.to_string(),
-                method.synced_at.to_rfc3339(),
-            ],
-        )?;
-
-        Ok(())
-        }).await
+        self.core
+            .store_open_badge_key(method)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get trust anchors by type and jurisdiction
@@ -224,122 +147,21 @@ impl SecureStorage {
         jurisdiction: Option<&str>,
     ) -> Result<Vec<TrustAnchor>, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let sql = if jurisdiction.is_some() {
-                    r#"
-            SELECT id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                   not_before, not_after, certificate_der, certificate_hash, source, synced_at
-            FROM trust_anchors
-            WHERE anchor_type = ? AND jurisdiction = ?
-            "#
-                } else {
-                    r#"
-            SELECT id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                   not_before, not_after, certificate_der, certificate_hash, source, synced_at
-            FROM trust_anchors
-            WHERE anchor_type = ?
-            "#
-                };
-
-                let mut stmt = conn.prepare(sql)?;
-
-                let rows = if let Some(jur) = jurisdiction {
-                    stmt.query_map(
-                        [anchor_type.to_string(), jur.to_string()],
-                        Self::map_trust_anchor,
-                    )?
-                } else {
-                    stmt.query_map([anchor_type.to_string()], Self::map_trust_anchor)?
-                };
-
-                let mut anchors = Vec::new();
-                for row in rows {
-                    anchors.push(row?);
-                }
-
-                Ok(anchors)
-            })
+            .get_trust_anchors(anchor_type, jurisdiction)
             .await
-    }
-
-    fn map_trust_anchor(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrustAnchor> {
-        let anchor_type_str: String = row.get(1)?;
-        let source_str: String = row.get(10)?;
-
-        Ok(TrustAnchor {
-            id: row.get(0)?,
-            anchor_type: match anchor_type_str.as_str() {
-                "iaca" => TrustAnchorType::Iaca,
-                "csca" => TrustAnchorType::Csca,
-                "dsc" => TrustAnchorType::Dsc,
-                _ => TrustAnchorType::Iaca,
-            },
-            jurisdiction: row.get(2)?,
-            subject: row.get(3)?,
-            issuer: row.get(4)?,
-            serial_number: row.get(5)?,
-            not_before: row.get::<_, Option<String>>(6)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            not_after: row.get::<_, Option<String>>(7)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            certificate_der: row.get(8)?,
-            certificate_hash: row.get(9)?,
-            source: match source_str.as_str() {
-                "aamva_dts" => TrustAnchorSource::AamvaDts,
-                "icao_pkd" => TrustAnchorSource::IcaoPkd,
-                "usb_import" => TrustAnchorSource::UsbImport,
-                _ => TrustAnchorSource::Manual,
-            },
-            synced_at: row
-                .get::<_, String>(11)
-                .ok()
-                .and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                })
-                .unwrap_or_else(Utc::now),
-        })
+            .map_err(Into::into)
     }
 
     /// Get all trusted Open Badge verification methods
     pub async fn get_open_badge_keys(
         &self,
     ) -> Result<Vec<OpenBadgeVerificationMethod>, StorageError> {
-        self.core.with_connection(|conn| {
-
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, document_json, controller, issuer, kid, not_before, not_after, status, source, synced_at
-            FROM open_badge_keys
-            "#,
-        )?;
-
-        let rows = stmt.query_map([], Self::map_open_badge_key)?;
-        let mut methods = Vec::new();
-        for row in rows {
-            methods.push(row?);
-        }
-
-        Ok(methods)
-        }).await
+        self.core.get_open_badge_keys().await.map_err(Into::into)
     }
 
     /// Count trusted Open Badge verification methods
     pub async fn count_open_badge_keys(&self) -> Result<usize, StorageError> {
-        self.core
-            .with_connection(|conn| {
-                let count: i64 =
-                    conn.query_row("SELECT COUNT(*) FROM open_badge_keys", [], |row| row.get(0))?;
-                Ok(usize::try_from(count).unwrap_or_default())
-            })
-            .await
+        self.core.count_open_badge_keys().await.map_err(Into::into)
     }
 
     /// Get latest Open Badge trust list sync timestamp
@@ -347,63 +169,9 @@ impl SecureStorage {
         &self,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let synced_at: Option<String> = conn
-                    .query_row("SELECT MAX(synced_at) FROM open_badge_keys", [], |row| {
-                        row.get(0)
-                    })
-                    .ok()
-                    .flatten();
-
-                Ok(synced_at.and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                }))
-            })
+            .get_latest_open_badge_sync()
             .await
-    }
-
-    fn map_open_badge_key(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<OpenBadgeVerificationMethod> {
-        let source_str: String = row.get(8)?;
-        let document_json: String = row.get(1)?;
-        let document: Value =
-            serde_json::from_str(&document_json).unwrap_or(serde_json::Value::Null);
-
-        Ok(OpenBadgeVerificationMethod {
-            id: row.get(0)?,
-            document,
-            controller: row.get(2)?,
-            issuer: row.get(3)?,
-            kid: row.get(4)?,
-            not_before: row.get::<_, Option<String>>(5)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            not_after: row.get::<_, Option<String>>(6)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            status: row.get(7)?,
-            source: match source_str.as_str() {
-                "sync" => OpenBadgeKeySource::Sync,
-                "usb_import" => OpenBadgeKeySource::UsbImport,
-                _ => OpenBadgeKeySource::Manual,
-            },
-            synced_at: row
-                .get::<_, String>(9)
-                .ok()
-                .and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                })
-                .unwrap_or_else(Utc::now),
-        })
+            .map_err(Into::into)
     }
 
     /// Count trust anchors by type
@@ -412,15 +180,9 @@ impl SecureStorage {
         anchor_type: TrustAnchorType,
     ) -> Result<usize, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let count: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM trust_anchors WHERE anchor_type = ?",
-                    [anchor_type.to_string()],
-                    |row| row.get(0),
-                )?;
-                Ok(usize::try_from(count).unwrap_or_default())
-            })
+            .count_trust_anchors(anchor_type)
             .await
+            .map_err(Into::into)
     }
 
     /// Get sync state
@@ -451,51 +213,9 @@ impl SecureStorage {
         limit: usize,
     ) -> Result<Vec<OfflineQueueEntry>, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let mut stmt = conn.prepare(
-                    r#"
-            SELECT id, event_type, payload, created_at, retry_count, last_retry_at, error
-            FROM offline_queue
-            ORDER BY created_at ASC
-            LIMIT ?
-            "#,
-                )?;
-
-                let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
-                let rows = stmt.query_map([sql_limit], |row| {
-                    let payload_str: String = row.get(2)?;
-                    Ok(OfflineQueueEntry {
-                        id: row.get(0)?,
-                        event_type: row.get(1)?,
-                        payload: serde_json::from_str(&payload_str)
-                            .unwrap_or(serde_json::Value::Null),
-                        created_at: row
-                            .get::<_, String>(3)
-                            .ok()
-                            .and_then(|s| {
-                                chrono::DateTime::parse_from_rfc3339(&s)
-                                    .ok()
-                                    .map(|dt| dt.with_timezone(&Utc))
-                            })
-                            .unwrap_or_else(Utc::now),
-                        retry_count: row.get(4)?,
-                        last_retry_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
-                            chrono::DateTime::parse_from_rfc3339(&s)
-                                .ok()
-                                .map(|dt| dt.with_timezone(&Utc))
-                        }),
-                        error: row.get(6)?,
-                    })
-                })?;
-
-                let mut entries = Vec::new();
-                for row in rows {
-                    entries.push(row?);
-                }
-
-                Ok(entries)
-            })
+            .get_pending_events(limit)
             .await
+            .map_err(Into::into)
     }
 
     /// Remove event from offline queue (after successful sync)
@@ -1242,7 +962,113 @@ mod shared_owner_tests {
                     app.get_last_policy_sync().await.unwrap().as_deref(),
                     Some("2026-02-01T00:00:00Z")
                 );
+                assert_shared_trust_guards(&app).await;
+                app.update_sync_state(&SyncState {
+                    last_iaca_sync: Some(Utc::now()),
+                    last_csca_sync: None,
+                    last_crl_sync: None,
+                    iaca_version: None,
+                    csca_version: None,
+                    sync_in_progress: false,
+                    last_error: Some("trust sync error".into()),
+                })
+                .await
+                .unwrap();
+                let status = app.get_queue_status().await.unwrap();
+                assert!(status.last_sync_attempt.is_none());
+                assert!(status.last_successful_sync.is_none());
+                assert_eq!(
+                    serde_json::to_value(&status)
+                        .unwrap()
+                        .as_object()
+                        .unwrap()
+                        .len(),
+                    5
+                );
+                let batch = vec!["legacy".to_string()];
+                app.core_storage()
+                    .record_queue_batch_failure(&batch, "temporary failure")
+                    .await
+                    .unwrap();
+                drop(app);
+                let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                let pending = app.get_pending_events(usize::MAX).await.unwrap();
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending[0].retry_count, 1);
+                assert_eq!(pending[0].error.as_deref(), Some("temporary failure"));
+                let status = app.get_queue_status().await.unwrap();
+                assert!(status.last_sync_attempt.is_some());
+                assert!(status.last_successful_sync.is_none());
+                assert!(app
+                    .core_storage()
+                    .acknowledge_queue_batch(&["legacy".into(), "missing".into()])
+                    .await
+                    .is_err());
+                assert_eq!(app.get_pending_events(10).await.unwrap().len(), 1);
+                assert_eq!(
+                    app.core_storage()
+                        .acknowledge_queue_batch(&batch)
+                        .await
+                        .unwrap(),
+                    1
+                );
+                drop(app);
+                let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                assert!(app.get_pending_events(10).await.unwrap().is_empty());
+                assert_eq!(app.get_queue_status().await.unwrap().pending_events, 0);
+                assert!(app
+                    .get_queue_status()
+                    .await
+                    .unwrap()
+                    .last_successful_sync
+                    .is_some());
             }
         }
+    }
+
+    async fn assert_shared_trust_guards(app: &SecureStorage) {
+        let anchor: TrustAnchor = serde_json::from_value(serde_json::json!({
+            "id": "guarded-anchor", "anchor_type": "csca", "jurisdiction": "US",
+            "certificate_der": [1, 2, 3], "certificate_hash": "fixture",
+            "source": "manual", "synced_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        let method: OpenBadgeVerificationMethod = serde_json::from_value(serde_json::json!({
+            "id": "guarded-badge", "document": {"id": "guarded-badge"},
+            "source": "manual", "synced_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        app.store_trust_anchor(&anchor).await.unwrap();
+        app.store_open_badge_key(&method).await.unwrap();
+        assert_eq!(
+            app.get_trust_anchors(TrustAnchorType::Csca, Some("US"))
+                .await
+                .unwrap()[0]
+                .id,
+            anchor.id
+        );
+        assert_eq!(app.get_open_badge_keys().await.unwrap()[0].id, method.id);
+        // Simulate incomplete governed metadata from a damaged legacy database.
+        app.core_storage()
+            .with_connection(|conn| {
+                conn.execute("UPDATE trust_anchors SET trust_domain = 'governed'", [])
+                    .unwrap();
+                conn.execute("UPDATE open_badge_keys SET trust_domain = 'governed'", [])
+                    .unwrap();
+            })
+            .await;
+        assert!(app.store_trust_anchor(&anchor).await.is_err());
+        assert!(app.store_open_badge_key(&method).await.is_err());
+        assert!(app
+            .get_trust_anchors(TrustAnchorType::Csca, None)
+            .await
+            .is_err());
+        assert!(app.get_open_badge_keys().await.is_err());
+        assert!(app
+            .count_trust_anchors(TrustAnchorType::Csca)
+            .await
+            .is_err());
+        assert!(app.count_open_badge_keys().await.is_err());
+        assert!(app.get_latest_open_badge_sync().await.is_err());
     }
 }

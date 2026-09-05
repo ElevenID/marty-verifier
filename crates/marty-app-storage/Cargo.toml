@@ -16,12 +16,8 @@ rusqlite = { workspace = true, features = ["bundled-sqlcipher"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
-tracing.workspace = true
 chrono.workspace = true
-uuid.workspace = true
 
-marty-types.workspace = true
 marty-sync.workspace = true
 marty-verification.workspace = true
 
@@ -30,4 +26,4 @@ keyring-core = "1.0"
 base64 = "0.22"
 hex = "0.4"
 tempfile = "3.14"
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
