@@ -5,6 +5,7 @@
 
 mod engine;
 mod error;
+mod http;
 mod policy;
 mod profile_sync;
 mod signing_key;

@@ -1,14 +1,12 @@
 //! Policy sync source for presentation policies
 
 use crate::error::SyncError;
+use crate::http::SyncHttpClient;
 use marty_verification::policy::PresentationPolicy;
-use reqwest::Client;
 
 /// Policy sync provider for fetching presentation policies from backend
 pub struct PolicySyncProvider {
-    client: Client,
-    endpoint: String,
-    access_token: String,
+    http: SyncHttpClient,
 }
 
 impl PolicySyncProvider {
@@ -19,9 +17,7 @@ impl PolicySyncProvider {
     /// * `access_token` - Optional bearer token for authentication
     pub fn new(endpoint: String, access_token: String) -> Self {
         Self {
-            client: Client::new(),
-            endpoint,
-            access_token,
+            http: SyncHttpClient::new(endpoint, access_token),
         }
     }
 
@@ -46,36 +42,18 @@ impl PolicySyncProvider {
         &self,
         deployment_profile_id: Option<&str>,
     ) -> Result<Vec<PresentationPolicy>, SyncError> {
-        let mut url = format!(
-            "{}/api/v1/identity/presentation-policies/sync",
-            self.endpoint
-        );
-
-        if let Some(profile_id) = deployment_profile_id {
-            url.push_str(&format!("?deployment_profile_id={}", profile_id));
-        }
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
+        let query: Vec<_> = deployment_profile_id
+            .map(|id| ("deployment_profile_id", id))
+            .into_iter()
+            .collect();
+        self.http
+            .get_json(
+                &["api", "v1", "identity", "presentation-policies", "sync"],
+                &query,
+                None,
+                "policies",
+            )
             .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SyncError::HttpError(
-                response.status().as_u16(),
-                format!("Failed to fetch policies: {}", response.status()),
-            ));
-        }
-
-        let policies: Vec<PresentationPolicy> = response
-            .json()
-            .await
-            .map_err(|e| SyncError::ParseError(e.to_string()))?;
-
-        Ok(policies)
     }
 
     /// Fetch delta policies since a given timestamp
@@ -83,46 +61,21 @@ impl PolicySyncProvider {
     /// # Arguments
     /// * `since` - RFC 2822 formatted timestamp
     pub async fn fetch_delta(&self, since: &str) -> Result<Vec<PresentationPolicy>, SyncError> {
-        let url = format!(
-            "{}/api/v1/identity/presentation-policies/sync",
-            self.endpoint
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .header("If-Modified-Since", since)
-            .send()
+        self.http
+            .get_json(
+                &["api", "v1", "identity", "presentation-policies", "sync"],
+                &[],
+                Some(since),
+                "policy delta",
+            )
             .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SyncError::HttpError(
-                response.status().as_u16(),
-                format!("Failed to fetch policy delta: {}", response.status()),
-            ));
-        }
-
-        let policies: Vec<PresentationPolicy> = response
-            .json()
-            .await
-            .map_err(|e| SyncError::ParseError(e.to_string()))?;
-
-        Ok(policies)
     }
 
     /// Check if the sync endpoint is available
     pub async fn is_available(&self) -> bool {
-        let url = format!("{}/api/v1/identity/presentation-policies", self.endpoint);
-
-        self.client
-            .head(&url)
-            .bearer_auth(&self.access_token)
-            .send()
+        self.http
+            .is_available(&["api", "v1", "identity", "presentation-policies"])
             .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
     }
 }
 
