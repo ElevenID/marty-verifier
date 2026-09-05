@@ -15,11 +15,11 @@ CREATE TABLE IF NOT EXISTS verification_events (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_verification_events_verified_at 
+CREATE INDEX IF NOT EXISTS idx_verification_events_verified_at
     ON verification_events(verified_at);
-CREATE INDEX IF NOT EXISTS idx_verification_events_synced 
+CREATE INDEX IF NOT EXISTS idx_verification_events_synced
     ON verification_events(synced);
-CREATE INDEX IF NOT EXISTS idx_verification_events_credential_type 
+CREATE INDEX IF NOT EXISTS idx_verification_events_credential_type
     ON verification_events(credential_type);
 
 -- Trust anchors cache (IACA/CSCA certificates)
@@ -47,9 +47,9 @@ CREATE TABLE IF NOT EXISTS trust_anchors (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_trust_anchors_type_jurisdiction 
+CREATE INDEX IF NOT EXISTS idx_trust_anchors_type_jurisdiction
     ON trust_anchors(anchor_type, jurisdiction);
-CREATE INDEX IF NOT EXISTS idx_trust_anchors_hash 
+CREATE INDEX IF NOT EXISTS idx_trust_anchors_hash
     ON trust_anchors(certificate_hash);
 
 -- Open Badge verification methods (trusted public keys)
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS crl_cache (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_crl_cache_issuer 
+CREATE INDEX IF NOT EXISTS idx_crl_cache_issuer
     ON crl_cache(issuer_hash);
 
 -- OCSP cache
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS ocsp_cache (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_ocsp_cache_cert 
+CREATE INDEX IF NOT EXISTS idx_ocsp_cache_cert
     ON ocsp_cache(cert_hash);
 
 -- Offline reporting queue
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS offline_queue (
     error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_offline_queue_created 
+CREATE INDEX IF NOT EXISTS idx_offline_queue_created
     ON offline_queue(created_at);
 
 -- Audit log
@@ -149,9 +149,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_log_created 
+CREATE INDEX IF NOT EXISTS idx_audit_log_created
     ON audit_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_audit_log_event_type 
+CREATE INDEX IF NOT EXISTS idx_audit_log_event_type
     ON audit_log(event_type);
 
 -- Sync state
@@ -187,9 +187,9 @@ CREATE TABLE IF NOT EXISTS presentation_policies (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_presentation_policies_synced_at 
+CREATE INDEX IF NOT EXISTS idx_presentation_policies_synced_at
     ON presentation_policies(synced_at);
-CREATE INDEX IF NOT EXISTS idx_presentation_policies_deployment_profile 
+CREATE INDEX IF NOT EXISTS idx_presentation_policies_deployment_profile
     ON presentation_policies(deployment_profile_id);
 
 -- Deployment profiles cache
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS deployment_profiles (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_deployment_profiles_site_id 
+CREATE INDEX IF NOT EXISTS idx_deployment_profiles_site_id
     ON deployment_profiles(site_id);
 
 -- Lanes cache
@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS lanes (
     FOREIGN KEY (deployment_profile_id) REFERENCES deployment_profiles(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_lanes_deployment_profile 
+CREATE INDEX IF NOT EXISTS idx_lanes_deployment_profile
     ON lanes(deployment_profile_id);
 
 -- Device configuration (current device assignment)
