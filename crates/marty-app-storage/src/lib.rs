@@ -4,9 +4,9 @@
 //! Uses SQLCipher for encrypted SQLite and platform keychain for key storage.
 
 mod database;
-mod encryption;
 mod error;
-mod keychain;
+#[cfg(test)]
+mod keyring_tests;
 mod models;
 mod schema;
 

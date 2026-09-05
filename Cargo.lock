@@ -4373,19 +4373,14 @@ dependencies = [
 name = "marty-app-storage"
 version = "0.1.4"
 dependencies = [
- "aes-gcm",
  "base64 0.22.1",
- "blake3",
  "chrono",
- "directories",
  "hex",
- "keyring 4.1.6",
  "keyring-core",
  "marty-secure-storage",
  "marty-sync",
  "marty-types",
  "marty-verification",
- "rand 0.8.7",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4515,7 +4510,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0#4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0"
+source = "git+https://github.com/ElevenID/marty-core?rev=44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf#44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4567,7 +4562,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0#4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0"
+source = "git+https://github.com/ElevenID/marty-core?rev=44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf#44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf"
 dependencies = [
  "chrono",
  "serde",

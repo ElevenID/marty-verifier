@@ -9,11 +9,10 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::encryption::PiiEncryptor;
 use crate::error::StorageError;
-use crate::keychain::KeychainManager;
 use crate::models::*;
 use crate::schema::{SCHEMA, SCHEMA_VERSION};
+use marty_secure_storage::PiiEncryptor;
 
 /// Offline queue status
 #[derive(Debug, Serialize)]
@@ -46,25 +45,27 @@ pub struct SecureStorage {
 impl SecureStorage {
     /// Create storage with one core-owned database connection and migration owner.
     pub fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        Self::new_with_core(CoreSecureStorage::new(data_dir)?, KeychainManager::new())
+        Self::new_with_core(
+            CoreSecureStorage::new(data_dir)?,
+            PiiEncryptor::from_platform_keyring,
+        )
     }
 
     /// Create storage using a caller-installed process-local keyring.
     pub fn new_with_process_local_keyring(data_dir: &Path) -> Result<Self, StorageError> {
         Self::new_with_core(
             CoreSecureStorage::new_with_process_local_keyring(data_dir)?,
-            KeychainManager::with_installed_default_store(),
+            PiiEncryptor::from_process_local_keyring,
         )
     }
 
     fn new_with_core(
         mut core: CoreSecureStorage,
-        keychain: KeychainManager,
+        initialize_pii: fn() -> Result<PiiEncryptor, marty_secure_storage::StorageError>,
     ) -> Result<Self, StorageError> {
         core.initialize_extension(initialize_app_schema)?;
-        // Preserve existing PII-key initialization until encryption is consolidated.
-        let pii_key = keychain.get_or_create_pii_key()?;
-        let pii_encryptor = Some(PiiEncryptor::new(&pii_key)?);
+        // Preserve app startup key access while core owns encryption and keyring behavior.
+        let pii_encryptor = Some(initialize_pii()?);
         Ok(Self {
             core: Arc::new(core),
             pii_encryptor,
@@ -1231,6 +1232,13 @@ mod shared_owner_tests {
             .unwrap()
             .set_password(&base64::engine::general_purpose::STANDARD.encode(key))
             .unwrap();
+        keyring_core::Entry::new("com.marty.verifier", "pii_encryption_key")
+            .unwrap()
+            .set_password(&base64::engine::general_purpose::STANDARD.encode([0; 32]))
+            .unwrap();
+        let legacy_pii = base64::engine::general_purpose::STANDARD.encode(
+            hex::decode("000000000000000000000000530f8afbc74536b9a963b4f1c4cb738b").unwrap(),
+        );
         for (schema, legacy_version, has_policy_sync) in [
             (include_str!("../tests/fixtures/legacy_app_v5.sql"), 5, true),
             (
@@ -1260,11 +1268,8 @@ mod shared_owner_tests {
                 let app = if core_first {
                     let core = CoreSecureStorage::new_with_process_local_keyring(directory.path())
                         .unwrap();
-                    SecureStorage::new_with_core(
-                        core,
-                        KeychainManager::with_installed_default_store(),
-                    )
-                    .unwrap()
+                    SecureStorage::new_with_core(core, PiiEncryptor::from_process_local_keyring)
+                        .unwrap()
                 } else {
                     let app =
                         SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
@@ -1341,6 +1346,14 @@ mod shared_owner_tests {
                 drop(app);
                 let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
                 app.health_check().await.unwrap();
+                assert_eq!(
+                    app.pii_encryptor
+                        .as_ref()
+                        .unwrap()
+                        .decrypt(&legacy_pii)
+                        .unwrap(),
+                    ""
+                );
                 assert_eq!(app.get_verification_history(10).await.unwrap().len(), 2);
                 assert_eq!(
                     app.core_storage().get_pending_events(10).await.unwrap()[0].id,
