@@ -3,7 +3,6 @@
 use crate::error::StorageError;
 
 const SERVICE_NAME: &str = "com.marty.verifier";
-const DB_KEY_NAME: &str = "database_encryption_key";
 const PII_KEY_NAME: &str = "pii_encryption_key";
 
 /// Keychain manager for secure key storage
@@ -32,11 +31,6 @@ impl KeychainManager {
             service: SERVICE_NAME.to_string(),
             store_selection: StoreSelection::InstalledDefault,
         }
-    }
-
-    /// Get or create the database encryption key
-    pub fn get_or_create_db_key(&self) -> Result<Vec<u8>, StorageError> {
-        self.get_or_create_key(DB_KEY_NAME)
     }
 
     /// Get or create the PII encryption key
@@ -114,8 +108,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn process_local_storage_does_not_initialize_or_replace_the_platform_store() {
+    #[tokio::test]
+    async fn process_local_storage_does_not_initialize_or_replace_the_platform_store() {
+        let _guard = crate::TEST_KEYRING_LOCK.lock().await;
         let previous = keyring_core::unset_default_store();
         let _restore = RestoreDefaultStore(previous);
         let missing =

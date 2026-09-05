@@ -11,6 +11,7 @@ default = []
 sqlcipher = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
+marty-secure-storage.workspace = true
 rusqlite = { workspace = true, features = ["bundled-sqlcipher"] }
 keyring.workspace = true
 keyring-core = "1.0"

@@ -72,8 +72,8 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", default-features = false }
 marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["serde"] }
 marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f" }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0" }
 marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "6ee545c16ff6a4c129772049ff1ccc535c421f9f", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates

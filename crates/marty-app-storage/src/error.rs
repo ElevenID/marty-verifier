@@ -4,6 +4,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
+    #[error(transparent)]
+    Core(marty_secure_storage::StorageError),
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
@@ -35,5 +37,21 @@ impl serde::Serialize for StorageError {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl From<marty_secure_storage::StorageError> for StorageError {
+    fn from(error: marty_secure_storage::StorageError) -> Self {
+        use marty_secure_storage::StorageError as Core;
+        match error {
+            Core::Database(e) => Self::Database(e),
+            Core::Keychain(e) => Self::Keychain(e),
+            Core::Encryption(e) => Self::Encryption(e),
+            Core::Serialization(e) => Self::Serialization(e),
+            Core::Io(e) => Self::Io(e),
+            Core::NotFound(e) => Self::NotFound(e),
+            Core::NotInitialized => Self::NotInitialized,
+            other => Self::Core(other),
+        }
     }
 }

@@ -4381,6 +4381,7 @@ dependencies = [
  "hex",
  "keyring 4.1.6",
  "keyring-core",
+ "marty-secure-storage",
  "marty-sync",
  "marty-types",
  "marty-verification",
@@ -4513,8 +4514,8 @@ dependencies = [
 
 [[package]]
 name = "marty-secure-storage"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0#4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4565,8 +4566,8 @@ dependencies = [
 
 [[package]]
 name = "marty-types"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0#4d3ab56bde33b3083c5cba9e3d419f7b704ef3f0"
 dependencies = [
  "chrono",
  "serde",
