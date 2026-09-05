@@ -24,16 +24,7 @@ pub struct OfflineQueueStatus {
     pub last_successful_sync: Option<String>,
 }
 
-/// Verification history entry for API
-#[derive(Debug, Serialize)]
-pub struct VerificationHistoryEntry {
-    pub id: String,
-    pub credential_type: String,
-    pub status: String,
-    pub verified_at: String,
-    pub jurisdiction: Option<String>,
-    pub synced: bool,
-}
+pub use marty_secure_storage::VerificationHistoryEntry;
 
 /// Secure storage manager
 pub struct SecureStorage {
@@ -92,22 +83,9 @@ impl SecureStorage {
         status: &S,
     ) -> Result<(), StorageError> {
         self.core
-            .with_connection(|conn| {
-                let status_str = serde_json::to_string(status)?;
-                let now = Utc::now().to_rfc3339();
-
-                conn.execute(
-                    r#"
-            INSERT INTO verification_events 
-                (id, credential_type, status, verified_at, offline_verified)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-                    rusqlite::params![id, credential_type, status_str, now, false],
-                )?;
-
-                Ok(())
-            })
+            .store_verification_event(id, credential_type, status)
             .await
+            .map_err(Into::into)
     }
 
     /// Get verification history
@@ -116,36 +94,9 @@ impl SecureStorage {
         limit: usize,
     ) -> Result<Vec<VerificationHistoryEntry>, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let mut stmt = conn.prepare(
-                    r#"
-            SELECT id, credential_type, status, verified_at, issuer_jurisdiction, synced
-            FROM verification_events
-            ORDER BY verified_at DESC
-            LIMIT ?
-            "#,
-                )?;
-
-                let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
-                let rows = stmt.query_map([sql_limit], |row| {
-                    Ok(VerificationHistoryEntry {
-                        id: row.get(0)?,
-                        credential_type: row.get(1)?,
-                        status: row.get(2)?,
-                        verified_at: row.get(3)?,
-                        jurisdiction: row.get(4)?,
-                        synced: row.get(5)?,
-                    })
-                })?;
-
-                let mut history = Vec::new();
-                for row in rows {
-                    history.push(row?);
-                }
-
-                Ok(history)
-            })
+            .get_verification_history(limit)
             .await
+            .map_err(Into::into)
     }
 
     /// Clear verification history older than N days
@@ -154,22 +105,9 @@ impl SecureStorage {
         older_than_days: u32,
     ) -> Result<usize, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let deleted = if older_than_days == 0 {
-                    conn.execute("DELETE FROM verification_events", [])?
-                } else {
-                    conn.execute(
-                        r#"
-                DELETE FROM verification_events 
-                WHERE verified_at < datetime('now', ? || ' days')
-                "#,
-                        [format!("-{}", older_than_days)],
-                    )?
-                };
-
-                Ok(deleted)
-            })
+            .clear_verification_history(older_than_days)
             .await
+            .map_err(Into::into)
     }
 
     /// Get offline queue status
@@ -487,77 +425,12 @@ impl SecureStorage {
 
     /// Get sync state
     pub async fn get_sync_state(&self) -> Result<Option<SyncState>, StorageError> {
-        self.core
-            .with_connection(|conn| {
-                let result = conn.query_row(
-                    r#"
-            SELECT last_iaca_sync, last_csca_sync, last_crl_sync,
-                   iaca_version, csca_version, sync_in_progress, last_error
-            FROM sync_state WHERE id = 'current'
-            "#,
-                    [],
-                    |row| {
-                        Ok(SyncState {
-                            last_iaca_sync: row.get::<_, Option<String>>(0)?.and_then(|s| {
-                                chrono::DateTime::parse_from_rfc3339(&s)
-                                    .ok()
-                                    .map(|dt| dt.with_timezone(&Utc))
-                            }),
-                            last_csca_sync: row.get::<_, Option<String>>(1)?.and_then(|s| {
-                                chrono::DateTime::parse_from_rfc3339(&s)
-                                    .ok()
-                                    .map(|dt| dt.with_timezone(&Utc))
-                            }),
-                            last_crl_sync: row.get::<_, Option<String>>(2)?.and_then(|s| {
-                                chrono::DateTime::parse_from_rfc3339(&s)
-                                    .ok()
-                                    .map(|dt| dt.with_timezone(&Utc))
-                            }),
-                            iaca_version: row.get(3)?,
-                            csca_version: row.get(4)?,
-                            sync_in_progress: row.get::<_, i32>(5)? != 0,
-                            last_error: row.get(6)?,
-                        })
-                    },
-                );
-
-                match result {
-                    Ok(state) => Ok(Some(state)),
-                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                    Err(e) => Err(e.into()),
-                }
-            })
-            .await
+        self.core.get_sync_state().await.map_err(Into::into)
     }
 
     /// Update sync state
     pub async fn update_sync_state(&self, state: &SyncState) -> Result<(), StorageError> {
-        self.core
-            .with_connection(|conn| {
-                let now = Utc::now().to_rfc3339();
-
-                conn.execute(
-                    r#"
-            INSERT OR REPLACE INTO sync_state 
-                (id, last_iaca_sync, last_csca_sync, last_crl_sync,
-                 iaca_version, csca_version, sync_in_progress, last_error, updated_at)
-            VALUES ('current', ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-                    rusqlite::params![
-                        state.last_iaca_sync.map(|dt| dt.to_rfc3339()),
-                        state.last_csca_sync.map(|dt| dt.to_rfc3339()),
-                        state.last_crl_sync.map(|dt| dt.to_rfc3339()),
-                        state.iaca_version,
-                        state.csca_version,
-                        state.sync_in_progress as i32,
-                        state.last_error,
-                        now,
-                    ],
-                )?;
-
-                Ok(())
-            })
-            .await
+        self.core.update_sync_state(state).await.map_err(Into::into)
     }
 
     /// Queue an event for offline reporting
@@ -567,22 +440,9 @@ impl SecureStorage {
         payload: &serde_json::Value,
     ) -> Result<String, StorageError> {
         self.core
-            .with_connection(|conn| {
-                let id = uuid::Uuid::new_v4().to_string();
-                let now = Utc::now().to_rfc3339();
-                let payload_str = serde_json::to_string(payload)?;
-
-                conn.execute(
-                    r#"
-            INSERT INTO offline_queue (id, event_type, payload, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-                    rusqlite::params![id, event_type, payload_str, now],
-                )?;
-
-                Ok(id)
-            })
+            .queue_event(event_type, payload)
             .await
+            .map_err(Into::into)
     }
 
     /// Get pending events from offline queue
@@ -640,12 +500,7 @@ impl SecureStorage {
 
     /// Remove event from offline queue (after successful sync)
     pub async fn remove_queued_event(&self, id: &str) -> Result<(), StorageError> {
-        self.core
-            .with_connection(|conn| {
-                conn.execute("DELETE FROM offline_queue WHERE id = ?", [id])?;
-                Ok(())
-            })
-            .await
+        self.core.remove_queued_event(id).await.map_err(Into::into)
     }
 
     /// Add audit log entry
@@ -657,21 +512,9 @@ impl SecureStorage {
         details: Option<&serde_json::Value>,
     ) -> Result<(), StorageError> {
         self.core
-            .with_connection(|conn| {
-                let id = uuid::Uuid::new_v4().to_string();
-                let details_str = details.map(serde_json::to_string).transpose()?;
-
-                conn.execute(
-                    r#"
-            INSERT INTO audit_log (id, event_type, actor, target, details)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-                    rusqlite::params![id, event_type, actor, target, details_str],
-                )?;
-
-                Ok(())
-            })
+            .add_audit_log(event_type, actor, target, details)
             .await
+            .map_err(Into::into)
     }
 
     /// Store deployment profile
