@@ -4507,7 +4507,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf#44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf"
+source = "git+https://github.com/ElevenID/marty-core?rev=99e2681b52612ce0363ef65d524880c0006677e2#99e2681b52612ce0363ef65d524880c0006677e2"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4543,6 +4543,7 @@ dependencies = [
  "keyring-core",
  "marty-crypto",
  "marty-secure-storage",
+ "marty-types",
  "marty-verification",
  "rcgen",
  "reqwest 0.12.28",
@@ -4559,7 +4560,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf#44e3cbafed6e2de897a2dc0dc9474b8a3401a7cf"
+source = "git+https://github.com/ElevenID/marty-core?rev=99e2681b52612ce0363ef65d524880c0006677e2#99e2681b52612ce0363ef65d524880c0006677e2"
 dependencies = [
  "chrono",
  "serde",

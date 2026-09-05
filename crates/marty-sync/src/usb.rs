@@ -6,6 +6,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use der::Decode;
+use marty_types::open_badges::contains_private_key_material;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -760,27 +761,6 @@ fn parse_required_timestamp(value: &str, name: &str) -> Result<DateTime<Utc>, Sy
         .map_err(|_| SyncError::Parse(format!("{name} must be RFC 3339")))
 }
 
-fn contains_private_key_material(value: &Value) -> bool {
-    match value {
-        Value::Object(object) => object.iter().any(|(key, nested)| {
-            if key.starts_with("privateKey") || key.starts_with("secretKey") {
-                return true;
-            }
-            if key == "publicKeyJwk" {
-                return nested.as_object().is_none_or(|jwk| {
-                    matches!(jwk.get("kty").and_then(Value::as_str), Some("oct") | None)
-                        || ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]
-                            .iter()
-                            .any(|private| jwk.contains_key(*private))
-                });
-            }
-            contains_private_key_material(nested)
-        }),
-        Value::Array(values) => values.iter().any(contains_private_key_material),
-        _ => false,
-    }
-}
-
 fn load_trusted_signing_public_key() -> Result<[u8; 32], SyncError> {
     // Trust is configured out of band. `signing_cert` in the package is
     // deliberately informational and never enters this path.
@@ -1213,7 +1193,12 @@ mod tests {
 
         let mut private = public_method();
         private["publicKeyJwk"]["d"] = json!("private");
-        assert!(parse_open_badge_method(&private, created_at).is_err());
+        assert!(matches!(parse_open_badge_method(&private, created_at),
+            Err(SyncError::Parse(message)) if message.contains("contains private or symmetric key material")));
+        let mut nested = public_method();
+        nested["extension"] = json!([{"secretKeyMultibase": "private"}]);
+        assert!(matches!(parse_open_badge_method(&nested, created_at),
+            Err(SyncError::Parse(message)) if message.contains("contains private or symmetric key material")));
     }
 
     #[test]
