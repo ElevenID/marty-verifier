@@ -1,6 +1,5 @@
 use super::liveness::verify_challenge_signature;
 use super::*;
-use base64::Engine as _;
 
 #[test]
 fn software_emrtd_verification_uses_the_simple_hardware_path() {
