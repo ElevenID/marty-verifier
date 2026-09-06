@@ -1,7 +1,7 @@
 //! Deployment profile and lane sync provider
 
 use crate::error::SyncError;
-use reqwest::Client;
+use crate::http::SyncHttpClient;
 use serde::{Deserialize, Serialize};
 
 /// Deployment profile configuration from backend
@@ -75,9 +75,7 @@ pub struct DeviceConfig {
 
 /// Profile sync provider for fetching deployment configuration from backend
 pub struct ProfileSyncProvider {
-    client: Client,
-    endpoint: String,
-    access_token: String,
+    http: SyncHttpClient,
 }
 
 impl ProfileSyncProvider {
@@ -88,9 +86,7 @@ impl ProfileSyncProvider {
     /// * `access_token` - Optional bearer token for authentication
     pub fn new(endpoint: String, access_token: String) -> Self {
         Self {
-            client: Client::new(),
-            endpoint,
-            access_token,
+            http: SyncHttpClient::new(endpoint, access_token),
         }
     }
 
@@ -99,29 +95,14 @@ impl ProfileSyncProvider {
     /// # Arguments
     /// * `device_id` - Device identifier
     pub async fn fetch_device_config(&self, device_id: &str) -> Result<DeviceConfig, SyncError> {
-        let url = format!("{}/api/v1/devices/{}/config", self.endpoint, device_id);
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
+        self.http
+            .get_json(
+                &["api", "v1", "devices", device_id, "config"],
+                &[],
+                None,
+                "device config",
+            )
             .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SyncError::HttpError(
-                response.status().as_u16(),
-                format!("Failed to fetch device config: {}", response.status()),
-            ));
-        }
-
-        let config: DeviceConfig = response
-            .json()
-            .await
-            .map_err(|e| SyncError::ParseError(e.to_string()))?;
-
-        Ok(config)
     }
 
     /// Fetch deployment profile by ID
@@ -129,62 +110,33 @@ impl ProfileSyncProvider {
         &self,
         profile_id: &str,
     ) -> Result<DeploymentProfile, SyncError> {
-        let url = format!(
-            "{}/api/v1/identity/deployment-profiles/{}",
-            self.endpoint, profile_id
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
+        self.http
+            .get_json(
+                &["api", "v1", "identity", "deployment-profiles", profile_id],
+                &[],
+                None,
+                "deployment profile",
+            )
             .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SyncError::HttpError(
-                response.status().as_u16(),
-                format!("Failed to fetch deployment profile: {}", response.status()),
-            ));
-        }
-
-        let profile: DeploymentProfile = response
-            .json()
-            .await
-            .map_err(|e| SyncError::ParseError(e.to_string()))?;
-
-        Ok(profile)
     }
 
     /// Fetch lanes for a deployment profile
     pub async fn fetch_lanes(&self, profile_id: &str) -> Result<Vec<Lane>, SyncError> {
-        let url = format!(
-            "{}/api/v1/identity/deployment-profiles/{}/lanes",
-            self.endpoint, profile_id
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
+        self.http
+            .get_json(
+                &[
+                    "api",
+                    "v1",
+                    "identity",
+                    "deployment-profiles",
+                    profile_id,
+                    "lanes",
+                ],
+                &[],
+                None,
+                "lanes",
+            )
             .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SyncError::HttpError(
-                response.status().as_u16(),
-                format!("Failed to fetch lanes: {}", response.status()),
-            ));
-        }
-
-        let lanes: Vec<Lane> = response
-            .json()
-            .await
-            .map_err(|e| SyncError::ParseError(e.to_string()))?;
-
-        Ok(lanes)
     }
 
     /// Check if a device should receive an update based on rollout percentage

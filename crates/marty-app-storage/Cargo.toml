@@ -11,28 +11,19 @@ default = []
 sqlcipher = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
+marty-secure-storage.workspace = true
 rusqlite = { workspace = true, features = ["bundled-sqlcipher"] }
-keyring.workspace = true
-keyring-core = "1.0"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
-tracing.workspace = true
 chrono.workspace = true
-uuid.workspace = true
-blake3.workspace = true
-directories.workspace = true
 
-# Encryption
-aes-gcm = "0.10"
-rand = "0.8"
-base64 = "0.22"
-hex = "0.4"
-marty-types.workspace = true
 marty-sync.workspace = true
 marty-verification.workspace = true
 
 [dev-dependencies]
+keyring-core = "1.0"
+base64 = "0.22"
+hex = "0.4"
 tempfile = "3.14"
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }

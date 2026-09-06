@@ -89,10 +89,8 @@ impl AppState {
     }
 
     fn from_config_and_storage(config: AppConfig, storage: Arc<SecureStorage>) -> AppResult<Self> {
-        // Initialize core secure storage used by the sync engine.
-        let core_storage = Arc::new(CoreSecureStorage::new(&config.data_dir).map_err(|e| {
-            crate::error::AppError::Config(format!("Core storage init failed: {}", e))
-        })?);
+        // Sync and reporting share the app's core connection and migration owner.
+        let core_storage = Arc::clone(storage.core_storage());
 
         // The open-source distribution enables every capability compiled into it.
         // Private downstream distributions can supply another provider.

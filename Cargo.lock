@@ -3430,7 +3430,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "isomdl"
 version = "0.2.0"
-source = "git+https://github.com/ElevenID/isomdl-elevenid?rev=7a443cf6c37c8d7f11e9a767c1002684842ab5d0#7a443cf6c37c8d7f11e9a767c1002684842ab5d0"
+source = "git+https://github.com/ElevenID/isomdl-elevenid?rev=671044c9495aec101bf0cd381669d5ed6f64dd11#671044c9495aec101bf0cd381669d5ed6f64dd11"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3475,7 +3475,7 @@ dependencies = [
 [[package]]
 name = "isomdl-macros"
 version = "0.1.0"
-source = "git+https://github.com/ElevenID/isomdl-elevenid?rev=7a443cf6c37c8d7f11e9a767c1002684842ab5d0#7a443cf6c37c8d7f11e9a767c1002684842ab5d0"
+source = "git+https://github.com/ElevenID/isomdl-elevenid?rev=671044c9495aec101bf0cd381669d5ed6f64dd11#671044c9495aec101bf0cd381669d5ed6f64dd11"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4373,32 +4373,25 @@ dependencies = [
 name = "marty-app-storage"
 version = "0.1.4"
 dependencies = [
- "aes-gcm",
  "base64 0.22.1",
- "blake3",
  "chrono",
- "directories",
  "hex",
- "keyring 4.1.6",
  "keyring-core",
+ "marty-secure-storage",
  "marty-sync",
- "marty-types",
  "marty-verification",
- "rand 0.8.7",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
 name = "marty-biometrics"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4413,8 +4406,8 @@ dependencies = [
 
 [[package]]
 name = "marty-crypto"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4467,8 +4460,8 @@ dependencies = [
 
 [[package]]
 name = "marty-oid4vci"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4513,8 +4506,8 @@ dependencies = [
 
 [[package]]
 name = "marty-secure-storage"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4550,6 +4543,7 @@ dependencies = [
  "keyring-core",
  "marty-crypto",
  "marty-secure-storage",
+ "marty-types",
  "marty-verification",
  "rcgen",
  "reqwest 0.12.28",
@@ -4565,8 +4559,8 @@ dependencies = [
 
 [[package]]
 name = "marty-types"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "chrono",
  "serde",
@@ -4576,8 +4570,8 @@ dependencies = [
 
 [[package]]
 name = "marty-verification"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=56cc26c23ca2de73092ea03d7069f8f9f88914a2#56cc26c23ca2de73092ea03d7069f8f9f88914a2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6737,9 +6731,10 @@ dependencies = [
 [[package]]
 name = "sd-jwt-rs"
 version = "0.7.1"
-source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=9244ec551ac56bb4fa7d3a87e50f59b2f36d1925#9244ec551ac56bb4fa7d3a87e50f59b2f36d1925"
+source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=2799b5fff011342aefe8ac5e9653d5b084e2a20c#2799b5fff011342aefe8ac5e9653d5b084e2a20c"
 dependencies = [
  "base64 0.21.7",
+ "getrandom 0.2.17",
  "hmac",
  "jsonwebtoken",
  "log",

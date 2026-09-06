@@ -4,16 +4,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
+use marty_secure_storage::SecureStorage as CoreSecureStorage;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
-use serde_json::Value;
-use tokio::sync::Mutex;
 
-use crate::encryption::PiiEncryptor;
 use crate::error::StorageError;
-use crate::keychain::KeychainManager;
 use crate::models::*;
 use crate::schema::{SCHEMA, SCHEMA_VERSION};
+use marty_secure_storage::PiiEncryptor;
 
 /// Offline queue status
 #[derive(Debug, Serialize)]
@@ -25,102 +23,55 @@ pub struct OfflineQueueStatus {
     pub last_successful_sync: Option<String>,
 }
 
-/// Verification history entry for API
-#[derive(Debug, Serialize)]
-pub struct VerificationHistoryEntry {
-    pub id: String,
-    pub credential_type: String,
-    pub status: String,
-    pub verified_at: String,
-    pub jurisdiction: Option<String>,
-    pub synced: bool,
-}
+pub use marty_secure_storage::VerificationHistoryEntry;
 
 /// Secure storage manager
 pub struct SecureStorage {
-    conn: Arc<Mutex<Connection>>,
+    core: Arc<CoreSecureStorage>,
     #[allow(dead_code)]
     pii_encryptor: Option<PiiEncryptor>,
 }
 
 impl SecureStorage {
-    /// Create new secure storage at the given path
+    /// Create storage with one core-owned database connection and migration owner.
     pub fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        Self::new_with_keychain(data_dir, KeychainManager::new())
+        Self::new_with_core(
+            CoreSecureStorage::new(data_dir)?,
+            PiiEncryptor::from_platform_keyring,
+        )
     }
 
     /// Create storage using a caller-installed process-local keyring.
-    ///
-    /// This is an explicit startup-test boundary. Normal application startup
-    /// must use [`SecureStorage::new`] and the native platform keychain.
     pub fn new_with_process_local_keyring(data_dir: &Path) -> Result<Self, StorageError> {
-        let store = keyring_core::get_default_store()
-            .ok_or_else(|| StorageError::Keychain("no default store is installed".to_string()))?;
-        if !matches!(
-            store.persistence(),
-            keyring_core::CredentialPersistence::ProcessOnly
-        ) {
-            return Err(StorageError::Keychain(
-                "installed keyring is not process-local".to_string(),
-            ));
-        }
-        Self::new_with_keychain(data_dir, KeychainManager::with_installed_default_store())
+        Self::new_with_core(
+            CoreSecureStorage::new_with_process_local_keyring(data_dir)?,
+            PiiEncryptor::from_process_local_keyring,
+        )
     }
 
-    fn new_with_keychain(data_dir: &Path, keychain: KeychainManager) -> Result<Self, StorageError> {
-        // Ensure data directory exists
-        std::fs::create_dir_all(data_dir)?;
-
-        let db_path = data_dir.join("marty_verifier.db");
-
-        // Get or create encryption key from keychain
-        let db_key = keychain.get_or_create_db_key()?;
-
-        // Open encrypted database
-        let conn = Connection::open(&db_path)?;
-
-        // Set encryption key (SQLCipher) - use raw key format
-        let key_hex = hex::encode(&db_key);
-        conn.pragma_update(None, "key", format!("x'{}'", key_hex))?;
-
-        // Set secure pragmas - must come AFTER key
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys = ON;
-            PRAGMA journal_mode = WAL;
-            "#,
-        )?;
-
-        // Initialize schema
-        conn.execute_batch(SCHEMA)?;
-
-        let current_version = get_schema_version(&conn)?;
-        migrate_schema(&conn, current_version)?;
-
-        // App and Core storage share this marker. Never downgrade a newer
-        // version recorded by the other storage implementation.
-        let stored_version = current_version.max(SCHEMA_VERSION);
-        conn.execute(
-            "INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', ?)",
-            [stored_version.to_string()],
-        )?;
-
-        tracing::info!(?db_path, "Secure storage initialized");
-
-        // Initialize PII encryptor
-        let pii_key = keychain.get_or_create_pii_key()?;
-        let pii_encryptor = Some(PiiEncryptor::new(&pii_key)?);
-
+    fn new_with_core(
+        mut core: CoreSecureStorage,
+        initialize_pii: fn() -> Result<PiiEncryptor, marty_secure_storage::StorageError>,
+    ) -> Result<Self, StorageError> {
+        core.initialize_extension(initialize_app_schema)?;
+        // Preserve app startup key access while core owns encryption and keyring behavior.
+        let pii_encryptor = Some(initialize_pii()?);
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            core: Arc::new(core),
             pii_encryptor,
         })
     }
 
+    /// Shared storage owner for sync, reporting and governed trust operations.
+    pub fn core_storage(&self) -> &Arc<CoreSecureStorage> {
+        &self.core
+    }
+
     /// Verify that startup migrations produced the schema required by the app.
     pub async fn health_check(&self) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        validate_schema(&conn)
+        self.core
+            .with_connection(|conn| validate_schema(conn))
+            .await
     }
 
     /// Store a verification event
@@ -130,20 +81,10 @@ impl SecureStorage {
         credential_type: &str,
         status: &S,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let status_str = serde_json::to_string(status)?;
-        let now = Utc::now().to_rfc3339();
-
-        conn.execute(
-            r#"
-            INSERT INTO verification_events 
-                (id, credential_type, status, verified_at, offline_verified)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![id, credential_type, status_str, now, false],
-        )?;
-
-        Ok(())
+        self.core
+            .store_verification_event(id, credential_type, status)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get verification history
@@ -151,34 +92,10 @@ impl SecureStorage {
         &self,
         limit: usize,
     ) -> Result<Vec<VerificationHistoryEntry>, StorageError> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, credential_type, status, verified_at, issuer_jurisdiction, synced
-            FROM verification_events
-            ORDER BY verified_at DESC
-            LIMIT ?
-            "#,
-        )?;
-
-        let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = stmt.query_map([sql_limit], |row| {
-            Ok(VerificationHistoryEntry {
-                id: row.get(0)?,
-                credential_type: row.get(1)?,
-                status: row.get(2)?,
-                verified_at: row.get(3)?,
-                jurisdiction: row.get(4)?,
-                synced: row.get(5)?,
-            })
-        })?;
-
-        let mut history = Vec::new();
-        for row in rows {
-            history.push(row?);
-        }
-
-        Ok(history)
+        self.core
+            .get_verification_history(limit)
+            .await
+            .map_err(Into::into)
     }
 
     /// Clear verification history older than N days
@@ -186,91 +103,30 @@ impl SecureStorage {
         &self,
         older_than_days: u32,
     ) -> Result<usize, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let deleted = if older_than_days == 0 {
-            conn.execute("DELETE FROM verification_events", [])?
-        } else {
-            conn.execute(
-                r#"
-                DELETE FROM verification_events 
-                WHERE verified_at < datetime('now', ? || ' days')
-                "#,
-                [format!("-{}", older_than_days)],
-            )?
-        };
-
-        Ok(deleted)
+        self.core
+            .clear_verification_history(older_than_days)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get offline queue status
     pub async fn get_queue_status(&self) -> Result<OfflineQueueStatus, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let pending_events: i64 =
-            conn.query_row("SELECT COUNT(*) FROM offline_queue", [], |row| row.get(0))?;
-        let pending_events = usize::try_from(pending_events).unwrap_or_default();
-
-        let oldest_event: Option<String> = conn
-            .query_row("SELECT MIN(created_at) FROM offline_queue", [], |row| {
-                row.get(0)
-            })
-            .ok();
-
-        // Estimate data size
-        let data_size_bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM offline_queue",
-            [],
-            |row| row.get(0),
-        )?;
-        let data_size_bytes = usize::try_from(data_size_bytes).unwrap_or_default();
-
-        // Get last sync times from sync_state
-        let (last_sync_attempt, last_successful_sync): (Option<String>, Option<String>) = conn
-            .query_row(
-                "SELECT last_error, last_iaca_sync FROM sync_state WHERE id = 'current'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap_or((None, None));
-
+        let status = self.core.get_queue_status().await?;
         Ok(OfflineQueueStatus {
-            pending_events,
-            oldest_event,
-            data_size_bytes,
-            last_sync_attempt,
-            last_successful_sync,
+            pending_events: status.pending_events,
+            oldest_event: status.oldest_event,
+            data_size_bytes: status.data_size_bytes,
+            last_sync_attempt: status.last_sync_attempt,
+            last_successful_sync: status.last_successful_sync,
         })
     }
 
     /// Store a trust anchor certificate
     pub async fn store_trust_anchor(&self, anchor: &TrustAnchor) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO trust_anchors 
-                (id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                 not_before, not_after, certificate_der, certificate_hash, source, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![
-                anchor.id,
-                anchor.anchor_type.to_string(),
-                anchor.jurisdiction,
-                anchor.subject,
-                anchor.issuer,
-                anchor.serial_number,
-                anchor.not_before.map(|dt| dt.to_rfc3339()),
-                anchor.not_after.map(|dt| dt.to_rfc3339()),
-                anchor.certificate_der,
-                anchor.certificate_hash,
-                anchor.source.to_string(),
-                anchor.synced_at.to_rfc3339(),
-            ],
-        )?;
-
-        Ok(())
+        self.core
+            .store_trust_anchor(anchor)
+            .await
+            .map_err(Into::into)
     }
 
     /// Store a trusted Open Badge verification method
@@ -278,30 +134,10 @@ impl SecureStorage {
         &self,
         method: &OpenBadgeVerificationMethod,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let document_json = serde_json::to_string(&method.document)?;
-
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO open_badge_keys
-                (id, document_json, controller, issuer, kid, not_before, not_after, status, source, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![
-                method.id,
-                document_json,
-                method.controller,
-                method.issuer,
-                method.kid,
-                method.not_before.map(|dt| dt.to_rfc3339()),
-                method.not_after.map(|dt| dt.to_rfc3339()),
-                method.status,
-                method.source.to_string(),
-                method.synced_at.to_rfc3339(),
-            ],
-        )?;
-
-        Ok(())
+        self.core
+            .store_open_badge_key(method)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get trust anchors by type and jurisdiction
@@ -310,177 +146,32 @@ impl SecureStorage {
         anchor_type: TrustAnchorType,
         jurisdiction: Option<&str>,
     ) -> Result<Vec<TrustAnchor>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let sql = if jurisdiction.is_some() {
-            r#"
-            SELECT id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                   not_before, not_after, certificate_der, certificate_hash, source, synced_at
-            FROM trust_anchors
-            WHERE anchor_type = ? AND jurisdiction = ?
-            "#
-        } else {
-            r#"
-            SELECT id, anchor_type, jurisdiction, subject, issuer, serial_number,
-                   not_before, not_after, certificate_der, certificate_hash, source, synced_at
-            FROM trust_anchors
-            WHERE anchor_type = ?
-            "#
-        };
-
-        let mut stmt = conn.prepare(sql)?;
-
-        let rows = if let Some(jur) = jurisdiction {
-            stmt.query_map(
-                [anchor_type.to_string(), jur.to_string()],
-                Self::map_trust_anchor,
-            )?
-        } else {
-            stmt.query_map([anchor_type.to_string()], Self::map_trust_anchor)?
-        };
-
-        let mut anchors = Vec::new();
-        for row in rows {
-            anchors.push(row?);
-        }
-
-        Ok(anchors)
-    }
-
-    fn map_trust_anchor(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrustAnchor> {
-        let anchor_type_str: String = row.get(1)?;
-        let source_str: String = row.get(10)?;
-
-        Ok(TrustAnchor {
-            id: row.get(0)?,
-            anchor_type: match anchor_type_str.as_str() {
-                "iaca" => TrustAnchorType::Iaca,
-                "csca" => TrustAnchorType::Csca,
-                "dsc" => TrustAnchorType::Dsc,
-                _ => TrustAnchorType::Iaca,
-            },
-            jurisdiction: row.get(2)?,
-            subject: row.get(3)?,
-            issuer: row.get(4)?,
-            serial_number: row.get(5)?,
-            not_before: row.get::<_, Option<String>>(6)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            not_after: row.get::<_, Option<String>>(7)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            certificate_der: row.get(8)?,
-            certificate_hash: row.get(9)?,
-            source: match source_str.as_str() {
-                "aamva_dts" => TrustAnchorSource::AamvaDts,
-                "icao_pkd" => TrustAnchorSource::IcaoPkd,
-                "usb_import" => TrustAnchorSource::UsbImport,
-                _ => TrustAnchorSource::Manual,
-            },
-            synced_at: row
-                .get::<_, String>(11)
-                .ok()
-                .and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                })
-                .unwrap_or_else(Utc::now),
-        })
+        self.core
+            .get_trust_anchors(anchor_type, jurisdiction)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get all trusted Open Badge verification methods
     pub async fn get_open_badge_keys(
         &self,
     ) -> Result<Vec<OpenBadgeVerificationMethod>, StorageError> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, document_json, controller, issuer, kid, not_before, not_after, status, source, synced_at
-            FROM open_badge_keys
-            "#,
-        )?;
-
-        let rows = stmt.query_map([], Self::map_open_badge_key)?;
-        let mut methods = Vec::new();
-        for row in rows {
-            methods.push(row?);
-        }
-
-        Ok(methods)
+        self.core.get_open_badge_keys().await.map_err(Into::into)
     }
 
     /// Count trusted Open Badge verification methods
     pub async fn count_open_badge_keys(&self) -> Result<usize, StorageError> {
-        let conn = self.conn.lock().await;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM open_badge_keys", [], |row| row.get(0))?;
-        Ok(usize::try_from(count).unwrap_or_default())
+        self.core.count_open_badge_keys().await.map_err(Into::into)
     }
 
     /// Get latest Open Badge trust list sync timestamp
     pub async fn get_latest_open_badge_sync(
         &self,
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, StorageError> {
-        let conn = self.conn.lock().await;
-        let synced_at: Option<String> = conn
-            .query_row("SELECT MAX(synced_at) FROM open_badge_keys", [], |row| {
-                row.get(0)
-            })
-            .ok()
-            .flatten();
-
-        Ok(synced_at.and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(&s)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        }))
-    }
-
-    fn map_open_badge_key(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<OpenBadgeVerificationMethod> {
-        let source_str: String = row.get(8)?;
-        let document_json: String = row.get(1)?;
-        let document: Value =
-            serde_json::from_str(&document_json).unwrap_or(serde_json::Value::Null);
-
-        Ok(OpenBadgeVerificationMethod {
-            id: row.get(0)?,
-            document,
-            controller: row.get(2)?,
-            issuer: row.get(3)?,
-            kid: row.get(4)?,
-            not_before: row.get::<_, Option<String>>(5)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            not_after: row.get::<_, Option<String>>(6)?.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&Utc))
-            }),
-            status: row.get(7)?,
-            source: match source_str.as_str() {
-                "sync" => OpenBadgeKeySource::Sync,
-                "usb_import" => OpenBadgeKeySource::UsbImport,
-                _ => OpenBadgeKeySource::Manual,
-            },
-            synced_at: row
-                .get::<_, String>(9)
-                .ok()
-                .and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                })
-                .unwrap_or_else(Utc::now),
-        })
+        self.core
+            .get_latest_open_badge_sync()
+            .await
+            .map_err(Into::into)
     }
 
     /// Count trust anchors by type
@@ -488,83 +179,20 @@ impl SecureStorage {
         &self,
         anchor_type: TrustAnchorType,
     ) -> Result<usize, StorageError> {
-        let conn = self.conn.lock().await;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM trust_anchors WHERE anchor_type = ?",
-            [anchor_type.to_string()],
-            |row| row.get(0),
-        )?;
-        Ok(usize::try_from(count).unwrap_or_default())
+        self.core
+            .count_trust_anchors(anchor_type)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get sync state
     pub async fn get_sync_state(&self) -> Result<Option<SyncState>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let result = conn.query_row(
-            r#"
-            SELECT last_iaca_sync, last_csca_sync, last_crl_sync,
-                   iaca_version, csca_version, sync_in_progress, last_error
-            FROM sync_state WHERE id = 'current'
-            "#,
-            [],
-            |row| {
-                Ok(SyncState {
-                    last_iaca_sync: row.get::<_, Option<String>>(0)?.and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    }),
-                    last_csca_sync: row.get::<_, Option<String>>(1)?.and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    }),
-                    last_crl_sync: row.get::<_, Option<String>>(2)?.and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    }),
-                    iaca_version: row.get(3)?,
-                    csca_version: row.get(4)?,
-                    sync_in_progress: row.get::<_, i32>(5)? != 0,
-                    last_error: row.get(6)?,
-                })
-            },
-        );
-
-        match result {
-            Ok(state) => Ok(Some(state)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        self.core.get_sync_state().await.map_err(Into::into)
     }
 
     /// Update sync state
     pub async fn update_sync_state(&self, state: &SyncState) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
-
-        conn.execute(
-            r#"
-            INSERT OR REPLACE INTO sync_state 
-                (id, last_iaca_sync, last_csca_sync, last_crl_sync,
-                 iaca_version, csca_version, sync_in_progress, last_error, updated_at)
-            VALUES ('current', ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![
-                state.last_iaca_sync.map(|dt| dt.to_rfc3339()),
-                state.last_csca_sync.map(|dt| dt.to_rfc3339()),
-                state.last_crl_sync.map(|dt| dt.to_rfc3339()),
-                state.iaca_version,
-                state.csca_version,
-                state.sync_in_progress as i32,
-                state.last_error,
-                now,
-            ],
-        )?;
-
-        Ok(())
+        self.core.update_sync_state(state).await.map_err(Into::into)
     }
 
     /// Queue an event for offline reporting
@@ -573,20 +201,10 @@ impl SecureStorage {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<String, StorageError> {
-        let conn = self.conn.lock().await;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-        let payload_str = serde_json::to_string(payload)?;
-
-        conn.execute(
-            r#"
-            INSERT INTO offline_queue (id, event_type, payload, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-            rusqlite::params![id, event_type, payload_str, now],
-        )?;
-
-        Ok(id)
+        self.core
+            .queue_event(event_type, payload)
+            .await
+            .map_err(Into::into)
     }
 
     /// Get pending events from offline queue
@@ -594,55 +212,15 @@ impl SecureStorage {
         &self,
         limit: usize,
     ) -> Result<Vec<OfflineQueueEntry>, StorageError> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, event_type, payload, created_at, retry_count, last_retry_at, error
-            FROM offline_queue
-            ORDER BY created_at ASC
-            LIMIT ?
-            "#,
-        )?;
-
-        let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = stmt.query_map([sql_limit], |row| {
-            let payload_str: String = row.get(2)?;
-            Ok(OfflineQueueEntry {
-                id: row.get(0)?,
-                event_type: row.get(1)?,
-                payload: serde_json::from_str(&payload_str).unwrap_or(serde_json::Value::Null),
-                created_at: row
-                    .get::<_, String>(3)
-                    .ok()
-                    .and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    })
-                    .unwrap_or_else(Utc::now),
-                retry_count: row.get(4)?,
-                last_retry_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
-                }),
-                error: row.get(6)?,
-            })
-        })?;
-
-        let mut entries = Vec::new();
-        for row in rows {
-            entries.push(row?);
-        }
-
-        Ok(entries)
+        self.core
+            .get_pending_events(limit)
+            .await
+            .map_err(Into::into)
     }
 
     /// Remove event from offline queue (after successful sync)
     pub async fn remove_queued_event(&self, id: &str) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        conn.execute("DELETE FROM offline_queue WHERE id = ?", [id])?;
-        Ok(())
+        self.core.remove_queued_event(id).await.map_err(Into::into)
     }
 
     /// Add audit log entry
@@ -653,19 +231,10 @@ impl SecureStorage {
         target: Option<&str>,
         details: Option<&serde_json::Value>,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let id = uuid::Uuid::new_v4().to_string();
-        let details_str = details.map(serde_json::to_string).transpose()?;
-
-        conn.execute(
-            r#"
-            INSERT INTO audit_log (id, event_type, actor, target, details)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-            rusqlite::params![id, event_type, actor, target, details_str],
-        )?;
-
-        Ok(())
+        self.core
+            .add_audit_log(event_type, actor, target, details)
+            .await
+            .map_err(Into::into)
     }
 
     /// Store deployment profile
@@ -673,41 +242,44 @@ impl SecureStorage {
         &self,
         profile: &crate::DeploymentProfile,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
+        self.core
+            .with_connection(|conn| {
+                let now = Utc::now().to_rfc3339();
 
-        let ux_config_json = serde_json::to_string(&profile.ux_config)?;
-        let update_policy_json = serde_json::to_string(&profile.update_policy)?;
-        let network_mode = format!("{:?}", profile.network_mode).to_lowercase();
+                let ux_config_json = serde_json::to_string(&profile.ux_config)?;
+                let update_policy_json = serde_json::to_string(&profile.update_policy)?;
+                let network_mode = format!("{:?}", profile.network_mode).to_lowercase();
 
-        conn.execute(
-            r#"
+                conn.execute(
+                    r#"
             INSERT OR REPLACE INTO deployment_profiles 
             (id, name, site_id, network_mode, key_access_mode, ux_config, update_policy,
              offline_cache_ttl_hours, biometric_required, audit_all_events, synced_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
-            rusqlite::params![
-                profile.id,
-                profile.name,
-                profile.site_id,
-                network_mode,
-                profile.key_access_mode,
-                ux_config_json,
-                update_policy_json,
-                profile.offline_cache_ttl_hours as i64,
-                if profile.operator_biometric_authentication_required {
-                    1
-                } else {
-                    0
-                },
-                if profile.audit_all_events { 1 } else { 0 },
-                now,
-                now,
-            ],
-        )?;
+                    rusqlite::params![
+                        profile.id,
+                        profile.name,
+                        profile.site_id,
+                        network_mode,
+                        profile.key_access_mode,
+                        ux_config_json,
+                        update_policy_json,
+                        profile.offline_cache_ttl_hours as i64,
+                        if profile.operator_biometric_authentication_required {
+                            1
+                        } else {
+                            0
+                        },
+                        if profile.audit_all_events { 1 } else { 0 },
+                        now,
+                        now,
+                    ],
+                )?;
 
-        Ok(())
+                Ok(())
+            })
+            .await
     }
 
     /// Get deployment profile by ID
@@ -715,57 +287,62 @@ impl SecureStorage {
         &self,
         id: &str,
     ) -> Result<Option<crate::DeploymentProfile>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let result = conn.query_row(
-            r#"
+        self.core
+            .with_connection(|conn| {
+                let result = conn.query_row(
+                    r#"
             SELECT id, name, site_id, network_mode, key_access_mode, ux_config, update_policy,
                    offline_cache_ttl_hours, biometric_required, audit_all_events
             FROM deployment_profiles WHERE id = ?
             "#,
-            [id],
-            |row| {
-                let ux_config_json: String = row.get(5)?;
-                let update_policy_json: String = row.get(6)?;
-                let network_mode_str: String = row.get(3)?;
+                    [id],
+                    |row| {
+                        let ux_config_json: String = row.get(5)?;
+                        let update_policy_json: String = row.get(6)?;
+                        let network_mode_str: String = row.get(3)?;
 
-                let ux_config: crate::UXConfig = serde_json::from_str(&ux_config_json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                let update_policy: crate::UpdatePolicy = serde_json::from_str(&update_policy_json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                let network_mode = match network_mode_str.as_str() {
-                    "online" => crate::NetworkMode::Online,
-                    "offline" => crate::NetworkMode::Offline,
-                    "hybrid" => crate::NetworkMode::Hybrid,
-                    _ => crate::NetworkMode::Online,
-                };
+                        let ux_config: crate::UXConfig = serde_json::from_str(&ux_config_json)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                        let update_policy: crate::UpdatePolicy =
+                            serde_json::from_str(&update_policy_json).map_err(|e| {
+                                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                            })?;
+                        let network_mode = match network_mode_str.as_str() {
+                            "online" => crate::NetworkMode::Online,
+                            "offline" => crate::NetworkMode::Offline,
+                            "hybrid" => crate::NetworkMode::Hybrid,
+                            _ => crate::NetworkMode::Online,
+                        };
 
-                Ok(crate::DeploymentProfile {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    site_id: row.get(2)?,
-                    network_mode,
-                    key_access_mode: row.get(4)?,
-                    ux_config,
-                    update_policy,
-                    offline_cache_ttl_hours: row.get::<_, i64>(7)? as u32,
-                    operator_biometric_authentication_required: row.get::<_, i32>(8)? != 0,
-                    audit_all_events: row.get::<_, i32>(9)? != 0,
-                    default_presentation_policy_id: None, // Not stored in DB
-                })
-            },
-        );
+                        Ok(crate::DeploymentProfile {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                            site_id: row.get(2)?,
+                            network_mode,
+                            key_access_mode: row.get(4)?,
+                            ux_config,
+                            update_policy,
+                            offline_cache_ttl_hours: row.get::<_, i64>(7)? as u32,
+                            operator_biometric_authentication_required: row.get::<_, i32>(8)? != 0,
+                            audit_all_events: row.get::<_, i32>(9)? != 0,
+                            default_presentation_policy_id: None, // Not stored in DB
+                        })
+                    },
+                );
 
-        match result {
-            Ok(profile) => Ok(Some(profile)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+                match result {
+                    Ok(profile) => Ok(Some(profile)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            })
+            .await
     }
 
     /// Store lane
     pub async fn store_lane(&self, lane: &crate::Lane) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
+        self.core.with_connection(|conn| {
+
         let now = Utc::now().to_rfc3339();
 
         let device_ids_json = serde_json::to_string(&lane.device_ids)?;
@@ -790,6 +367,7 @@ impl SecureStorage {
         )?;
 
         Ok(())
+        }).await
     }
 
     /// Get lanes for a deployment profile
@@ -797,37 +375,39 @@ impl SecureStorage {
         &self,
         profile_id: &str,
     ) -> Result<Vec<crate::Lane>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let mut stmt = conn.prepare(
-            r#"
+        self.core
+            .with_connection(|conn| {
+                let mut stmt = conn.prepare(
+                    r#"
             SELECT id, name, deployment_profile_id, default_policy_id, device_ids, metadata
             FROM lanes WHERE deployment_profile_id = ?
             "#,
-        )?;
+                )?;
 
-        let lanes = stmt
-            .query_map([profile_id], |row| {
-                let device_ids_json: String = row.get(4)?;
-                let metadata_json: String = row.get(5)?;
+                let lanes = stmt
+                    .query_map([profile_id], |row| {
+                        let device_ids_json: String = row.get(4)?;
+                        let metadata_json: String = row.get(5)?;
 
-                let device_ids: Vec<String> = serde_json::from_str(&device_ids_json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                let metadata: serde_json::Value = serde_json::from_str(&metadata_json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                        let device_ids: Vec<String> = serde_json::from_str(&device_ids_json)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                        let metadata: serde_json::Value = serde_json::from_str(&metadata_json)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
-                Ok(crate::Lane {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    deployment_profile_id: row.get(2)?,
-                    default_policy_id: row.get(3)?,
-                    device_ids,
-                    metadata,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(crate::Lane {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                            deployment_profile_id: row.get(2)?,
+                            default_policy_id: row.get(3)?,
+                            device_ids,
+                            metadata,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(lanes)
+                Ok(lanes)
+            })
+            .await
     }
 
     /// Store device configuration (singleton pattern)
@@ -837,50 +417,55 @@ impl SecureStorage {
         deployment_profile_id: Option<&str>,
         lane_id: Option<&str>,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
+        self.core
+            .with_connection(|conn| {
+                let now = Utc::now().to_rfc3339();
 
-        conn.execute(
-            r#"
+                conn.execute(
+                    r#"
             INSERT OR REPLACE INTO device_config 
             (id, device_id, deployment_profile_id, lane_id, assigned_at, updated_at)
             VALUES ('current', ?, ?, ?, ?, ?)
             "#,
-            rusqlite::params![device_id, deployment_profile_id, lane_id, now, now],
-        )?;
+                    rusqlite::params![device_id, deployment_profile_id, lane_id, now, now],
+                )?;
 
-        Ok(())
+                Ok(())
+            })
+            .await
     }
 
     /// Get device configuration (singleton)
     pub async fn get_device_config(
         &self,
     ) -> Result<Option<(String, Option<String>, Option<String>)>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let result = conn.query_row(
-            r#"
+        self.core
+            .with_connection(|conn| {
+                let result = conn.query_row(
+                    r#"
             SELECT device_id, deployment_profile_id, lane_id
             FROM device_config WHERE id = 'current'
             "#,
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        );
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                );
 
-        match result {
-            Ok((Some(device_id), profile_id, lane_id)) => {
-                Ok(Some((device_id, profile_id, lane_id)))
-            }
-            Ok((None, _, _)) => Ok(None),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+                match result {
+                    Ok((Some(device_id), profile_id, lane_id)) => {
+                        Ok(Some((device_id, profile_id, lane_id)))
+                    }
+                    Ok((None, _, _)) => Ok(None),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            })
+            .await
     }
 
     /// Store presentation policy
@@ -889,28 +474,31 @@ impl SecureStorage {
         policy: &crate::PresentationPolicy,
         deployment_profile_id: Option<&str>,
     ) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
+        self.core
+            .with_connection(|conn| {
+                let now = Utc::now().to_rfc3339();
 
-        let policy_json = serde_json::to_string(policy)?;
+                let policy_json = serde_json::to_string(policy)?;
 
-        conn.execute(
-            r#"
+                conn.execute(
+                    r#"
             INSERT OR REPLACE INTO presentation_policies 
             (id, policy_json, version, deployment_profile_id, synced_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
             "#,
-            rusqlite::params![
-                policy.id,
-                policy_json,
-                policy.version,
-                deployment_profile_id,
-                now,
-                now,
-            ],
-        )?;
+                    rusqlite::params![
+                        policy.id,
+                        policy_json,
+                        policy.version,
+                        deployment_profile_id,
+                        now,
+                        now,
+                    ],
+                )?;
 
-        Ok(())
+                Ok(())
+            })
+            .await
     }
 
     /// Get presentation policy by ID
@@ -918,23 +506,25 @@ impl SecureStorage {
         &self,
         id: &str,
     ) -> Result<Option<crate::PresentationPolicy>, StorageError> {
-        let conn = self.conn.lock().await;
+        self.core
+            .with_connection(|conn| {
+                let result = conn.query_row(
+                    "SELECT policy_json FROM presentation_policies WHERE id = ?",
+                    [id],
+                    |row| {
+                        let json: String = row.get(0)?;
+                        serde_json::from_str(&json)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+                    },
+                );
 
-        let result = conn.query_row(
-            "SELECT policy_json FROM presentation_policies WHERE id = ?",
-            [id],
-            |row| {
-                let json: String = row.get(0)?;
-                serde_json::from_str(&json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
-            },
-        );
-
-        match result {
-            Ok(policy) => Ok(Some(policy)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+                match result {
+                    Ok(policy) => Ok(Some(policy)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            })
+            .await
     }
 
     /// Get all presentation policies, optionally filtered by deployment profile
@@ -942,9 +532,9 @@ impl SecureStorage {
         &self,
         deployment_profile_id: Option<&str>,
     ) -> Result<Vec<crate::PresentationPolicy>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let (query, params): (&str, Vec<&str>) = match deployment_profile_id {
+        self.core
+            .with_connection(|conn| {
+                let (query, params): (&str, Vec<&str>) = match deployment_profile_id {
             Some(profile_id) => (
                 "SELECT policy_json FROM presentation_policies WHERE deployment_profile_id = ?",
                 vec![profile_id],
@@ -952,52 +542,41 @@ impl SecureStorage {
             None => ("SELECT policy_json FROM presentation_policies", vec![]),
         };
 
-        let mut stmt = conn.prepare(query)?;
-        let policies = stmt
-            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-                let json: String = row.get(0)?;
-                serde_json::from_str(&json)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+                let mut stmt = conn.prepare(query)?;
+                let policies = stmt
+                    .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                        let json: String = row.get(0)?;
+                        serde_json::from_str(&json)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(policies)
+                Ok(policies)
+            })
+            .await
     }
 
     /// Get last policy sync timestamp from sync_state
     pub async fn get_last_policy_sync(&self) -> Result<Option<String>, StorageError> {
-        let conn = self.conn.lock().await;
-
-        let result = conn.query_row(
-            "SELECT last_policy_sync FROM sync_state WHERE id = 'current'",
-            [],
-            |row| row.get(0),
-        );
-
-        match result {
-            Ok(sync_time) => Ok(sync_time),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        self.core
+            .with_connection(|conn| {
+                conn.query_row(
+                    "SELECT value FROM config WHERE key = 'app.last_policy_sync'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(Into::into)
+            })
+            .await
     }
 
     /// Update last policy sync timestamp in sync_state
     pub async fn update_last_policy_sync(&self, timestamp: String) -> Result<(), StorageError> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().to_rfc3339();
-
-        conn.execute(
-            r#"
-            INSERT INTO sync_state (id, last_policy_sync, updated_at)
-            VALUES ('current', ?, ?)
-            ON CONFLICT(id) DO UPDATE SET 
-                last_policy_sync = excluded.last_policy_sync,
-                updated_at = excluded.updated_at
-            "#,
-            rusqlite::params![timestamp, now],
-        )?;
-
-        Ok(())
+        self.core.with_connection(|conn| {
+            conn.execute("INSERT INTO config (key, value) VALUES ('app.last_policy_sync', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')", [timestamp])?;
+            Ok(())
+        }).await
     }
 }
 
@@ -1047,7 +626,7 @@ impl marty_sync::PolicyStorage for SecureStorage {
 fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {
     let version: Option<String> = conn
         .query_row(
-            "SELECT value FROM config WHERE key = 'schema_version'",
+            "SELECT value FROM config WHERE key = 'app_schema_version'",
             [],
             |row| row.get(0),
         )
@@ -1055,39 +634,16 @@ fn get_schema_version(conn: &Connection) -> Result<i32, StorageError> {
     Ok(version.and_then(|v| v.parse::<i32>().ok()).unwrap_or(0))
 }
 
-fn migrate_schema(conn: &Connection, current_version: i32) -> Result<(), StorageError> {
-    let _ = current_version;
-
-    // App and Core storage intentionally share the encrypted database, but
-    // maintain independent schema-version histories. Inspect physical columns
-    // so a numerically newer version from either crate cannot skip migration.
-    for table in ["trust_anchors", "open_badge_keys"] {
-        for (column, definition) in [
-            ("trust_domain", "TEXT"),
-            ("package_sequence", "INTEGER"),
-            ("package_version", "TEXT"),
-            ("package_created_at", "TEXT"),
-            ("package_expires_at", "TEXT"),
-            ("package_signer_key_id", "TEXT"),
-            ("package_digest", "TEXT"),
-            ("package_imported_at", "TEXT"),
-        ] {
-            if !column_exists(conn, table, column)? {
-                conn.execute(
-                    &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-                    [],
-                )?;
-            }
-        }
+fn initialize_app_schema(conn: &mut Connection) -> Result<(), StorageError> {
+    let transaction = conn.transaction()?;
+    transaction.execute_batch(SCHEMA)?;
+    if column_exists(&transaction, "sync_state", "last_policy_sync")? {
+        transaction.execute_batch("INSERT OR IGNORE INTO config (key, value) SELECT 'app.last_policy_sync', last_policy_sync FROM sync_state WHERE id = 'current' AND last_policy_sync IS NOT NULL;")?;
     }
-    conn.execute_batch(
-        r#"
-        CREATE INDEX IF NOT EXISTS idx_trust_anchors_trust_domain
-            ON trust_anchors(trust_domain);
-        CREATE INDEX IF NOT EXISTS idx_open_badge_keys_trust_domain
-            ON open_badge_keys(trust_domain);
-        "#,
-    )?;
+    let version = get_schema_version(&transaction)?.max(SCHEMA_VERSION);
+    transaction.execute("INSERT INTO config (key, value) VALUES ('app_schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [version.to_string()])?;
+    validate_schema(&transaction)?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -1146,13 +702,15 @@ mod startup_schema_tests {
     use super::*;
 
     fn initialized_connection() -> Connection {
-        let conn = Connection::open_in_memory().expect("open in-memory database");
-        conn.execute_batch(SCHEMA).expect("initialize schema");
+        let mut conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.execute_batch(include_str!("../tests/fixtures/legacy_app_v5.sql"))
+            .expect("initialize legacy schema");
         conn.execute(
-            "INSERT INTO config (key, value) VALUES ('schema_version', ?)",
+            "INSERT INTO config (key, value) VALUES ('app_schema_version', ?)",
             [SCHEMA_VERSION.to_string()],
         )
         .expect("record schema version");
+        initialize_app_schema(&mut conn).unwrap();
         conn
     }
 
@@ -1162,21 +720,21 @@ mod startup_schema_tests {
     }
 
     #[test]
-    fn startup_schema_validation_accepts_newer_shared_schema_version() {
+    fn startup_schema_validation_accepts_newer_app_schema_version() {
         let conn = initialized_connection();
         conn.execute(
-            "UPDATE config SET value = ? WHERE key = 'schema_version'",
+            "UPDATE config SET value = ? WHERE key = 'app_schema_version'",
             [(SCHEMA_VERSION + 1).to_string()],
         )
-        .expect("record newer shared schema version");
+        .expect("record newer app schema version");
 
-        validate_schema(&conn).expect("newer Core schema marker must remain compatible");
+        validate_schema(&conn).expect("newer app schema marker must remain compatible");
     }
 
     #[test]
     fn startup_schema_validation_rejects_missing_migration_state() {
         let conn = initialized_connection();
-        conn.execute("DELETE FROM config WHERE key = 'schema_version'", [])
+        conn.execute("DELETE FROM config WHERE key = 'app_schema_version'", [])
             .expect("remove migration marker");
 
         let error = validate_schema(&conn).expect_err("missing migration state must fail");
@@ -1194,41 +752,323 @@ mod startup_schema_tests {
     }
 
     #[test]
-    fn startup_migration_upgrades_legacy_shared_trust_tables() {
-        let conn = Connection::open_in_memory().expect("open in-memory database");
-        conn.execute_batch(
-            r#"
-            CREATE TABLE trust_anchors (
-                id TEXT PRIMARY KEY,
-                anchor_type TEXT NOT NULL,
-                jurisdiction TEXT NOT NULL,
-                certificate_der BLOB NOT NULL,
-                certificate_hash TEXT NOT NULL,
-                synced_at TEXT NOT NULL
-            );
-            CREATE TABLE open_badge_keys (
-                id TEXT PRIMARY KEY,
-                document_json TEXT NOT NULL,
-                synced_at TEXT NOT NULL
-            );
-            "#,
-        )
-        .expect("create legacy trust tables");
+    fn failed_app_initialization_rolls_back_tables_and_marker() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);")
+            .unwrap();
+        assert!(initialize_app_schema(&mut conn).is_err());
+        assert_eq!(get_schema_version(&conn).unwrap(), 0);
+        let count: i32 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'presentation_policies'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
 
-        migrate_schema(&conn, 4).expect("upgrade legacy shared schema");
-        for table in ["trust_anchors", "open_badge_keys"] {
-            for column in [
-                "trust_domain",
-                "package_sequence",
-                "package_version",
-                "package_created_at",
-                "package_expires_at",
-                "package_signer_key_id",
-                "package_digest",
-                "package_imported_at",
-            ] {
-                assert!(column_exists(&conn, table, column).expect("inspect migrated column"));
+#[cfg(test)]
+mod shared_owner_tests {
+    use super::*;
+    use base64::Engine;
+
+    struct RestoreStore(Option<Arc<keyring_core::CredentialStore>>);
+    impl Drop for RestoreStore {
+        fn drop(&mut self) {
+            keyring_core::unset_default_store();
+            if let Some(store) = self.0.take() {
+                keyring_core::set_default_store(store);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn legacy_databases_survive_both_initialization_orders_and_reopen() {
+        let _guard = crate::TEST_KEYRING_LOCK.lock().await;
+        let _restore = RestoreStore(keyring_core::get_default_store());
+        let store: Arc<keyring_core::CredentialStore> = keyring_core::mock::Store::new().unwrap();
+        keyring_core::set_default_store(store);
+        let key = [0x53u8; 32];
+        keyring_core::Entry::new("com.marty.verifier", "database_encryption_key")
+            .unwrap()
+            .set_password(&base64::engine::general_purpose::STANDARD.encode(key))
+            .unwrap();
+        keyring_core::Entry::new("com.marty.verifier", "pii_encryption_key")
+            .unwrap()
+            .set_password(&base64::engine::general_purpose::STANDARD.encode([0; 32]))
+            .unwrap();
+        let legacy_pii = base64::engine::general_purpose::STANDARD.encode(
+            hex::decode("000000000000000000000000530f8afbc74536b9a963b4f1c4cb738b").unwrap(),
+        );
+        for (schema, legacy_version, has_policy_sync) in [
+            (include_str!("../tests/fixtures/legacy_app_v5.sql"), 5, true),
+            (
+                include_str!("../tests/fixtures/legacy_core_v4.sql"),
+                4,
+                false,
+            ),
+        ] {
+            for core_first in [true, false] {
+                let directory = tempfile::tempdir().unwrap();
+                {
+                    let conn =
+                        Connection::open(directory.path().join("marty_verifier.db")).unwrap();
+                    conn.pragma_update(None, "key", format!("x'{}'", hex::encode(key)))
+                        .unwrap();
+                    conn.execute_batch(schema).unwrap();
+                    conn.execute(
+                        "INSERT INTO config (key, value) VALUES ('schema_version', ?)",
+                        [legacy_version.to_string()],
+                    )
+                    .unwrap();
+                    conn.execute("INSERT INTO offline_queue (id, event_type, payload, created_at) VALUES ('legacy', 'verification', '{}', '2026-01-01T00:00:00Z')", []).unwrap();
+                    if has_policy_sync {
+                        conn.execute("INSERT INTO sync_state (id, last_policy_sync) VALUES ('current', '2026-01-02T00:00:00Z')", []).unwrap();
+                    }
+                }
+                let app = if core_first {
+                    let core = CoreSecureStorage::new_with_process_local_keyring(directory.path())
+                        .unwrap();
+                    SecureStorage::new_with_core(core, PiiEncryptor::from_process_local_keyring)
+                        .unwrap()
+                } else {
+                    let app =
+                        SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                    // A later standalone core consumer must also accept the app migration.
+                    let core = CoreSecureStorage::new_with_process_local_keyring(directory.path())
+                        .unwrap();
+                    assert_eq!(core.get_pending_events(10).await.unwrap()[0].id, "legacy");
+                    drop(core);
+                    app
+                };
+                app.health_check().await.unwrap();
+                let profile: crate::DeploymentProfile = serde_json::from_value(serde_json::json!({
+                    "id": "profile-1", "name": "Offline verifier", "site_id": "site-1",
+                    "network_mode": "hybrid", "key_access_mode": "device",
+                    "ux_config": { "language": "en", "theme": "dark", "show_operator_mode": true,
+                        "accessibility_enabled": true, "custom_branding": {"title": "Welcome"}, "signage_text": null },
+                    "update_policy": { "auto_update": false, "update_channel": "stable",
+                        "rollout_percentage": 25, "version_pinned": "1.0", "rollout_ring": null },
+                    "offline_cache_ttl_hours": 48, "operator_biometric_authentication_required": true,
+                    "audit_all_events": true
+                })).unwrap();
+                let policy: crate::PresentationPolicy = serde_json::from_value(serde_json::json!({
+                    "id": "policy-1", "name": "Entry", "description": null, "purpose": "entry",
+                    "accepted_credential_types": ["emrtd"], "required_claims": [], "holder_binding": "device_key",
+                    "trust_profile_id": null, "allowed_issuers": [],
+                    "freshness_requirements": { "max_credential_age_seconds": null, "max_proof_age_seconds": 300,
+                        "require_live_revocation_check": true },
+                    "prefer_predicates": true, "single_presentation": true, "derived_attribute_preferences": {},
+                    "credential_ranking_strategy": "freshest_first", "credential_ranking_weights": {},
+                    "metadata": {"site": "site-1"}, "version": 2
+                })).unwrap();
+                app.store_deployment_profile(&profile).await.unwrap();
+                app.store_presentation_policy(&policy, Some("profile-1"))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    app.get_last_policy_sync().await.unwrap().as_deref(),
+                    has_policy_sync.then_some("2026-01-02T00:00:00Z")
+                );
+                app.store_verification_event("app-event", "emrtd", &"valid")
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    app.core_storage()
+                        .get_verification_history(10)
+                        .await
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                app.core_storage()
+                    .store_verification_event("core-event", "dtc", &"valid")
+                    .await
+                    .unwrap();
+                assert_eq!(app.get_verification_history(10).await.unwrap().len(), 2);
+                app.store_device_config("device-1", Some("profile-1"), Some("lane-1"))
+                    .await
+                    .unwrap();
+                app.update_last_policy_sync("2026-02-01T00:00:00Z".to_string())
+                    .await
+                    .unwrap();
+                let shared_version: String = app
+                    .core_storage()
+                    .with_connection(|conn| {
+                        conn.query_row(
+                            "SELECT value FROM config WHERE key = 'schema_version'",
+                            [],
+                            |row| row.get(0),
+                        )
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(shared_version, legacy_version.to_string());
+                drop(app);
+                let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                app.health_check().await.unwrap();
+                assert_eq!(
+                    app.pii_encryptor
+                        .as_ref()
+                        .unwrap()
+                        .decrypt(&legacy_pii)
+                        .unwrap(),
+                    ""
+                );
+                assert_eq!(app.get_verification_history(10).await.unwrap().len(), 2);
+                assert_eq!(
+                    app.core_storage().get_pending_events(10).await.unwrap()[0].id,
+                    "legacy"
+                );
+                assert_eq!(app.get_pending_events(10).await.unwrap()[0].id, "legacy");
+                assert_eq!(
+                    serde_json::to_value(
+                        app.get_deployment_profile("profile-1")
+                            .await
+                            .unwrap()
+                            .unwrap()
+                    )
+                    .unwrap(),
+                    serde_json::to_value(profile).unwrap()
+                );
+                assert_eq!(
+                    serde_json::to_value(
+                        app.get_presentation_policy("policy-1")
+                            .await
+                            .unwrap()
+                            .unwrap()
+                    )
+                    .unwrap(),
+                    serde_json::to_value(policy).unwrap()
+                );
+                assert_eq!(
+                    app.get_presentation_policies(Some("profile-1"))
+                        .await
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    app.get_device_config().await.unwrap(),
+                    Some((
+                        "device-1".to_string(),
+                        Some("profile-1".to_string()),
+                        Some("lane-1".to_string())
+                    ))
+                );
+                assert_eq!(
+                    app.get_last_policy_sync().await.unwrap().as_deref(),
+                    Some("2026-02-01T00:00:00Z")
+                );
+                assert_shared_trust_guards(&app).await;
+                app.update_sync_state(&SyncState {
+                    last_iaca_sync: Some(Utc::now()),
+                    last_csca_sync: None,
+                    last_crl_sync: None,
+                    iaca_version: None,
+                    csca_version: None,
+                    sync_in_progress: false,
+                    last_error: Some("trust sync error".into()),
+                })
+                .await
+                .unwrap();
+                let status = app.get_queue_status().await.unwrap();
+                assert!(status.last_sync_attempt.is_none());
+                assert!(status.last_successful_sync.is_none());
+                assert_eq!(
+                    serde_json::to_value(&status)
+                        .unwrap()
+                        .as_object()
+                        .unwrap()
+                        .len(),
+                    5
+                );
+                let batch = vec!["legacy".to_string()];
+                app.core_storage()
+                    .record_queue_batch_failure(&batch, "temporary failure")
+                    .await
+                    .unwrap();
+                drop(app);
+                let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                let pending = app.get_pending_events(usize::MAX).await.unwrap();
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending[0].retry_count, 1);
+                assert_eq!(pending[0].error.as_deref(), Some("temporary failure"));
+                let status = app.get_queue_status().await.unwrap();
+                assert!(status.last_sync_attempt.is_some());
+                assert!(status.last_successful_sync.is_none());
+                assert!(app
+                    .core_storage()
+                    .acknowledge_queue_batch(&["legacy".into(), "missing".into()])
+                    .await
+                    .is_err());
+                assert_eq!(app.get_pending_events(10).await.unwrap().len(), 1);
+                assert_eq!(
+                    app.core_storage()
+                        .acknowledge_queue_batch(&batch)
+                        .await
+                        .unwrap(),
+                    1
+                );
+                drop(app);
+                let app = SecureStorage::new_with_process_local_keyring(directory.path()).unwrap();
+                assert!(app.get_pending_events(10).await.unwrap().is_empty());
+                assert_eq!(app.get_queue_status().await.unwrap().pending_events, 0);
+                assert!(app
+                    .get_queue_status()
+                    .await
+                    .unwrap()
+                    .last_successful_sync
+                    .is_some());
+            }
+        }
+    }
+
+    async fn assert_shared_trust_guards(app: &SecureStorage) {
+        let anchor: TrustAnchor = serde_json::from_value(serde_json::json!({
+            "id": "guarded-anchor", "anchor_type": "csca", "jurisdiction": "US",
+            "certificate_der": [1, 2, 3], "certificate_hash": "fixture",
+            "source": "manual", "synced_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        let method: OpenBadgeVerificationMethod = serde_json::from_value(serde_json::json!({
+            "id": "guarded-badge", "document": {"id": "guarded-badge"},
+            "source": "manual", "synced_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        app.store_trust_anchor(&anchor).await.unwrap();
+        app.store_open_badge_key(&method).await.unwrap();
+        assert_eq!(
+            app.get_trust_anchors(TrustAnchorType::Csca, Some("US"))
+                .await
+                .unwrap()[0]
+                .id,
+            anchor.id
+        );
+        assert_eq!(app.get_open_badge_keys().await.unwrap()[0].id, method.id);
+        // Simulate incomplete governed metadata from a damaged legacy database.
+        app.core_storage()
+            .with_connection(|conn| {
+                conn.execute("UPDATE trust_anchors SET trust_domain = 'governed'", [])
+                    .unwrap();
+                conn.execute("UPDATE open_badge_keys SET trust_domain = 'governed'", [])
+                    .unwrap();
+            })
+            .await;
+        assert!(app.store_trust_anchor(&anchor).await.is_err());
+        assert!(app.store_open_badge_key(&method).await.is_err());
+        assert!(app
+            .get_trust_anchors(TrustAnchorType::Csca, None)
+            .await
+            .is_err());
+        assert!(app.get_open_badge_keys().await.is_err());
+        assert!(app
+            .count_trust_anchors(TrustAnchorType::Csca)
+            .await
+            .is_err());
+        assert!(app.count_open_badge_keys().await.is_err());
+        assert!(app.get_latest_open_badge_sync().await.is_err());
     }
 }

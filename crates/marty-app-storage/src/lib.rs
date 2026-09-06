@@ -4,11 +4,15 @@
 //! Uses SQLCipher for encrypted SQLite and platform keychain for key storage.
 
 mod database;
-mod encryption;
 mod error;
-mod keychain;
+#[cfg(test)]
+mod keyring_tests;
 mod models;
 mod schema;
+
+// Tests that replace the process-wide credential store must not overlap.
+#[cfg(test)]
+static TEST_KEYRING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub use database::SecureStorage;
 pub use error::StorageError;

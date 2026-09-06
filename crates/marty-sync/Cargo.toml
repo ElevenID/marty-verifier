@@ -40,6 +40,7 @@ chrono.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
 marty-secure-storage.workspace = true
+marty-types.workspace = true
 marty-verification.workspace = true
 marty-crypto = { workspace = true, optional = true, features = ["sod-builder"] }
 
