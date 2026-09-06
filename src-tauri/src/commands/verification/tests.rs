@@ -1,6 +1,5 @@
 use super::liveness::verify_challenge_signature;
 use super::*;
-use base64::Engine as _;
 
 #[test]
 fn software_emrtd_verification_uses_the_simple_hardware_path() {
@@ -36,6 +35,8 @@ fn unrelated_credential_hardware_requirements_are_unchanged() {
 #[cfg(feature = "demo-fixtures")]
 #[test]
 fn generated_dtc_passes_the_exact_app_payload_adapter_with_governed_csca() {
+    use base64::Engine as _;
+
     let output = tempfile::tempdir().unwrap();
     let manifest = match std::env::var_os("MARTY_DEMO_FIXTURE_DIRECTORY") {
         Some(directory) => serde_json::from_str(

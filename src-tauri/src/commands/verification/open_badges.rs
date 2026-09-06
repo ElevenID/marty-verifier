@@ -2,15 +2,18 @@
 
 use super::VERIFIER_SOFTWARE_PROVENANCE;
 use super::{
-    detect_open_badges_version, parse_json_input, verify_ob2_json, verify_ob3_json_async,
-    verify_ob3_json_with_status_lists_async, AppError, AppResult, AppState, ArtifactProvenance,
-    AuthenticatedStatusList, DateTime, DocumentStore, Duration, GovernedOpenBadgeStore, HashSet,
-    IssuerInfo, OpenBadgeDetails, OpenBadgeStatusEvidence, OpenBadgeStatusEvidenceOutcome,
-    OpenBadgeTrustConfig, OpenBadgeTrustFreshness, OpenBadgeTrustPolicy, OpenBadgeTrustRecord,
-    OpenBadgeVerificationMethod, OpenBadgesVersion, RevocationStatus, StatusAuthorityProvenance,
-    TrustChainStatus, Utc, Value, VerificationResult, VerificationStatus, VerifyRequest,
-    MAX_OPEN_BADGE_STATUS_IRI_CHARS, MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS,
-    MAX_OPEN_BADGE_TRUST_AGE_HOURS,
+    detect_open_badges_version, parse_json_input, AppError, AppResult, AppState,
+    ArtifactProvenance, AuthenticatedStatusList, DateTime, DocumentStore, Duration,
+    GovernedOpenBadgeStore, HashSet, IssuerInfo, OpenBadgeDetails, OpenBadgeStatusEvidence,
+    OpenBadgeStatusEvidenceOutcome, OpenBadgeTrustConfig, OpenBadgeTrustFreshness,
+    OpenBadgeTrustPolicy, OpenBadgeTrustRecord, OpenBadgeVerificationMethod, OpenBadgesVersion,
+    RevocationStatus, StatusAuthorityProvenance, TrustChainStatus, Utc, Value, VerificationResult,
+    VerificationStatus, VerifyRequest, MAX_OPEN_BADGE_STATUS_IRI_CHARS,
+    MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS, MAX_OPEN_BADGE_TRUST_AGE_HOURS,
+};
+use marty_verification::open_badges::{
+    verify_ob2, verify_ob3_with_status_lists_async, OpenBadgeStatusCheck, OpenBadgeStatusOutcome,
+    OpenBadgesVerificationResult, VerifyOb2Request, VerifyOb3Request,
 };
 use std::io::Read;
 
@@ -80,48 +83,10 @@ pub(super) async fn verify_open_badge_payload(
 
     replace_open_badge_document_store(&mut req_value, &governed_store.documents)?;
 
-    let req_json = serde_json::to_string(&req_value)?;
-    let verify_result_json = match version {
-        OpenBadgesVersion::V2 => verify_ob2_json(&req_json)
-            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
-        OpenBadgesVersion::V3 => {
-            verify_ob3_json_with_status_lists_async(&req_json, &authenticated_status_lists)
-                .await
-                .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?
-        }
-        OpenBadgesVersion::Unknown => {
-            return Err(AppError::Verification(
-                "Unable to detect Open Badge version".to_string(),
-            ))
-        }
-    };
-
-    let result_value: Value = serde_json::from_str(&verify_result_json).map_err(|e| {
-        AppError::Verification(format!("Invalid Open Badge verify response: {}", e))
-    })?;
-
-    let mut valid = result_value
-        .get("valid")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let errors = extract_string_list(result_value.get("errors"));
-    let error_codes = extract_string_list(result_value.get("error_codes"));
-    let warnings_from_result = extract_string_list(result_value.get("warnings"));
-    let status_checks = extract_open_badge_status_evidence(&result_value)?;
-    let normalized = result_value.get("normalized").cloned();
-
-    let mut details = OpenBadgeDetails {
-        version: result_value
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or(open_badge_version_label(version))
-            .to_string(),
-        errors,
-        error_codes,
-        warnings: warnings_from_result,
-        status_checks,
-        normalized: normalized.clone(),
-    };
+    let result = verify_open_badge_request(version, req_value, &authenticated_status_lists).await?;
+    let mut valid = result.valid;
+    let mut details = open_badge_details(result);
+    let normalized = details.normalized.clone();
 
     match open_badge_trust_freshness(state, &trust_config).await? {
         OpenBadgeTrustFreshness::Fresh => {}
@@ -727,21 +692,90 @@ pub(super) fn extract_string_list(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(super) fn extract_open_badge_status_evidence(
-    result: &Value,
-) -> AppResult<Vec<OpenBadgeStatusEvidence>> {
-    match result.get("status_checks") {
-        None => Ok(Vec::new()),
-        Some(Value::Array(checks)) => {
-            serde_json::from_value(Value::Array(checks.clone())).map_err(|error| {
+async fn verify_open_badge_request(
+    version: OpenBadgesVersion,
+    request: Value,
+    status_lists: &[AuthenticatedStatusList],
+) -> AppResult<OpenBadgesVerificationResult> {
+    let result = match version {
+        OpenBadgesVersion::V2 => {
+            let request: VerifyOb2Request = serde_json::from_value(request).map_err(|error| {
                 AppError::Verification(format!(
-                    "Invalid authenticated Open Badge status evidence: {error}"
+                    "Open Badge verify failed: {}",
+                    marty_verification::VerificationError::open_badges(format!(
+                        "Invalid OB2 verify request: {error}"
+                    ))
                 ))
-            })
+            })?;
+            verify_ob2(request)
         }
-        Some(_) => Err(AppError::Verification(
-            "Authenticated Open Badge status evidence must be an array".to_string(),
-        )),
+        OpenBadgesVersion::V3 => {
+            let request: VerifyOb3Request = serde_json::from_value(request).map_err(|error| {
+                AppError::Verification(format!(
+                    "Open Badge verify failed: {}",
+                    marty_verification::VerificationError::open_badges(format!(
+                        "Invalid OB3 verify request: {error}"
+                    ))
+                ))
+            })?;
+            // Keep the cryptographic verifier's large future out of the Tauri
+            // command future's layout and stack footprint.
+            Box::pin(verify_ob3_with_status_lists_async(request, status_lists)).await
+        }
+        OpenBadgesVersion::Unknown => {
+            return Err(AppError::Verification(
+                "Unable to detect Open Badge version".to_string(),
+            ))
+        }
+    };
+    result.map_err(|error| AppError::Verification(format!("Open Badge verify failed: {error}")))
+}
+
+fn open_badge_details(result: OpenBadgesVerificationResult) -> OpenBadgeDetails {
+    OpenBadgeDetails {
+        version: result.version,
+        errors: result.errors,
+        error_codes: result.error_codes,
+        warnings: result.warnings,
+        status_checks: result.status_checks.into_iter().map(Into::into).collect(),
+        normalized: result.normalized,
+    }
+}
+
+impl From<OpenBadgeStatusCheck> for OpenBadgeStatusEvidence {
+    fn from(check: OpenBadgeStatusCheck) -> Self {
+        Self {
+            status_list_url: check.status_list_url,
+            status_issuer: check.status_issuer,
+            status_purpose: check.status_purpose,
+            status_list_index: check.status_list_index,
+            status_size: check.status_size,
+            status_value: check.status_value,
+            outcome: match check.outcome {
+                OpenBadgeStatusOutcome::Good => OpenBadgeStatusEvidenceOutcome::Good,
+                OpenBadgeStatusOutcome::Revoked => OpenBadgeStatusEvidenceOutcome::Revoked,
+                OpenBadgeStatusOutcome::Suspended => OpenBadgeStatusEvidenceOutcome::Suspended,
+                OpenBadgeStatusOutcome::Message => OpenBadgeStatusEvidenceOutcome::Message,
+            },
+            checked_at: check.checked_at,
+            retrieved_at: check.retrieved_at,
+            fresh_until: check.fresh_until,
+            authority_provenance: super::OpenBadgeStatusAuthorityEvidence {
+                trust_profile: check.authority_provenance.trust_profile().into(),
+                resolver: check.authority_provenance.resolver().into(),
+                software: check.authority_provenance.software().into(),
+            },
+        }
+    }
+}
+
+impl From<&ArtifactProvenance> for super::OpenBadgeArtifactEvidence {
+    fn from(provenance: &ArtifactProvenance) -> Self {
+        Self {
+            id: provenance.id().to_owned(),
+            version: provenance.version().to_owned(),
+            digest: provenance.digest().to_owned(),
+        }
     }
 }
 
@@ -943,50 +977,13 @@ pub async fn verify_open_badge_offline(
     merge_open_badge_offline_store(&mut store, &request_store);
     replace_open_badge_document_store(&mut req_value, &store)?;
 
-    let req_json = serde_json::to_string(&req_value)?;
-    let verify_result_json = match version {
-        OpenBadgesVersion::V2 => verify_ob2_json(&req_json)
-            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
-        OpenBadgesVersion::V3 => verify_ob3_json_async(&req_json)
-            .await
-            .map_err(|e| AppError::Verification(format!("Open Badge verify failed: {}", e)))?,
-        OpenBadgesVersion::Unknown => {
-            return Err(AppError::Verification(
-                "Unable to detect Open Badge version".to_string(),
-            ))
-        }
-    };
-
-    let result_value: Value = serde_json::from_str(&verify_result_json).map_err(|e| {
-        AppError::Verification(format!("Invalid Open Badge verify response: {}", e))
-    })?;
-
-    let valid = result_value
-        .get("valid")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let errors = extract_string_list(result_value.get("errors"));
-    let error_codes = extract_string_list(result_value.get("error_codes"));
-    let warnings_from_result = extract_string_list(result_value.get("warnings"));
-    let status_checks = extract_open_badge_status_evidence(&result_value)?;
-    let normalized = result_value.get("normalized").cloned();
-
-    let version_label = result_value
-        .get("version")
-        .and_then(|v| v.as_str())
-        .unwrap_or(open_badge_version_label(version))
-        .to_string();
-
-    let details = OpenBadgeDetails {
-        version: version_label,
-        errors,
-        error_codes,
-        warnings: warnings_from_result,
-        status_checks: status_checks.clone(),
-        normalized: normalized.clone(),
-    };
-
     let method_id = extract_open_badge_method_id(&req_value, version);
+    let result = verify_open_badge_request(version, req_value, &[]).await?;
+    let valid = result.valid;
+    let details = open_badge_details(result);
+    let normalized = details.normalized.clone();
+    let status_checks = &details.status_checks;
+
     let disclosed_claims = normalized
         .as_ref()
         .map(open_badge_claims_from_normalized)
@@ -1014,7 +1011,7 @@ pub async fn verify_open_badge_offline(
             trust_anchor: method_id,
             offline_verified: true,
         },
-        revocation_status: open_badge_revocation_status(&status_checks, valid),
+        revocation_status: open_badge_revocation_status(status_checks, valid),
         verified_at: chrono::Utc::now().to_rfc3339(),
         warnings: vec!["Verified offline — empty trust store".to_string()],
         emrtd_details: None,
@@ -1023,4 +1020,79 @@ pub async fn verify_open_badge_offline(
         liveness: None,
         face_match: None,
     })
+}
+
+#[cfg(test)]
+mod typed_adapter_tests {
+    use super::*;
+
+    #[test]
+    fn typed_status_projection_preserves_all_evidence_fields_and_outcomes() {
+        let now = DateTime::parse_from_rfc3339("2026-09-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for outcome in [
+            OpenBadgeStatusOutcome::Good,
+            OpenBadgeStatusOutcome::Revoked,
+            OpenBadgeStatusOutcome::Suspended,
+            OpenBadgeStatusOutcome::Message,
+        ] {
+            let artifact = |id: &str| {
+                ArtifactProvenance::new(id, "v1", format!("sha256:{}", "a".repeat(64))).unwrap()
+            };
+            let check = OpenBadgeStatusCheck {
+                status_list_url: "https://status.example/list".into(),
+                status_issuer: "did:example:status".into(),
+                status_purpose: "message".into(),
+                status_list_index: 42,
+                status_size: 8,
+                status_value: 7,
+                outcome,
+                checked_at: now,
+                retrieved_at: now - Duration::minutes(1),
+                fresh_until: now + Duration::hours(1),
+                authority_provenance: StatusAuthorityProvenance::new(
+                    artifact("profile"),
+                    artifact("resolver"),
+                    artifact("software"),
+                ),
+            };
+            let wire = serde_json::to_value(&check).unwrap();
+            let evidence = OpenBadgeStatusEvidence::from(check);
+            assert_eq!(serde_json::to_value(evidence).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn typed_details_preserve_absent_normalization_and_diagnostics() {
+        let details = open_badge_details(OpenBadgesVerificationResult {
+            valid: false,
+            version: "3.0".into(),
+            errors: vec!["failure".into()],
+            error_codes: vec!["code".into()],
+            warnings: vec!["warning".into()],
+            status_checks: vec![],
+            normalized: None,
+        });
+        assert_eq!(details.errors, ["failure"]);
+        assert_eq!(details.error_codes, ["code"]);
+        assert_eq!(details.warnings, ["warning"]);
+        assert!(details.status_checks.is_empty());
+        assert!(details.normalized.is_none());
+    }
+
+    #[tokio::test]
+    async fn typed_request_adapter_rejects_missing_fields_and_unknown_versions() {
+        for version in [
+            OpenBadgesVersion::V2,
+            OpenBadgesVersion::V3,
+            OpenBadgesVersion::Unknown,
+        ] {
+            assert!(
+                verify_open_badge_request(version, serde_json::json!({}), &[])
+                    .await
+                    .is_err()
+            );
+        }
+    }
 }
