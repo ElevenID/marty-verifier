@@ -12,6 +12,7 @@ default = ["aamva", "icao"]
 aamva = []  # AAMVA DTS sync
 icao = []   # ICAO PKD sync
 demo-fixtures = [
+    "marty-verification/local-key-operations",
     "dep:anyhow",
     "dep:const-oid",
     "dep:getrandom",

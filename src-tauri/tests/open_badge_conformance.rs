@@ -529,7 +529,7 @@ fn ed25519_jwk_pair() -> (serde_json::Value, serde_json::Value, Vec<u8>) {
         "crv": "Ed25519",
         "x": x,
     });
-    (private_jwk, public_jwk, key.public_key)
+    (private_jwk, public_jwk, key.public_key.clone())
 }
 
 /// Issue a minimal signed OBv3 `OpenBadgeCredential` using `issue_ob3_json`

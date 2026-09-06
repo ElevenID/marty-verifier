@@ -78,5 +78,7 @@ reqwest.workspace = true
 tauri-build.workspace = true
 
 [dev-dependencies]
+# Signed Open Badge fixtures require local keys only in test builds.
+marty-verification = { workspace = true, features = ["local-key-operations"] }
 # Enable sod-builder for integration tests that construct real EF.SOD DER
 marty-crypto = { workspace = true, features = ["sod-builder"] }
