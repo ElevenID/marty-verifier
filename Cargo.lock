@@ -4390,8 +4390,8 @@ dependencies = [
 
 [[package]]
 name = "marty-biometrics"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4406,8 +4406,8 @@ dependencies = [
 
 [[package]]
 name = "marty-crypto"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4460,8 +4460,8 @@ dependencies = [
 
 [[package]]
 name = "marty-oid4vci"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4507,7 +4507,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=f069798f582d93ae7aa32dbc74923bf68d721146#f069798f582d93ae7aa32dbc74923bf68d721146"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4560,7 +4560,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.1.61"
-source = "git+https://github.com/ElevenID/marty-core?rev=f069798f582d93ae7aa32dbc74923bf68d721146#f069798f582d93ae7aa32dbc74923bf68d721146"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "chrono",
  "serde",
@@ -4570,8 +4570,8 @@ dependencies = [
 
 [[package]]
 name = "marty-verification"
-version = "0.1.60"
-source = "git+https://github.com/ElevenID/marty-core?rev=6ee545c16ff6a4c129772049ff1ccc535c421f9f#6ee545c16ff6a4c129772049ff1ccc535c421f9f"
+version = "0.1.61"
+source = "git+https://github.com/ElevenID/marty-core?rev=d0d91717fa49f7d1a70c26d691d4fd617643032f#d0d91717fa49f7d1a70c26d691d4fd617643032f"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6731,9 +6731,10 @@ dependencies = [
 [[package]]
 name = "sd-jwt-rs"
 version = "0.7.1"
-source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=9244ec551ac56bb4fa7d3a87e50f59b2f36d1925#9244ec551ac56bb4fa7d3a87e50f59b2f36d1925"
+source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=2799b5fff011342aefe8ac5e9653d5b084e2a20c#2799b5fff011342aefe8ac5e9653d5b084e2a20c"
 dependencies = [
  "base64 0.21.7",
+ "getrandom 0.2.17",
  "hmac",
  "jsonwebtoken",
  "log",
