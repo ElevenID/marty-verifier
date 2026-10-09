@@ -12,7 +12,6 @@ default = ["aamva", "icao"]
 aamva = []  # AAMVA DTS sync
 icao = []   # ICAO PKD sync
 demo-fixtures = [
-    "marty-verification/local-key-operations",
     "dep:anyhow",
     "dep:const-oid",
     "dep:getrandom",
@@ -43,7 +42,7 @@ reqwest = { workspace = true, features = ["json"] }
 marty-secure-storage.workspace = true
 marty-types.workspace = true
 marty-verification.workspace = true
-marty-crypto = { workspace = true, optional = true, features = ["sod-builder"] }
+marty-crypto = { workspace = true, optional = true }
 
 # Certificate parsing
 x509-cert = "0.2"
