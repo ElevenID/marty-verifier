@@ -1,8 +1,7 @@
 //! eMRTD / ICAO 9303 Conformance Tests — Marty Verifier (Tauri app layer).
 //!
 //! Tests the JSON wire format accepted by `verify_emrtd_offline` and exercises
-//! end-to-end eMRTD verification using **real** DER-encoded `EF.SOD` blobs
-//! constructed by `marty_crypto::sod_builder`.
+//! end-to-end eMRTD verification using signed public DER `EF.SOD` vectors.
 //!
 //! Wire format (credential_data JSON):
 //! ```json
@@ -26,9 +25,6 @@
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 
-use marty_crypto::cert_builder::{create_csca_certificate, create_dsc_certificate};
-use marty_crypto::keygen::KeyType;
-use marty_crypto::sod_builder::build_emrtd_sod_der;
 use marty_verifier::commands::verification::{verify_emrtd_offline, VerificationStatus};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -58,27 +54,31 @@ fn emrtd_payload(sod_b64: &str, dgs: &[(&str, &str)], country: Option<&str>) -> 
     serde_json::Value::Object(obj).to_string()
 }
 
-/// Generate a fresh CSCA → DSC chain and a signed EF.SOD for `data_groups`.
-///
-/// Returns `(sod_der, csca_cert_der, dsc_cert_der, dsc_key_pem)`.
-fn make_sod(data_groups: &[(u8, Vec<u8>)]) -> (Vec<u8>, Vec<u8>, Vec<u8>, String) {
-    let (csca_der, csca_key) =
-        create_csca_certificate("DEU", "Bundesdruckerei", 3650, KeyType::EcdsaP256)
-            .expect("CSCA creation failed");
-
-    let (dsc_der, dsc_key) = create_dsc_certificate(
-        "DEU",
-        "Bundesdruckerei",
-        &csca_der,
-        &csca_key,
-        730,
-        KeyType::EcdsaP256,
-    )
-    .expect("DSC creation failed");
-
-    let sod_der = build_emrtd_sod_der(data_groups, &dsc_der, &dsc_key).expect("SOD build failed");
-
-    (sod_der, csca_der, dsc_der, dsc_key)
+/// Load a signed, public-only vector matching the requested DG bytes exactly.
+/// No signing key is generated or loaded in this suite.
+fn signed_fixture(data_groups: &[(u8, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/emrtd_conformance_public.json"))
+            .expect("public eMRTD vectors");
+    assert_eq!(vectors["schema_version"], 1);
+    let name = match data_groups.len() {
+        1 => "one",
+        2 => "two",
+        5 => "five",
+        _ => panic!("no reviewed public vector for this DG count"),
+    };
+    let vector = &vectors[name];
+    assert_eq!(vector["country"], "DEU");
+    assert_eq!(
+        vector["data_groups"].as_object().unwrap().len(),
+        data_groups.len()
+    );
+    for (number, bytes) in data_groups {
+        let encoded = vector["data_groups"][number.to_string()].as_str().unwrap();
+        assert_eq!(BASE64.decode(encoded).unwrap(), *bytes);
+    }
+    let decode = |field: &str| BASE64.decode(vector[field].as_str().unwrap()).unwrap();
+    (decode("sod_der_base64"), decode("csca_der_base64"))
 }
 
 // ── §1  JSON Parsing ──────────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ fn truncated_der_returns_error() {
 #[test]
 fn real_sod_single_dg1_parses_and_returns_ok() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
     let payload = emrtd_payload(&sod_b64, &[("DG1", &dg1_b64)], Some("DEU"));
@@ -190,7 +190,7 @@ fn real_sod_status_is_failed_with_empty_registry() {
     // Without a registered CSCA, chain validation fails → status == Failed
     // (not Invalid — no cert expiry, just untrusted chain).
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
     let payload = emrtd_payload(&sod_b64, &[("DG1", &dg1_b64)], Some("DEU"));
@@ -206,7 +206,7 @@ fn real_sod_status_is_failed_with_empty_registry() {
 #[test]
 fn real_sod_credential_type_is_emrtd() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
     let payload = emrtd_payload(&sod_b64, &[("DG1", &dg1_b64)], Some("DEU"));
@@ -218,7 +218,7 @@ fn real_sod_credential_type_is_emrtd() {
 #[test]
 fn real_sod_result_has_verification_id() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
     let payload = emrtd_payload(&sod_b64, &[("DG1", &dg1_b64)], Some("DEU"));
@@ -241,7 +241,7 @@ fn real_sod_result_has_verification_id() {
 fn tampered_dg1_still_returns_ok_result() {
     let original_dg1 = DG1_MRZ.to_vec();
     let dgs = vec![(1u8, original_dg1)];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
 
     // Supply a *different* DG1 — the hash in the SOD won't match.
@@ -268,7 +268,7 @@ fn tampered_dg1_still_returns_ok_result() {
 fn real_sod_with_dg1_and_dg2_parses_correctly() {
     let portrait_mock = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG SOI + APP0 marker
     let dgs = vec![(1u8, DG1_MRZ.to_vec()), (2u8, portrait_mock.clone())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
 
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
@@ -293,7 +293,7 @@ fn sod_with_many_data_groups_builds_and_parses() {
     let dgs: Vec<(u8, Vec<u8>)> = (1..=5)
         .map(|n| (n, format!("mock content for DG{n}").into_bytes()))
         .collect();
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
 
     let sod_b64 = BASE64.encode(&sod_der);
     let dg_payload: Vec<(String, String)> = dgs
@@ -319,7 +319,7 @@ fn sod_with_many_data_groups_builds_and_parses() {
 #[test]
 fn country_hint_absent_does_not_error() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     let dg1_b64 = BASE64.encode(DG1_MRZ);
     // No `country` field
@@ -334,7 +334,7 @@ fn country_hint_absent_does_not_error() {
 #[test]
 fn invalid_dg_name_returns_error() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     // "BOGUS" is not a valid DG name
     let payload = emrtd_payload(&sod_b64, &[("BOGUS", "aGVsbG8=")], Some("DEU"));
@@ -346,7 +346,7 @@ fn invalid_dg_name_returns_error() {
 #[test]
 fn dg_with_zero_number_returns_error() {
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
     let sod_b64 = BASE64.encode(&sod_der);
     // DG0 does not exist in ICAO 9303
     let payload = emrtd_payload(&sod_b64, &[("DG0", "aGVsbG8=")], None);
@@ -365,7 +365,7 @@ fn sod_signature_roundtrip_is_valid() {
     use marty_verification::asn1::sod::verify_sod_signature;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _, _, _) = make_sod(&dgs);
+    let (sod_der, _) = signed_fixture(&dgs);
 
     let valid = verify_sod_signature(&sod_der)
         .expect("verify_sod_signature must not return Err for a well-formed SOD");
@@ -380,7 +380,7 @@ fn sod_signature_fails_after_mutation() {
     use marty_verification::asn1::sod::verify_sod_signature;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (mut sod_der, _, _, _) = make_sod(&dgs);
+    let (mut sod_der, _) = signed_fixture(&dgs);
 
     // Flip a bit near the end of the DER blob (where the signature lives).
     let last = sod_der.len() - 10;
@@ -409,7 +409,7 @@ fn csca_chain_valid_with_populated_registry() {
     use x509_cert::Certificate;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, csca_der, _, _) = make_sod(&dgs);
+    let (sod_der, csca_der) = signed_fixture(&dgs);
 
     // Populate the registry with the CSCA that signed this chain.
     let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA DER");
@@ -443,7 +443,7 @@ fn full_emrtd_verification_succeeds_with_csca_in_registry() {
     use x509_cert::Certificate;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, csca_der, _, _) = make_sod(&dgs);
+    let (sod_der, csca_der) = signed_fixture(&dgs);
 
     let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA DER");
     let mut registry = CscaRegistry::new();
@@ -476,16 +476,14 @@ fn wrong_csca_cert_fails_chain_validation() {
 
     // SOD signed with csca_a's DSC; registry will contain csca_b instead.
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
-    let (sod_der, _csca_a_der, _, _) = make_sod(&dgs);
+    let (sod_der, _csca_a_der) = signed_fixture(&dgs);
 
-    // Generate a completely independent CSCA cert (csca_b) and add that to registry.
-    let (csca_b_der, _) = marty_crypto::cert_builder::create_csca_certificate(
-        "DEU",
-        "WrongCA",
-        3650,
-        marty_crypto::keygen::KeyType::EcdsaP256,
-    )
-    .expect("create csca_b");
+    // The distinct public CSCA from the two-DG vector is the wrong anchor.
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/emrtd_conformance_public.json")).unwrap();
+    let csca_b_der = BASE64
+        .decode(vectors["two"]["csca_der_base64"].as_str().unwrap())
+        .unwrap();
     let csca_b_cert = Certificate::from_der(&csca_b_der).expect("parse csca_b DER");
 
     let mut registry = CscaRegistry::new();
@@ -522,7 +520,7 @@ fn multi_dg_full_verification_succeeds_with_csca() {
 
     let portrait_mock = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG SOI
     let dgs = vec![(1u8, DG1_MRZ.to_vec()), (2u8, portrait_mock.clone())];
-    let (sod_der, csca_der, _, _) = make_sod(&dgs);
+    let (sod_der, csca_der) = signed_fixture(&dgs);
 
     let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA");
     let mut registry = CscaRegistry::new();
