@@ -916,7 +916,6 @@ fn verify_package_signature(
 mod tests {
     use base64::Engine;
     use chrono::TimeZone;
-    use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
     use super::*;
@@ -941,33 +940,6 @@ mod tests {
                 {extra}
             }}"#
         )
-    }
-
-    fn signed_package_json(signing_key: &SigningKey, declared_signer: Option<&str>) -> String {
-        let public_key = signing_key.verifying_key().to_bytes();
-        let now = Utc::now();
-        let mut package = json!({
-            "trust_domain": "usb:default",
-            "sequence": 1,
-            "version": "1.0.0",
-            "created_at": now.to_rfc3339(),
-            "expires_at": (now + chrono::Duration::days(1)).to_rfc3339(),
-            "signer_key_id": declared_signer
-                .map(str::to_string)
-                .unwrap_or_else(|| signer_key_id(&public_key)),
-            "next_signer_key_id": Value::Null,
-            "recovery_signer_key_id": signer_key_id(&[9_u8; 32]),
-            "signing_cert": "informational-only",
-            "signature": "",
-            "iaca_certificates": [],
-            "csca_certificates": [],
-            "dsc_certificates": [],
-            "open_badge_verification_methods": []
-        });
-        let canonical = canonical_signed_payload(&package).expect("canonical signed package");
-        package["signature"] = json!(base64::engine::general_purpose::STANDARD
-            .encode(signing_key.sign(&canonical).to_bytes()));
-        serde_json::to_string(&package).expect("serialize signed package")
     }
 
     fn public_method() -> Value {
@@ -1076,9 +1048,17 @@ mod tests {
 
     #[test]
     fn signature_binds_actual_pinned_key_identity_and_canonical_digest() {
-        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-        let public_key = signing_key.verifying_key().to_bytes();
-        let raw = signed_package_json(&signing_key, None);
+        // Historical signed artifacts exercise signature and signer-policy
+        // checks; package time validity has its own fixed-clock test above.
+        let fixture: Value = serde_json::from_str(include_str!("usb_signed_package_public.json"))
+            .expect("public signed USB package vectors");
+        assert_eq!(fixture["schema_version"], 1);
+        let public_key: [u8; 32] = base64::engine::general_purpose::STANDARD
+            .decode(fixture["public_key_base64"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let raw = fixture["valid_package"].to_string();
         let (package, value) = parse_strict_package(&raw).expect("strict signed package");
 
         let verified = verify_package_signature(&value, &package, &public_key)
@@ -1093,9 +1073,10 @@ mod tests {
         assert_eq!(verified.package_digest.len(), 64);
 
         let wrong_id = format!("ed25519:{}", "b".repeat(64));
-        let wrong_raw = signed_package_json(&signing_key, Some(&wrong_id));
+        let wrong_raw = fixture["wrong_signer_package"].to_string();
         let (wrong_package, wrong_value) =
             parse_strict_package(&wrong_raw).expect("signed wrong-id package");
+        assert_eq!(wrong_package.signer_key_id, wrong_id);
         let wrong_verified = verify_package_signature(&wrong_value, &wrong_package, &public_key)
             .expect("signature remains cryptographically valid");
         assert!(matches!(
