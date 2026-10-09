@@ -11,13 +11,7 @@ repository.workspace = true
 default = ["aamva", "icao"]
 aamva = []  # AAMVA DTS sync
 icao = []   # ICAO PKD sync
-demo-fixtures = [
-    "dep:anyhow",
-    "dep:const-oid",
-    "dep:getrandom",
-    "dep:marty-crypto",
-    "dep:rcgen",
-]
+demo-fixtures = ["dep:anyhow"]
 
 [[bin]]
 name = "marty-demo-fixtures"
@@ -42,7 +36,6 @@ reqwest = { workspace = true, features = ["json"] }
 marty-secure-storage.workspace = true
 marty-types.workspace = true
 marty-verification.workspace = true
-marty-crypto = { workspace = true, optional = true }
 
 # Certificate parsing
 x509-cert = "0.2"
@@ -51,10 +44,6 @@ base64 = "0.22"
 blake3 = "1.5"
 ed25519-dalek = { workspace = true }
 anyhow = { workspace = true, optional = true }
-const-oid = { version = "0.9", optional = true }
-getrandom = { version = "0.3", optional = true }
-# 0.14.8+ requires Rust 1.88; the verifier's documented MSRV is 1.87.
-rcgen = { version = "=0.14.7", optional = true }
 
 [dev-dependencies]
 tempfile = "3.14"
