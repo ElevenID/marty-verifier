@@ -1,0 +1,24 @@
+{
+  "trust_domain": "usb:default",
+  "sequence": 1791518259329,
+  "version": "d01-emrtd-demo-1",
+  "created_at": "2026-10-09T03:57:39.329418700+00:00",
+  "expires_at": "2036-10-06T03:57:39.329418700+00:00",
+  "signer_key_id": "ed25519:3894628101a82bce787d853b11786e69336e35bc76139e121dab7af13ea4769e",
+  "next_signer_key_id": null,
+  "recovery_signer_key_id": "ed25519:27960928ff4efb98d2523d08200659c4b4585971de18cbba7ad78cbc950ab2a5",
+  "signing_cert": "ephemeral-demo-key",
+  "signature": "IKaP1xBzuVk8Kd/fiO/PWJltvUNjgYBAXLOOrKC8dTvHPct58mcJHWR2Jxz6KeVLkh1VXWc9mX4s/yuajrP4CA==",
+  "iaca_certificates": [],
+  "csca_certificates": [
+    {
+      "jurisdiction": "UTO",
+      "subject": "Marty D-01 Demo CSCA",
+      "issuer": "Marty D-01 Demo CSCA",
+      "serial": null,
+      "certificate_der_b64": "MIIB3zCCAYagAwIBAgIUHYYv2ylj2giTq6rDHOtEhtuekBQwCgYIKoZIzj0EAwIwTjEfMB0GA1UEAwwWVVRPIENvdW50cnkgU2lnbmluZyBDQTEdMBsGA1UECgwUTWFydHkgRC0wMSBEZW1vIENTQ0ExDDAKBgNVBAYTA1VUTzAeFw0yNjEwMDkwMzU3MzlaFw0zNjEwMDYwMzU3MzlaME4xHzAdBgNVBAMMFlVUTyBDb3VudHJ5IFNpZ25pbmcgQ0ExHTAbBgNVBAoMFE1hcnR5IEQtMDEgRGVtbyBDU0NBMQwwCgYDVQQGEwNVVE8wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASTDVzSBbRz1iUbUde873Uz2hrDimH08ffzpSpIjCTbe/2+9v8COOvB2e6Ll/GBPG1KwGLt5Isyfbpw1A6QFkhuo0IwQDAdBgNVHQ4EFgQU6BAVUtZi2dIRpVGC/Nd444ROZyEwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDRwAwRAIgTLUzS/sXFcU7GiJAxMFHhs52BXe9C9/MKU3DjwJsVa8CICDvGsosbc5UbgKdJKQpA9g1tEHiGJJhVtQtc2iYTu1B"
+    }
+  ],
+  "dsc_certificates": [],
+  "open_badge_verification_methods": []
+}

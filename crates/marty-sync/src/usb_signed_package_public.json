@@ -1,0 +1,52 @@
+{
+    "schema_version":  1,
+    "public_key_base64":  "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+    "valid_package":  {
+                          "trust_domain":  "usb:default",
+                          "sequence":  1,
+                          "version":  "1.0.0",
+                          "created_at":  "2026-08-08T00:00:00+00:00",
+                          "expires_at":  "2026-08-09T00:00:00+00:00",
+                          "signer_key_id":  "ed25519:0871f3aabc26e4582c508af5c03884e6a96f0989d1dd8cfb49cd17ed25792433",
+                          "next_signer_key_id":  null,
+                          "recovery_signer_key_id":  "ed25519:7a861bad5937df089d367abbf0106c37f861af3c17e8d8364962dd3771771056",
+                          "signing_cert":  "informational-only",
+                          "signature":  "HodwBr1y/hWkHn+xFLJsNJU5YgwqqIgq6dilLuvTe/Na6qZ3SWM3w7n9X73WE0LKlKX+6qQqXN6BhFFY787TDA==",
+                          "iaca_certificates":  [
+
+                                                ],
+                          "csca_certificates":  [
+
+                                                ],
+                          "dsc_certificates":  [
+
+                                               ],
+                          "open_badge_verification_methods":  [
+
+                                                              ]
+                      },
+    "wrong_signer_package":  {
+                                 "trust_domain":  "usb:default",
+                                 "sequence":  1,
+                                 "version":  "1.0.0",
+                                 "created_at":  "2026-08-08T00:00:00+00:00",
+                                 "expires_at":  "2026-08-09T00:00:00+00:00",
+                                 "signer_key_id":  "ed25519:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                 "next_signer_key_id":  null,
+                                 "recovery_signer_key_id":  "ed25519:7a861bad5937df089d367abbf0106c37f861af3c17e8d8364962dd3771771056",
+                                 "signing_cert":  "informational-only",
+                                 "signature":  "O2yqcMwGciCMfjCg0yca7t9Jt95ARSnbi50tVNw4gnkoOneL2+5/mSALaXBddEx6pg2Gv7od8K1IDI2xP82DBg==",
+                                 "iaca_certificates":  [
+
+                                                       ],
+                                 "csca_certificates":  [
+
+                                                       ],
+                                 "dsc_certificates":  [
+
+                                                      ],
+                                 "open_badge_verification_methods":  [
+
+                                                                     ]
+                             }
+}

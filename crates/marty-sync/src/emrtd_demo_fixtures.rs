@@ -1,35 +1,22 @@
-//! Ephemeral ICAO 9303 fixtures for release-demo qualification.
+//! Signed public ICAO 9303 vectors for release-demo qualification.
 //!
-//! Only signed public artifacts are written. CSCA and DSC private keys remain
-//! process-local and are dropped before the manifest is returned.
+//! No CSCA or DSC private key is created or loaded by this module.
 
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use chrono::Utc;
-use marty_crypto::{
-    cert_builder::{create_csca_certificate, create_dsc_certificate},
-    keygen::KeyType,
-    sod_builder::build_emrtd_sod_der,
-};
 use marty_verification::{
     verification::emrtd::{verify_emrtd, SecurityObject},
     CscaRegistry,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use x509_cert::{der::Decode, Certificate};
 
-use crate::demo_fixtures::{absolute_display, signed_trust_package, write_json};
+use crate::demo_fixtures::{absolute_display, public_signed_trust_package, write_json};
 
 const COUNTRY: &str = "UTO";
-const DG1: &[u8] =
-    b"P<UTODEMO<<MARTY<<<<<<<<<<<<<<<<<<<<<<<<<<D01DEMO10UTO9001018X2708257<<<<<<<<<<<<<<02";
-const DG2: &[u8] = &[
-    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00, 0x01,
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmrtdDemoFixtureManifest {
     pub trust_package_path: String,
@@ -44,47 +31,25 @@ pub fn generate_emrtd_demo_fixtures(output_dir: &Path) -> Result<EmrtdDemoFixtur
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create fixture directory {}", output_dir.display()))?;
 
-    let (csca_der, csca_key) =
-        create_csca_certificate(COUNTRY, "Marty D-01 Demo CSCA", 3650, KeyType::EcdsaP256)
-            .context("generate D-01 CSCA")?;
-    let (dsc_der, dsc_key) = create_dsc_certificate(
-        COUNTRY,
-        "Marty D-01 Demo Document Signer",
-        &csca_der,
-        &csca_key,
-        730,
-        KeyType::EcdsaP256,
-    )
-    .context("generate D-01 document signer")?;
-    let data_groups = vec![(1_u8, DG1.to_vec()), (2_u8, DG2.to_vec())];
-    let sod_der = build_emrtd_sod_der(&data_groups, &dsc_der, &dsc_key)
-        .context("build signed D-01 EF.SOD")?;
-
-    let data_groups_json = json!({
-        "DG1": STANDARD.encode(DG1),
-        "DG2": STANDARD.encode(DG2),
-    });
-    let valid_passport = json!({
-        "sod_base64": STANDARD.encode(&sod_der),
-        "data_groups": data_groups_json,
-        "country": COUNTRY,
-    });
-    let mut invalid_passport = valid_passport.clone();
-    invalid_passport["data_groups"]["DG1"] = STANDARD.encode(b"tampered-passport-data").into();
-
-    assert_cryptographic_outcomes(&valid_passport, &invalid_passport, &csca_der)?;
-
-    let signed_trust = signed_trust_package(
-        vec![json!({
-            "jurisdiction": COUNTRY,
-            "subject": "Marty D-01 Demo CSCA",
-            "issuer": "Marty D-01 Demo CSCA",
-            "serial": Value::Null,
-            "certificate_der_b64": STANDARD.encode(&csca_der),
-        })],
-        Utc::now(),
-        "d01-emrtd-demo-1",
+    let signed_trust = public_signed_trust_package(
+        include_str!("fixtures/demo_emrtd/trust-package.json"),
+        include_str!("fixtures/demo_emrtd/usb-signing-public-key.txt"),
+        include_str!("fixtures/demo_emrtd/usb-recovery-public-key.txt"),
     )?;
+    let valid_passport: Value =
+        serde_json::from_str(include_str!("fixtures/demo_emrtd/valid-passport.json"))
+            .context("parse signed public eMRTD vector")?;
+    let invalid_passport: Value =
+        serde_json::from_str(include_str!("fixtures/demo_emrtd/invalid-passport.json"))
+            .context("parse tampered public eMRTD vector")?;
+    let csca_der = STANDARD
+        .decode(
+            signed_trust.trust_package["csca_certificates"][0]["certificate_der_b64"]
+                .as_str()
+                .context("public eMRTD trust package has no CSCA")?,
+        )
+        .context("decode public eMRTD CSCA")?;
+    assert_cryptographic_outcomes(&valid_passport, &invalid_passport, &csca_der)?;
 
     let trust_package_path = output_dir.join("trust-package.json");
     let valid_passport_path = output_dir.join("valid-passport.json");
