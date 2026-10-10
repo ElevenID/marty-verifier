@@ -70,11 +70,11 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 
 # External crates from marty-core
 marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", features = ["serde"] }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
 marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", features = ["native", "onnx"] }
 marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4" }
 marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", features = ["verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "7f276a4", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }
