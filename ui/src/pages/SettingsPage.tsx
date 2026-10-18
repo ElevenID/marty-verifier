@@ -207,6 +207,7 @@ export default function SettingsPage() {
             <TextField
               fullWidth
               label="Max Offline Hours"
+              slotProps={{ htmlInput: { 'data-testid': 'max-offline-hours', min: 0, step: 1 } }}
               type="number"
               value={config.sync_config.max_offline_hours}
               onChange={(e) =>
@@ -214,7 +215,7 @@ export default function SettingsPage() {
                   ...config,
                   sync_config: {
                     ...config.sync_config,
-                    max_offline_hours: parseInt(e.target.value) || 72,
+                    max_offline_hours: Math.max(0, Number.parseInt(e.target.value, 10) || 0),
                   },
                 })
               }

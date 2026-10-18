@@ -259,6 +259,10 @@ export default function SyncPage() {
           {(syncing || importing) && <LinearProgress sx={{ mb: 2 }} />}
 
           <Stack spacing={2}>
+            <details open>
+              <summary data-testid="trust-package-toggle" style={{ cursor: 'pointer', marginBottom: 12 }}>
+                Signed trust package{usbPackagePath ? ` ? ${usbPackagePath.split(/[\\/]/).pop()}` : ''}
+              </summary>
             <TextField
               label="Signed trust package path"
               value={usbPackagePath}
@@ -269,6 +273,7 @@ export default function SyncPage() {
               disabled={syncing || importing}
               fullWidth
             />
+            </details>
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <Button

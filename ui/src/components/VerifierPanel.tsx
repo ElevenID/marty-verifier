@@ -444,6 +444,10 @@ export default function VerifierPanel({
             </Stack>
           )}
 
+          <details open style={{ width: '100%' }}>
+            <summary data-testid="credential-payload-toggle" style={{ cursor: 'pointer', marginBottom: 12 }}>
+              Credential payload{credentialData ? ` ? ${credentialData.length.toLocaleString()} characters loaded` : ''}
+            </summary>
           <TextField
             label="Credential Data (JSON, base64, or QR contents)"
             placeholder={
@@ -462,6 +466,7 @@ export default function VerifierPanel({
             minRows={3}
             slotProps={{ htmlInput: { 'data-testid': 'credential-data-input' } }}
           />
+          </details>
 
           <Chip
             label={credentialType}

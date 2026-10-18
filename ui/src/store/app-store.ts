@@ -5,6 +5,8 @@ import {
   HardwareCapabilities,
   VerificationResult,
   NetworkTransitionResult,
+  OfflineQueueStatus,
+  getOfflineQueueStatus,
   getSyncStatus,
   getHardwareTier,
   detectHardware,
@@ -23,6 +25,10 @@ interface AppState {
 
   // Online status
   isOnline: boolean;
+  hostOnline: boolean;
+  offlineMode: boolean;
+  networkBusy: boolean;
+  queue: OfflineQueueStatus | null;
   networkTransition: NetworkTransitionResult | null;
   networkError: string | null;
 
@@ -34,10 +40,16 @@ interface AppState {
   loadSyncStatus: () => Promise<void>;
   loadHardwareInfo: () => Promise<void>;
   setOnlineStatus: (online: boolean) => Promise<void>;
+  setOfflineMode: (offline: boolean) => Promise<void>;
+  refreshQueue: () => Promise<void>;
+  applyNetworkMode: () => Promise<void>;
   setLastVerification: (result: VerificationResult | null) => void;
   setVerificationInProgress: (inProgress: boolean) => void;
   initialize: () => Promise<void>;
 }
+
+let networkUpdates: Promise<void> = Promise.resolve();
+let networkRequests = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Initial state
@@ -49,6 +61,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   hardwareCapabilities: null,
 
   isOnline: false,
+  hostOnline: false,
+  offlineMode: false,
+  networkBusy: false,
+  queue: null,
   networkTransition: null,
   networkError: null,
 
@@ -82,19 +98,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setOnlineStatus: async (online: boolean) => {
-    set({ isOnline: online });
+    set({ hostOnline: online });
+    await get().applyNetworkMode();
+  },
+
+  setOfflineMode: async (offline: boolean) => {
+    set({ offlineMode: offline });
+    await get().applyNetworkMode();
+  },
+
+  refreshQueue: async () => {
     try {
-      const transition = await setNetworkStatus(online);
-      set({
-        networkTransition: transition,
-        networkError: transition.reporting_error,
-      });
+      set({ queue: await getOfflineQueueStatus() });
     } catch (error) {
-      set({
-        networkTransition: null,
-        networkError: error instanceof Error ? error.message : 'Failed to update network status',
-      });
+      set({ networkError: error instanceof Error ? error.message : 'Failed to read audit queue' });
     }
+  },
+
+  applyNetworkMode: async () => {
+    const online = get().hostOnline && !get().offlineMode;
+    const request = ++networkRequests;
+    set({ networkBusy: true, networkError: null });
+    // Serialize host events and operator requests so native state cannot finish out of order.
+    networkUpdates = networkUpdates.then(async () => {
+      try {
+        const transition = await setNetworkStatus(online);
+        set({ isOnline: transition.online, networkTransition: transition,
+          networkError: transition.reporting_error });
+        await get().refreshQueue();
+      } catch (error) {
+        set({ networkTransition: null,
+          networkError: error instanceof Error ? error.message : 'Failed to update network status' });
+      } finally {
+        if (request === networkRequests) set({ networkBusy: false });
+      }
+    });
+    await networkUpdates;
   },
 
   setLastVerification: (result: VerificationResult | null) => {

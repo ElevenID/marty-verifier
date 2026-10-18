@@ -23,6 +23,7 @@ import {
   Approval as ApprovalIcon,
 } from '@mui/icons-material';
 import { useAppStore } from '@/store';
+import VerificationModePanel from './VerificationModePanel';
 import OfflineStatusBanner from './OfflineStatusBanner';
 
 const DRAWER_WIDTH = 240;
@@ -141,7 +142,7 @@ export default function Layout({ children }: LayoutProps) {
             }]}
           />
           <Typography variant="body2">
-            {isOnline ? 'Online' : 'Offline'}
+            {isOnline ? 'Verification: online' : 'Verification: offline'}
           </Typography>
         </Toolbar>
       </AppBar>
@@ -182,6 +183,7 @@ export default function Layout({ children }: LayoutProps) {
         }}
       >
         <OfflineStatusBanner />
+        <VerificationModePanel />
         {children}
       </Box>
     </Box>

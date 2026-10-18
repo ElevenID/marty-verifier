@@ -28,12 +28,13 @@ describe('AppStore', () => {
   describe('Actions', () => {
     it('should set online status', async () => {
       mockTauriCommands({
-        set_network_status: {
-          online: true,
+        get_offline_queue_status: { pending_events: 0 },
+        set_network_status: ({ online }: { online: boolean }) => ({
+          online,
           flushed_events: 0,
           pending_events: 0,
           reporting_error: null,
-        },
+        }),
       });
       const { useAppStore } = await import('@/store/app-store');
 
@@ -43,6 +44,41 @@ describe('AppStore', () => {
 
       await useAppStore.getState().setOnlineStatus(false);
       expect(useAppStore.getState().isOnline).toBe(false);
+    });
+
+    it('keeps operator offline mode across host events and displays acknowledged queue results', async () => {
+      const calls: boolean[] = [];
+      let pending = 1;
+      mockTauriCommands({
+        set_network_status: ({ online }: { online: boolean }) => {
+          calls.push(online);
+          const flushed = online ? pending : 0;
+          if (online) pending = 0;
+          return { online, flushed_events: flushed, pending_events: pending, reporting_error: null };
+        },
+        get_offline_queue_status: () => ({ pending_events: pending }),
+      });
+      const { useAppStore } = await import('@/store/app-store');
+      await useAppStore.getState().setOfflineMode(true);
+      await useAppStore.getState().setOnlineStatus(true);
+      expect(calls).toEqual([false, false]);
+      expect(useAppStore.getState().isOnline).toBe(false);
+      expect(useAppStore.getState().hostOnline).toBe(true);
+      expect(useAppStore.getState().queue?.pending_events).toBe(1);
+      await useAppStore.getState().setOfflineMode(false);
+      expect(calls).toEqual([false, false, true]);
+      expect(useAppStore.getState().networkTransition?.flushed_events).toBe(1);
+      expect(useAppStore.getState().queue?.pending_events).toBe(0);
+    });
+
+    it('preserves last confirmed state when a native mode change fails', async () => {
+      mockTauriCommands({ set_network_status: { __error: 'native unavailable' } });
+      const { useAppStore } = await import('@/store/app-store');
+      await useAppStore.getState().setOnlineStatus(true);
+      expect(useAppStore.getState().hostOnline).toBe(true);
+      expect(useAppStore.getState().isOnline).toBe(false);
+      expect(useAppStore.getState().networkError).toBe('native unavailable');
+      expect(useAppStore.getState().networkBusy).toBe(false);
     });
 
     it('should set verification in progress', async () => {
