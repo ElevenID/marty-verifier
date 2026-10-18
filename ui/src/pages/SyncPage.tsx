@@ -261,7 +261,7 @@ export default function SyncPage() {
           <Stack spacing={2}>
             <details open>
               <summary data-testid="trust-package-toggle" style={{ cursor: 'pointer', marginBottom: 12 }}>
-                Signed trust package{usbPackagePath ? ` ? ${usbPackagePath.split(/[\\/]/).pop()}` : ''}
+                Signed trust package{usbPackagePath ? ` - ${usbPackagePath.split(/[\\/]/).pop()}` : ''}
               </summary>
             <TextField
               label="Signed trust package path"
