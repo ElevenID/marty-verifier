@@ -132,6 +132,22 @@ cargo build -p marty-sync --features demo-fixtures --bin marty-emrtd-demo-fixtur
 
 Normal verifier builds do not compile this feature.
 
+### Isolated native instances
+
+Set `MARTY_VERIFIER_INSTANCE` to a unique lowercase alphanumeric/hyphen identifier
+to isolate the real platform keychain under `com.marty.verifier.instance.<id>`.
+Empty names, `default`, `prod`, `production`, separators and names over 64 bytes
+are rejected before startup. Without this variable, existing storage is unchanged.
+Also set absolute `MARTY_VERIFIER_DATA_DIR` ending in that exact identifier and
+`MARTY_VERIFIER_CONFIG_PATH` to a file directly inside that directory. Use a fresh,
+task-owned directory; do not point an instance at an existing production database.
+The native UI, encryption, trust verification and durable audit storage remain real.
+
+After closing the instance and retiring only its task-owned data directory, run
+the same executable with `--remove-instance-keys` and the same environment. Cleanup
+refuses an existing data directory or missing namespace, and can remove only the
+two keys belonging to that validated instance. Never delete the default service.
+
 ## Configuration
 
 Configuration is stored in the app data directory:

@@ -69,8 +69,23 @@ pub struct AppState {
 impl AppState {
     /// Initialize application state
     pub fn new() -> AppResult<Self> {
+        // Validate before configuration loading or any platform keychain access.
+        let instance = crate::instance::from_environment()?;
         let config = AppConfig::load()?;
-        Self::from_config(config)
+        match instance {
+            Some(instance) => {
+                tracing::info!(
+                    service = instance.service_name(),
+                    "Using isolated platform keychain instance"
+                );
+                let storage = Arc::new(SecureStorage::new_for_instance(
+                    &config.data_dir,
+                    &instance,
+                )?);
+                Self::from_config_and_storage(config, storage)
+            }
+            None => Self::from_config(config),
+        }
     }
 
     /// Initialize application state from an already-governed configuration.

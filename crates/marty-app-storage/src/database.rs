@@ -41,6 +41,17 @@ impl SecureStorage {
         )
     }
 
+    /// Preserve real platform encryption while isolating instance keys.
+    pub fn new_for_instance(
+        data_dir: &Path,
+        instance: &marty_secure_storage::InstanceNamespace,
+    ) -> Result<Self, StorageError> {
+        Self::new_with_core(
+            CoreSecureStorage::new_for_instance(data_dir, instance)?,
+            || PiiEncryptor::from_platform_instance(instance),
+        )
+    }
+
     /// Create storage using a caller-installed process-local keyring.
     pub fn new_with_process_local_keyring(data_dir: &Path) -> Result<Self, StorageError> {
         Self::new_with_core(
@@ -51,7 +62,7 @@ impl SecureStorage {
 
     fn new_with_core(
         mut core: CoreSecureStorage,
-        initialize_pii: fn() -> Result<PiiEncryptor, marty_secure_storage::StorageError>,
+        initialize_pii: impl FnOnce() -> Result<PiiEncryptor, marty_secure_storage::StorageError>,
     ) -> Result<Self, StorageError> {
         core.initialize_extension(initialize_app_schema)?;
         // Preserve app startup key access while core owns encryption and keyring behavior.
