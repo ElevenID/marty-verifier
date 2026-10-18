@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Updater, UpdaterExt};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
@@ -26,28 +26,7 @@ pub async fn check_for_updates(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> AppResult<Option<UpdateInfo>> {
-    let update_config = { state.config.read().await.update_config.clone() };
-    if !update_config.enabled {
-        return Err(AppError::Update(
-            "Updates are disabled in configuration".to_string(),
-        ));
-    }
-    if update_config.public_key.trim().is_empty() {
-        return Err(AppError::Update(
-            "Update public key is not configured".to_string(),
-        ));
-    }
-
-    let channel = resolve_update_channel(channel, &update_config.default_channel)?;
-    let endpoint = build_update_endpoint(&update_config.base_url, &channel)?;
-
-    let updater = app
-        .updater_builder()
-        .endpoints(vec![endpoint])
-        .map_err(|e| AppError::Update(e.to_string()))?
-        .pubkey(update_config.public_key.clone())
-        .build()
-        .map_err(|e| AppError::Update(e.to_string()))?;
+    let (channel, updater) = configured_updater(channel, &state, &app).await?;
 
     let update = updater
         .check()
@@ -76,28 +55,7 @@ pub async fn download_and_install_update(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> AppResult<bool> {
-    let update_config = { state.config.read().await.update_config.clone() };
-    if !update_config.enabled {
-        return Err(AppError::Update(
-            "Updates are disabled in configuration".to_string(),
-        ));
-    }
-    if update_config.public_key.trim().is_empty() {
-        return Err(AppError::Update(
-            "Update public key is not configured".to_string(),
-        ));
-    }
-
-    let channel = resolve_update_channel(channel, &update_config.default_channel)?;
-    let endpoint = build_update_endpoint(&update_config.base_url, &channel)?;
-
-    let updater = app
-        .updater_builder()
-        .endpoints(vec![endpoint])
-        .map_err(|e| AppError::Update(e.to_string()))?
-        .pubkey(update_config.public_key.clone())
-        .build()
-        .map_err(|e| AppError::Update(e.to_string()))?;
+    let (_, updater) = configured_updater(channel, &state, &app).await?;
 
     let update = updater
         .check()
@@ -123,6 +81,38 @@ pub async fn download_and_install_update(
         .map_err(|e| AppError::Update(e.to_string()))?;
 
     Ok(true)
+}
+
+// Keep validation and signature configuration identical for check and install.
+async fn configured_updater(
+    channel: Option<String>,
+    state: &State<'_, AppState>,
+    app: &AppHandle,
+) -> AppResult<(String, Updater)> {
+    let update_config = { state.config.read().await.update_config.clone() };
+    if !update_config.enabled {
+        return Err(AppError::Update(
+            "Updates are disabled in configuration".to_string(),
+        ));
+    }
+    if update_config.public_key.trim().is_empty() {
+        return Err(AppError::Update(
+            "Update public key is not configured".to_string(),
+        ));
+    }
+
+    let channel = resolve_update_channel(channel, &update_config.default_channel)?;
+    let endpoint = build_update_endpoint(&update_config.base_url, &channel)?;
+
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| AppError::Update(e.to_string()))?
+        .pubkey(update_config.public_key.clone())
+        .build()
+        .map_err(|e| AppError::Update(e.to_string()))?;
+
+    Ok((channel, updater))
 }
 
 fn resolve_update_channel(requested: Option<String>, preferred: &str) -> Result<String, AppError> {
