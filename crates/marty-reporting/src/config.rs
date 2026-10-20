@@ -2,6 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Generic destinations retain their explicit HTTP status contract. The
+/// organization offline-ingestion API requires an exact durable batch receipt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiAcknowledgement {
+    #[default]
+    #[serde(rename = "http-status")]
+    HttpStatus,
+    #[serde(rename = "offline-verification-ingest.v1")]
+    OfflineVerificationV1,
+}
+
 /// Reporting configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportingConfig {
@@ -11,6 +22,10 @@ pub struct ReportingConfig {
     pub api_endpoint: Option<String>,
     /// API key/token for authentication
     pub api_key: Option<String>,
+    /// Explicit remote acknowledgement policy. Missing legacy configuration
+    /// retains its generic contract; the known offline endpoint cannot downgrade.
+    #[serde(default)]
+    pub api_acknowledgement: ApiAcknowledgement,
     /// Batch upload endpoint (S3 presigned URL or blob storage)
     pub batch_endpoint: Option<String>,
     /// Local-only mode (no remote reporting)
@@ -33,6 +48,7 @@ impl Default for ReportingConfig {
             enabled: true,
             api_endpoint: None,
             api_key: None,
+            api_acknowledgement: ApiAcknowledgement::HttpStatus,
             batch_endpoint: None,
             local_only: false,
             batch_interval_minutes: 15,

@@ -8,7 +8,7 @@ description = "Reporting and analytics for Marty Verifier"
 
 [features]
 default = ["api", "batch"]
-api = ["reqwest"]     # REST API reporting
+api = ["reqwest", "ring"] # REST API reporting and durable receipt digests
 batch = []            # Batch upload to S3/blob
 local-only = []       # Local storage only, no remote
 
@@ -21,6 +21,7 @@ tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 reqwest = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
 
 marty-secure-storage.workspace = true
 

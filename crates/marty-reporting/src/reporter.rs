@@ -124,12 +124,45 @@ impl Reporter {
                 .map(|event| event.payload.clone())
                 .collect::<Vec<_>>(),
             });
+            let ids = events
+                .iter()
+                .map(|event| event.id.clone())
+                .collect::<Vec<_>>();
+            let durable =
+                crate::durable_ack::Destination::for_config(&config).and_then(|destination| {
+                    destination
+                        .map(|destination| {
+                            crate::durable_ack::ExpectedBatch::from_request(&body)
+                                .map(|batch| (destination, batch))
+                        })
+                        .transpose()
+                });
+            let durable = match durable {
+                Ok(durable) => durable,
+                Err(error) => return self.failed_batch(&ids, error.to_string()).await,
+            };
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .redirect(if durable.is_some() {
+                    reqwest::redirect::Policy::none()
+                } else {
+                    reqwest::redirect::Policy::default()
+                })
                 .build()
                 .map_err(|_| {
                     ReportingError::Network("reporting client initialization failed".to_string())
                 })?;
+            let authority = if let Some((destination, _)) = &durable {
+                match destination
+                    .authorize(&client, config.api_key.as_deref().unwrap_or_default())
+                    .await
+                {
+                    Ok(authority) => Some(authority),
+                    Err(error) => return self.failed_batch(&ids, error.to_string()).await,
+                }
+            } else {
+                None
+            };
             let mut last_error = None;
 
             let max_retries = config.max_retries.min(10);
@@ -148,8 +181,34 @@ impl Reporter {
 
                 let retryable = match request.send().await {
                     Ok(response) if response.status().is_success() => {
-                        last_error = None;
-                        break;
+                        if let Some((destination, expected)) = &durable {
+                            let Some(authority) = &authority else {
+                                return self
+                                    .failed_batch(
+                                        &ids,
+                                        "offline reporting authority is absent".into(),
+                                    )
+                                    .await;
+                            };
+                            match destination
+                                .require_acknowledgement(response, authority, expected)
+                                .await
+                            {
+                                Ok(()) => {
+                                    last_error = None;
+                                    break;
+                                }
+                                Err(error) => {
+                                    last_error = Some(error.to_string());
+                                    false
+                                }
+                            }
+                        } else {
+                            // Generic API and presigned PUT destinations retain
+                            // their separate, explicit HTTP-status contract.
+                            last_error = None;
+                            break;
+                        }
                     }
                     Ok(response) => {
                         let status = response.status();
@@ -171,22 +230,17 @@ impl Reporter {
             }
 
             if let Some(error) = last_error {
-                let ids = events
-                    .iter()
-                    .map(|event| event.id.clone())
-                    .collect::<Vec<_>>();
-                self.storage
-                    .record_queue_batch_failure(&ids, &error)
-                    .await?;
-                return Err(ReportingError::Network(error));
+                return self.failed_batch(&ids, error).await;
             }
 
-            let ids = events
-                .iter()
-                .map(|event| event.id.clone())
-                .collect::<Vec<_>>();
             Ok(self.storage.acknowledge_queue_batch(&ids).await?)
         }
+    }
+
+    #[cfg(feature = "api")]
+    async fn failed_batch(&self, ids: &[String], error: String) -> Result<usize, ReportingError> {
+        self.storage.record_queue_batch_failure(ids, &error).await?;
+        Err(ReportingError::Network(error))
     }
 
     /// Redact sensitive fields from event
@@ -242,7 +296,7 @@ fn summarize_request_error(error: &reqwest::Error) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::config::ReportingConfig;
     use std::sync::Once;
@@ -251,7 +305,7 @@ mod tests {
 
     static INSTALL_MOCK_KEYRING: Once = Once::new();
 
-    fn reporter_with_config(
+    pub(crate) fn reporter_with_config(
         config: ReportingConfig,
     ) -> (tempfile::TempDir, Arc<SecureStorage>, Reporter) {
         INSTALL_MOCK_KEYRING.call_once(|| {
@@ -327,6 +381,7 @@ mod tests {
             local_only: true,
             api_endpoint: None,
             api_key: None,
+            api_acknowledgement: crate::ApiAcknowledgement::HttpStatus,
             batch_endpoint: None,
             batch_interval_minutes: 15,
             max_queue_size: 1000,
