@@ -152,72 +152,69 @@ impl Reporter {
                 .map_err(|_| {
                     ReportingError::Network("reporting client initialization failed".to_string())
                 })?;
-            let authority = if let Some((destination, _)) = &durable {
-                match destination
-                    .authorize(&client, config.api_key.as_deref().unwrap_or_default())
-                    .await
-                {
-                    Ok(authority) => Some(authority),
-                    Err(error) => return self.failed_batch(&ids, error.to_string()).await,
-                }
-            } else {
-                None
-            };
+            let mut authority = None;
             let mut last_error = None;
 
             let max_retries = config.max_retries.min(10);
             for attempt in 0..=max_retries {
-                let mut request = if destination.1 {
-                    // Presigned object-store batch destinations use PUT.
-                    client.put(destination.0).json(&body)
-                } else {
-                    client.post(destination.0).json(&body)
-                };
-                if !destination.1 {
-                    if let Some(api_key) = config.api_key.as_deref() {
-                        request = request.bearer_auth(api_key);
-                    }
-                }
-
-                let retryable = match request.send().await {
-                    Ok(response) if response.status().is_success() => {
-                        if let Some((destination, expected)) = &durable {
-                            let Some(authority) = &authority else {
-                                return self
-                                    .failed_batch(
-                                        &ids,
-                                        "offline reporting authority is absent".into(),
+                let result: Result<(), crate::durable_ack::DeliveryError> = async {
+                    if let Some((destination, _)) = &durable {
+                        if authority.is_none() {
+                            authority = Some(
+                                destination
+                                    .authorize(
+                                        &client,
+                                        config.api_key.as_deref().unwrap_or_default(),
                                     )
-                                    .await;
-                            };
-                            match destination
-                                .require_acknowledgement(response, authority, expected)
-                                .await
-                            {
-                                Ok(()) => {
-                                    last_error = None;
-                                    break;
-                                }
-                                Err(error) => {
-                                    last_error = Some(error.to_string());
-                                    false
-                                }
-                            }
-                        } else {
-                            // Generic API and presigned PUT destinations retain
-                            // their separate, explicit HTTP-status contract.
-                            last_error = None;
-                            break;
+                                    .await?,
+                            );
                         }
                     }
-                    Ok(response) => {
-                        let status = response.status();
-                        last_error = Some(format!("reporting endpoint returned HTTP {}", status));
-                        status.as_u16() == 429 || status.is_server_error()
+                    let mut request = if destination.1 {
+                        // Presigned object-store batch destinations use PUT.
+                        client.put(destination.0).json(&body)
+                    } else {
+                        client.post(destination.0).json(&body)
+                    };
+                    if !destination.1 {
+                        if let Some(api_key) = config.api_key.as_deref() {
+                            request = request.bearer_auth(api_key);
+                        }
+                    }
+
+                    match request.send().await {
+                        Ok(response) if response.status().is_success() => {
+                            if let Some((destination, expected)) = &durable {
+                                let authority = authority
+                                    .as_ref()
+                                    .ok_or("offline reporting authority is absent")?;
+                                destination
+                                    .require_acknowledgement(response, authority, expected)
+                                    .await
+                            } else {
+                                // Generic API and presigned PUT destinations retain
+                                // their separate, explicit HTTP-status contract.
+                                Ok(())
+                            }
+                        }
+                        Ok(response) => {
+                            let status = response.status();
+                            Err(crate::durable_ack::DeliveryError::http_status(status))
+                        }
+                        Err(error) => Err(crate::durable_ack::DeliveryError::transient(
+                            summarize_request_error(&error),
+                        )),
+                    }
+                }
+                .await;
+                let retryable = match result {
+                    Ok(()) => {
+                        last_error = None;
+                        break;
                     }
                     Err(error) => {
-                        last_error = Some(summarize_request_error(&error));
-                        true
+                        last_error = Some(error.to_string());
+                        error.retryable
                     }
                 };
 

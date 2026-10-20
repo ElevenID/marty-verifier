@@ -18,6 +18,37 @@ const INVALID_ACK: &str = "offline reporting did not return an exact durable bat
 const INVALID_AUTHORITY: &str =
     "offline reporting authority was not authenticated for the configured organization";
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub(crate) struct DeliveryError {
+    message: String,
+    pub retryable: bool,
+}
+
+impl DeliveryError {
+    pub fn http_status(status: reqwest::StatusCode) -> Self {
+        Self {
+            message: format!("reporting endpoint returned HTTP {status}"),
+            retryable: status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error(),
+        }
+    }
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+}
+
+impl From<&'static str> for DeliveryError {
+    fn from(message: &'static str) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
 pub(crate) struct Destination {
     endpoint: Url,
     organization_id: Uuid,
@@ -128,17 +159,21 @@ impl Destination {
         &self,
         client: &Client,
         api_key: &str,
-    ) -> Result<Authority, &'static str> {
+    ) -> Result<Authority, DeliveryError> {
         let response = client
             .get(self.endpoint.clone())
             .bearer_auth(api_key)
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|_| INVALID_AUTHORITY)?;
-        let authority: Authority = bounded_json(response, &self.endpoint)
-            .await
-            .map_err(|_| INVALID_AUTHORITY)?;
+            .map_err(|_| DeliveryError::transient(INVALID_AUTHORITY))?;
+        let authority: Authority =
+            bounded_json(response, &self.endpoint)
+                .await
+                .map_err(|error| DeliveryError {
+                    message: INVALID_AUTHORITY.into(),
+                    retryable: error.retryable,
+                })?;
         if authority.kind != CONTRACT
             || authority.organization_id != self.organization_id
             || !uuid_v4(authority.producer_id)
@@ -147,7 +182,7 @@ impl Destination {
             || authority.scope != "authenticated_api_key"
             || authority.evidence != "client_reported_offline_verification"
         {
-            return Err(INVALID_AUTHORITY);
+            return Err(INVALID_AUTHORITY.into());
         }
         Ok(authority)
     }
@@ -157,9 +192,10 @@ impl Destination {
         response: Response,
         authority: &Authority,
         expected: &ExpectedBatch,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), DeliveryError> {
         let acknowledgement: Acknowledgement = bounded_json(response, &self.endpoint).await?;
         validate_acknowledgement(acknowledgement, authority, expected, Utc::now())
+            .map_err(Into::into)
     }
 }
 
@@ -250,7 +286,13 @@ fn validate_acknowledgement(
 async fn bounded_json<T: DeserializeOwned>(
     mut response: Response,
     endpoint: &Url,
-) -> Result<T, &'static str> {
+) -> Result<T, DeliveryError> {
+    if response.url() == endpoint
+        && (response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+            || response.status().is_server_error())
+    {
+        return Err(DeliveryError::http_status(response.status()));
+    }
     if response.status() != reqwest::StatusCode::OK
         || response.url() != endpoint
         || response
@@ -263,16 +305,20 @@ async fn bounded_json<T: DeserializeOwned>(
             .content_length()
             .is_some_and(|size| size > MAX_BODY_BYTES as u64)
     {
-        return Err(INVALID_ACK);
+        return Err(INVALID_ACK.into());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| INVALID_ACK)? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| DeliveryError::transient("offline reporting response body was interrupted"))?
+    {
         if bytes.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
-            return Err(INVALID_ACK);
+            return Err(INVALID_ACK.into());
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| INVALID_ACK)
+    serde_json::from_slice(&bytes).map_err(|_| INVALID_ACK.into())
 }
 
 fn canonical_uuid(value: &str) -> Option<Uuid> {
@@ -575,6 +621,80 @@ mod tests {
             assert_eq!(status.pending_events, 2);
             assert!(status.last_successful_sync.is_none());
             assert!(!status.last_error.unwrap().contains(KEY));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_transport_retries_transient_authority_and_interrupted_receipts_in_one_flush() {
+        for (plan, succeeds) in [
+            (vec!["GET503", "GET", "POST"], true),
+            (vec!["GET429", "GET", "POST"], true),
+            (vec!["GETdisconnect", "GET", "POST"], true),
+            (vec!["GETtruncated", "GET", "POST"], true),
+            (vec!["GET", "POSTtruncated", "POST"], true),
+            (vec!["GET503", "GET503"], false),
+            (vec!["GETinvalid"], false),
+            (vec!["GET", "POSTinvalid"], false),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!(
+                "http://{}/v1/organizations/{ORG}/offline-verification-events",
+                listener.local_addr().unwrap()
+            );
+            let description = format!("{plan:?}");
+            let server = tokio::spawn(async move {
+                let mut submitted = None;
+                for step in plan {
+                    let (mut socket, _) =
+                        tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                            .await
+                            .unwrap()
+                            .unwrap();
+                    let (headers, body) = read_request(&mut socket).await;
+                    let get = step.starts_with("GET");
+                    assert!(headers.starts_with(if get { "GET " } else { "POST " }));
+                    if !get {
+                        if let Some(previous) = &submitted {
+                            assert_eq!(previous, &body);
+                        }
+                        submitted = Some(body.clone());
+                    }
+                    if step.ends_with("disconnect") {
+                        continue;
+                    }
+                    let status = if step.ends_with("503") {
+                        "503 Service Unavailable"
+                    } else if step.ends_with("429") {
+                        "429 Too Many Requests"
+                    } else {
+                        "200 OK"
+                    };
+                    let payload = if step.ends_with("invalid") {
+                        "{invalid-json".to_string()
+                    } else if get {
+                        capability().to_string()
+                    } else {
+                        acknowledgement(&body, true).to_string()
+                    };
+                    let advertised =
+                        payload.len() + if step.ends_with("truncated") { 10 } else { 0 };
+                    let wire = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {advertised}\r\nConnection: close\r\n\r\n{payload}");
+                    socket.write_all(wire.as_bytes()).await.unwrap();
+                }
+            });
+            let mut settings = config(endpoint);
+            settings.max_retries = 1;
+            let (_directory, storage, reporter) = reporter_with_config(settings);
+            reporter.queue_event(event()).await.unwrap();
+            let result = reporter.flush().await;
+            assert_eq!(result.is_ok(), succeeds, "{description}: {result:?}");
+            let pending = storage.get_pending_events(100).await.unwrap();
+            assert_eq!(pending.len(), if succeeds { 0 } else { 1 }, "{description}");
+            if !succeeds {
+                assert_eq!(pending[0].retry_count, 1);
+                assert!(!result.unwrap_err().to_string().contains(KEY));
+            }
             server.await.unwrap();
         }
     }
