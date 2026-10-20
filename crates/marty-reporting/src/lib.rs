@@ -5,11 +5,13 @@
 //! Can be excluded from builds entirely via Cargo feature flags.
 
 mod config;
+#[cfg(feature = "api")]
+mod durable_ack;
 mod error;
 mod events;
 mod reporter;
 
-pub use config::ReportingConfig;
+pub use config::{ApiAcknowledgement, ReportingConfig};
 pub use error::ReportingError;
 pub use events::{EventPayload, VerificationEvent};
 pub use reporter::Reporter;
