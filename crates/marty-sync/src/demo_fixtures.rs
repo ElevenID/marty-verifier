@@ -1,25 +1,19 @@
-//! Ephemeral, cryptographically valid fixtures for native demo qualification.
+//! Public, signed vectors for native demo qualification.
 //!
-//! This module is excluded from normal builds. It deliberately writes only
-//! public keys and signed artifacts; all private keys remain process-local.
+//! This module is excluded from normal builds. It never creates or loads a
+//! credential or trust-package private key.
 
 use std::{fs, path::Path};
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use chrono::{Duration, Utc};
-use const_oid::ObjectIdentifier;
-use der::Encode;
-use ed25519_dalek::{Signer, SigningKey};
-use marty_verification::dtc::{create_dtc_json, sign_dtc_json};
-use rcgen::{BasicConstraints, CertificateParams, CustomExtension, DnType, IsCa, KeyPair};
+use chrono::{DateTime, Utc};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use marty_verification::dtc::verify_dtc_json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use x509_cert::ext::pkix::ExtendedKeyUsage;
 
 use crate::usb::{canonical_signed_payload, signer_key_id};
-
-const DTC_SIGNER_EKU_OID: &str = "2.23.136.1.1.12.1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DemoFixtureManifest {
@@ -44,35 +38,44 @@ pub(crate) struct SignedTrustPackage {
     pub recovery_public_key: [u8; 32],
 }
 
-pub(crate) fn signed_trust_package(
-    csca_certificates: Vec<Value>,
-    now: chrono::DateTime<Utc>,
-    version: &str,
+pub(crate) fn public_signed_trust_package(
+    package_json: &str,
+    signing_public_key_b64: &str,
+    recovery_public_key_b64: &str,
 ) -> Result<SignedTrustPackage> {
-    let signing_key = random_ed25519_key()?;
-    let recovery_key = random_ed25519_key()?;
-    let signing_public_key = signing_key.verifying_key().to_bytes();
-    let recovery_public_key = recovery_key.verifying_key().to_bytes();
-    let mut trust_package = json!({
-        "trust_domain": "usb:default",
-        "sequence": now.timestamp_millis().unsigned_abs(),
-        "version": version,
-        "created_at": now.to_rfc3339(),
-        "expires_at": (now + Duration::days(7)).to_rfc3339(),
-        "signer_key_id": signer_key_id(&signing_public_key),
-        "next_signer_key_id": Value::Null,
-        "recovery_signer_key_id": signer_key_id(&recovery_public_key),
-        "signing_cert": "ephemeral-demo-key",
-        "signature": "",
-        "iaca_certificates": [],
-        "csca_certificates": csca_certificates,
-        "dsc_certificates": [],
-        "open_badge_verification_methods": []
-    });
-    let payload = canonical_signed_payload(&trust_package).context("canonicalize trust package")?;
-    trust_package["signature"] = STANDARD
-        .encode(signing_key.sign(&payload).to_bytes())
-        .into();
+    let trust_package: Value =
+        serde_json::from_str(package_json).context("parse public trust package")?;
+    let signing_public_key = public_key(signing_public_key_b64)?;
+    let recovery_public_key = public_key(recovery_public_key_b64)?;
+    let expires_at = trust_package["expires_at"]
+        .as_str()
+        .context("public trust package has no expiry")?;
+    if DateTime::parse_from_rfc3339(expires_at).context("parse public trust expiry")? <= Utc::now()
+    {
+        bail!(
+            "public demo trust package expired; refresh the signed vector through remote custody"
+        );
+    }
+    if trust_package["signer_key_id"] != signer_key_id(&signing_public_key)
+        || trust_package["recovery_signer_key_id"] != signer_key_id(&recovery_public_key)
+    {
+        bail!("public demo trust package signer binding is invalid");
+    }
+    let signature = STANDARD
+        .decode(
+            trust_package["signature"]
+                .as_str()
+                .context("public trust signature missing")?,
+        )
+        .context("decode public trust signature")?;
+    let signature = Signature::from_slice(&signature).context("parse public trust signature")?;
+    VerifyingKey::from_bytes(&signing_public_key)
+        .context("parse public trust signer")?
+        .verify(
+            &canonical_signed_payload(&trust_package).context("canonicalize trust package")?,
+            &signature,
+        )
+        .context("verify public trust package")?;
     Ok(SignedTrustPackage {
         trust_package,
         signing_public_key,
@@ -80,7 +83,15 @@ pub(crate) fn signed_trust_package(
     })
 }
 
-/// Generate a fresh signed trust package and DTC chain in `output_dir`.
+fn public_key(encoded: &str) -> Result<[u8; 32]> {
+    STANDARD
+        .decode(encoded.trim())
+        .context("decode public trust key")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("public trust key must be Ed25519"))
+}
+
+/// Write a verified, time-bounded signed trust package and DTC in `output_dir`.
 ///
 /// No private key material is serialized or returned.
 pub fn generate_demo_fixtures(output_dir: &Path) -> Result<DemoFixtureManifest> {
@@ -117,112 +128,44 @@ pub fn generate_demo_fixtures(output_dir: &Path) -> Result<DemoFixtureManifest> 
 }
 
 fn generate_values() -> Result<GeneratedFixtures> {
-    let mut ca_params = CertificateParams::default();
-    ca_params
-        .distinguished_name
-        .push(DnType::CommonName, "Marty Demo CSCA");
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    let ca_key = KeyPair::generate().context("generate demo CSCA key")?;
-    let ca_cert = ca_params
-        .self_signed(&ca_key)
-        .context("generate demo CSCA certificate")?;
-
-    let signer_key = KeyPair::generate().context("generate demo DTC signer key")?;
-    let mut signer_params = CertificateParams::default();
-    signer_params
-        .distinguished_name
-        .push(DnType::CommonName, "Marty Demo DTC Signer");
-    signer_params.is_ca = IsCa::NoCa;
-    let eku = ExtendedKeyUsage(vec![ObjectIdentifier::new_unwrap(DTC_SIGNER_EKU_OID)]);
-    let mut eku_extension = CustomExtension::from_oid_content(
-        &[2, 5, 29, 37],
-        eku.to_der().context("encode DTC signer EKU")?,
-    );
-    eku_extension.set_criticality(true);
-    signer_params.custom_extensions.push(eku_extension);
-    let ca_issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
-    let signer_cert = signer_params
-        .signed_by(&signer_key, &ca_issuer)
-        .context("generate demo DTC signer certificate")?;
-
-    let now = Utc::now();
-    let signed_trust = signed_trust_package(
-        vec![json!({
-            "jurisdiction": "UTO",
-            "subject": "Marty Demo CSCA",
-            "issuer": "Marty Demo CSCA",
-            "serial": Value::Null,
-            "certificate_der_b64": STANDARD.encode(ca_cert.der().as_ref())
-        })],
-        now,
-        "demo-1",
+    let signed_trust = public_signed_trust_package(
+        include_str!("fixtures/demo_dtc/trust-package.json"),
+        include_str!("fixtures/demo_dtc/usb-signing-public-key.txt"),
+        include_str!("fixtures/demo_dtc/usb-recovery-public-key.txt"),
     )?;
-
-    let request = json!({
-        "passport_number": "D09DEMO1",
-        "issuing_authority": "UTO",
-        "issue_date": (now - Duration::days(1)).format("%Y-%m-%d").to_string(),
-        "expiry_date": (now + Duration::days(365)).format("%Y-%m-%d").to_string(),
-        "personal_details": {
-            "first_name": "MARTY",
-            "last_name": "DEMO",
-            "date_of_birth": "1990-01-01",
-            "gender": "X",
-            "nationality": "UTO"
-        },
-        "data_groups": [{"dg_number": 1, "data": "ZGVtby1kZzE=", "data_type": "MRZ"}],
-        "dtc_type": 4,
-        "type1_profile": {
-            "mrz_line1": "P<UTODEMO<<MARTY<<<<<<<<<<<<<<<<<<<<<",
-            "mrz_line2": "D09DEMO10UTO9001018X2708257<<<<<<<2",
-            "sod_hash": "",
-            "issuing_state": "UTO",
-            "passive_auth_ok": true
-        }
-    });
-    let created = create_dtc_json(&request.to_string()).map_err(anyhow::Error::msg)?;
-    let mut signing_envelope: Value = serde_json::from_str(&created)?;
-    let signing_object = signing_envelope
-        .as_object_mut()
-        .context("DTC creation returned a non-object")?;
-    signing_object.insert(
-        "signing_key_pem".to_string(),
-        signer_key.serialize_pem().into(),
-    );
-    signing_object.insert("signer_id".to_string(), "marty-demo-dtc-signer".into());
-    let signed = sign_dtc_json(&signing_envelope.to_string()).map_err(anyhow::Error::msg)?;
-    let mut dtc: Value = serde_json::from_str(&signed)?;
-    let dtc_object = dtc
-        .as_object_mut()
-        .context("DTC signing returned a non-object")?;
-    dtc_object.insert(
-        "signer_public_key_pem".to_string(),
-        signer_key.public_key_pem().into(),
-    );
-    dtc_object.insert(
-        "certificate_chain_pem".to_string(),
-        json!([signer_cert.pem()]),
-    );
-    if dtc_object.contains_key("signing_key_pem") {
-        bail!("DTC signing leaked private key material");
+    let dtc: Value = serde_json::from_str(include_str!("fixtures/demo_dtc/dtc.json"))
+        .context("parse signed public DTC vector")?;
+    let certificate_b64 = signed_trust.trust_package["csca_certificates"][0]["certificate_der_b64"]
+        .as_str()
+        .context("public DTC trust package has no CSCA")?;
+    STANDARD
+        .decode(certificate_b64)
+        .context("decode public DTC CSCA")?;
+    let certificate_lines = certificate_b64
+        .as_bytes()
+        .chunks(64)
+        .map(std::str::from_utf8)
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .join("\n");
+    let csca_pem =
+        format!("-----BEGIN CERTIFICATE-----\n{certificate_lines}\n-----END CERTIFICATE-----\n");
+    let mut verification_input = dtc.clone();
+    verification_input["trust_anchors_pem"] = json!([&csca_pem]);
+    let verified = verify_dtc_json(&verification_input.to_string()).map_err(anyhow::Error::msg)?;
+    let verified: Value =
+        serde_json::from_str(&verified).context("parse public DTC verification")?;
+    if verified["is_valid"] != true {
+        bail!("signed public DTC vector did not verify against its CSCA");
     }
-
     Ok(GeneratedFixtures {
         trust_package: signed_trust.trust_package,
         dtc,
         #[cfg(test)]
-        csca_pem: ca_cert.pem(),
+        csca_pem,
         signing_public_key: signed_trust.signing_public_key,
         recovery_public_key: signed_trust.recovery_public_key,
     })
 }
-
-fn random_ed25519_key() -> Result<SigningKey> {
-    let mut seed = [0_u8; 32];
-    getrandom::fill(&mut seed).map_err(|error| anyhow::anyhow!("generate Ed25519 key: {error}"))?;
-    Ok(SigningKey::from_bytes(&seed))
-}
-
 pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     fs::write(path, bytes).with_context(|| format!("write {}", path.display()))

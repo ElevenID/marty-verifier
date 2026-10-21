@@ -115,12 +115,13 @@ pnpm --dir ui tauri build --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporti
 ### Native Demo Qualification Fixtures
 
 The `marty-sync` crate has an opt-in `demo-fixtures` feature for native release
-qualification. Its DTC lane generates a fresh signed USB package and a DTC whose
-signer chains to the package CSCA by calling the production canonicalization and
-DTC signing code. Its eMRTD lane creates a real EF.SOD, DSC chain, and data
-groups, then proves both the trusted passport and DG-tampered denial through the
-canonical Rust verifier before emitting them. Private keys remain process-local;
-the output contains only public keys and signed synthetic artifacts.
+qualification. It emits reviewed, time-bounded signed public vectors without
+creating or loading credential or trust-package private keys. The DTC lane
+verifies the signed USB package and DTC chain. The eMRTD lane verifies its real
+EF.SOD, DSC chain and data groups, plus DG-tampered denial, before emitting
+the artifacts. Refresh the vectors through remote custody before they expire.
+Repeated runs emit the same synthetic signed vectors; they do not create a new
+trust-package sequence.
 
 ```bash
 cargo build -p marty-sync --features demo-fixtures --bin marty-demo-fixtures

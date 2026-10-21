@@ -499,83 +499,35 @@ async fn ob3_credential_wrapper_takes_v3_path() {
 
 // ── §13 OBv3 signed credential — DataIntegrityProof (Ed25519) ─────────────────
 //
-// These tests use `issue_ob3_json` to produce a real, signed OBv3 credential
-// with an Ed25519 DataIntegrityProof (JsonWebSignature2020 suite).
-// The signed credential is then verified via `verify_open_badge_offline` with
-// the verification-method document embedded in the `document_store` field.
-// This exercises the full signing → verification round-trip that existing
-// tests never reached.
+// These tests use Core's reviewed public-only OBv3 Ed25519 signature vector.
+// The credential is verified with its public method in `document_store`;
+// tampering that method must still fail without local issuer signing.
+// The fixed signature also preserves a real cryptographic verification path.
 
-/// Generate a fresh Ed25519 JWK (public + private) from raw byte slices.
-///
-/// Returns `(private_jwk_json, public_jwk_json, public_key_bytes)`.
-fn ed25519_jwk_pair() -> (serde_json::Value, serde_json::Value, Vec<u8>) {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
-    use base64::Engine as _;
-    use marty_crypto::keygen::{generate_keypair, KeyType};
-
-    let key = generate_keypair(KeyType::Ed25519).expect("Ed25519 key gen");
-    let x = B64URL.encode(&key.public_key);
-    let d = B64URL.encode(&key.private_key);
-
-    let private_jwk = serde_json::json!({
-        "kty": "OKP",
-        "crv": "Ed25519",
-        "x": x,
-        "d": d,
-    });
-    let public_jwk = serde_json::json!({
-        "kty": "OKP",
-        "crv": "Ed25519",
-        "x": x,
-    });
-    (private_jwk, public_jwk, key.public_key.clone())
-}
-
-/// Issue a minimal signed OBv3 `OpenBadgeCredential` using `issue_ob3_json`
-/// and return the signed credential JSON `Value`.
-///
-/// The credential uses only OBv3-context-mapped properties to avoid JSON-LD
-/// expansion failures.  Specifically:
-///  - `Achievement.achievementType`: mapped as `xsd:string` in the OBv3 context
-///  - no unqualified `name` or `description` (not in bundled context)
-fn issue_minimal_ob3_credential(
-    vm_id: &str,
-    controller: &str,
-    private_jwk: &serde_json::Value,
-) -> serde_json::Value {
-    use marty_verification::open_badges::issue_ob3_json;
-
-    let issue_req = serde_json::json!({
-        "credential": {
-            "@context": [
-                "https://www.w3.org/2018/credentials/v1",
-                OBV3_CONTEXT
-            ],
-            "type": ["VerifiableCredential", "OpenBadgeCredential"],
-            "id": "https://example.org/vc/signed-conformance-test",
-            "issuer": controller,
-            "issuanceDate": "2024-01-01T00:00:00Z",
-            "credentialSubject": {
-                "type": "AchievementSubject",
-                "achievement": {
-                    "type": "Achievement",
-                    "achievementType": "Certificate"
-                }
-            }
-        },
-        "signing": {
-            "jwk": private_jwk,
-            "verification_method": vm_id,
-            "verification_method_type": "JsonWebKey2020",
-            "controller": controller,
-            "proof_purpose": "assertionMethod"
-        }
-    });
-
-    let issued_json = issue_ob3_json(&issue_req.to_string()).expect("issue_ob3_json failed");
-    let issued: serde_json::Value = serde_json::from_str(&issued_json).expect("parse issue result");
-    issued["credential"].clone()
+/// Reviewed public-only OBv3 signature vector shared with Marty Core's
+/// conformance suite. Verification must not create or handle an issuer key.
+fn signed_ob3_public_request() -> serde_json::Value {
+    let vector: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/open_badges_ob3_public.json"))
+            .expect("public OBv3 vector is valid JSON");
+    let vm_id = vector["credential"]["proof"]["verificationMethod"]
+        .as_str()
+        .expect("public OBv3 vector has verification method");
+    let controller = vector["did"]
+        .as_str()
+        .expect("public OBv3 vector has controller")
+        .split('#')
+        .next()
+        .expect("public OBv3 controller is nonempty");
+    let mut document_store = serde_json::Map::new();
+    document_store.insert(
+        vm_id.to_owned(),
+        json_web_key_vm_doc(vm_id, controller, &vector["public_jwk"]),
+    );
+    serde_json::json!({
+        "credential": vector["credential"],
+        "document_store": document_store,
+    })
 }
 
 /// Build a `JsonWebKey2020` verification-method document for the document store.
@@ -596,17 +548,7 @@ fn json_web_key_vm_doc(
 /// verifies as `Valid` when the verification method is in the document store.
 #[tokio::test]
 async fn ob3_signed_credential_with_jwk2020_is_valid() {
-    let vm_id = "https://example.org/issuer#key-1";
-    let controller = "https://example.org/issuer";
-
-    let (private_jwk, public_jwk, _) = ed25519_jwk_pair();
-    let signed_cred = issue_minimal_ob3_credential(vm_id, controller, &private_jwk);
-    let vm_doc = json_web_key_vm_doc(vm_id, controller, &public_jwk);
-
-    let request = serde_json::json!({
-        "credential": signed_cred,
-        "document_store": { vm_id: vm_doc }
-    });
+    let request = signed_ob3_public_request();
 
     let result = verify_open_badge_offline(&request.to_string())
         .await
@@ -623,17 +565,7 @@ async fn ob3_signed_credential_with_jwk2020_is_valid() {
 /// The signed credential's `open_badge_details.version` must be `"3.0"`.
 #[tokio::test]
 async fn ob3_signed_credential_version_label_is_three_point_zero() {
-    let vm_id = "https://example.org/issuer#key-2";
-    let controller = "https://example.org/issuer";
-
-    let (private_jwk, public_jwk, _) = ed25519_jwk_pair();
-    let signed_cred = issue_minimal_ob3_credential(vm_id, controller, &private_jwk);
-    let vm_doc = json_web_key_vm_doc(vm_id, controller, &public_jwk);
-
-    let request = serde_json::json!({
-        "credential": signed_cred,
-        "document_store": { vm_id: vm_doc }
-    });
+    let request = signed_ob3_public_request();
 
     let result = verify_open_badge_offline(&request.to_string())
         .await
@@ -648,17 +580,7 @@ async fn ob3_signed_credential_version_label_is_three_point_zero() {
 /// The `credential_type` field must be `"open-badge"` for a signed OBv3 credential.
 #[tokio::test]
 async fn ob3_signed_credential_type_field_is_open_badge() {
-    let vm_id = "https://example.org/issuer#key-3";
-    let controller = "https://example.org/issuer";
-
-    let (private_jwk, public_jwk, _) = ed25519_jwk_pair();
-    let signed_cred = issue_minimal_ob3_credential(vm_id, controller, &private_jwk);
-    let vm_doc = json_web_key_vm_doc(vm_id, controller, &public_jwk);
-
-    let request = serde_json::json!({
-        "credential": signed_cred,
-        "document_store": { vm_id: vm_doc }
-    });
+    let request = signed_ob3_public_request();
 
     let result = verify_open_badge_offline(&request.to_string())
         .await
@@ -671,20 +593,14 @@ async fn ob3_signed_credential_type_field_is_open_badge() {
 /// produce `Invalid` status with a proof-related error.
 #[tokio::test]
 async fn ob3_signed_credential_wrong_public_key_is_invalid() {
-    let vm_id = "https://example.org/issuer#key-4";
-    let controller = "https://example.org/issuer";
-
-    let (private_jwk, _correct_pub, _) = ed25519_jwk_pair();
-    let (_, wrong_pub, _) = ed25519_jwk_pair();
-
-    let signed_cred = issue_minimal_ob3_credential(vm_id, controller, &private_jwk);
-    // Deliberately supply the wrong (different) public key.
-    let vm_doc = json_web_key_vm_doc(vm_id, controller, &wrong_pub);
-
-    let request = serde_json::json!({
-        "credential": signed_cred,
-        "document_store": { vm_id: vm_doc }
-    });
+    let mut request = signed_ob3_public_request();
+    let vm_id = request["credential"]["proof"]["verificationMethod"]
+        .as_str()
+        .expect("public OBv3 vector has verification method")
+        .to_owned();
+    // Match Core's reviewed substituted-public-key negative vector.
+    request["document_store"][&vm_id]["publicKeyJwk"]["x"] =
+        serde_json::json!("11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo");
 
     let result = verify_open_badge_offline(&request.to_string())
         .await

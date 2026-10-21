@@ -360,13 +360,15 @@ fn governed_dtc_store_rejects_provenance_less_records() {
 
 #[test]
 fn governed_dtc_store_encodes_authenticated_csca_der() {
-    let (certificate_der, _) = marty_crypto::cert_builder::create_csca_certificate(
-        "USA",
-        "Marty DTC Test CSCA",
-        365,
-        marty_crypto::keygen::KeyType::EcdsaP256,
-    )
-    .expect("CSCA");
+    use base64::Engine as _;
+
+    let vector: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/emrtd_verification_vectors.json"
+    ))
+    .expect("public eMRTD vector");
+    let certificate_der = base64::engine::general_purpose::STANDARD
+        .decode(vector["csca_der_base64"].as_str().expect("CSCA DER"))
+        .expect("CSCA DER base64");
     let now = Utc::now();
     let record = TrustAnchorRecord {
         anchor: marty_secure_storage::TrustAnchor {

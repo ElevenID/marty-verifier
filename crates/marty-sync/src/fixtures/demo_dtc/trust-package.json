@@ -1,0 +1,24 @@
+{
+  "trust_domain": "usb:default",
+  "sequence": 1791518232115,
+  "version": "demo-1",
+  "created_at": "2026-10-09T03:57:12.115493500+00:00",
+  "expires_at": "2036-10-06T03:57:12.115493500+00:00",
+  "signer_key_id": "ed25519:ae896cca0a7512864a3650c4e0b93e563a5a2b6f67d6bae55d25a597fd2db19c",
+  "next_signer_key_id": null,
+  "recovery_signer_key_id": "ed25519:a46bb22fbb7bb8d4d13c4d23f7fe2950c65a91a4f5c58b47782f0734cbb46e88",
+  "signing_cert": "ephemeral-demo-key",
+  "signature": "vvWg4Tz9KvwXA2KAh3QH3HX5ZFm0NsHMqz9iqWXl1e9YgWaOeE79iBmI9a7150CQmKIogoW3yqLrGdoFfF7QDQ==",
+  "iaca_certificates": [],
+  "csca_certificates": [
+    {
+      "jurisdiction": "UTO",
+      "subject": "Marty Demo CSCA",
+      "issuer": "Marty Demo CSCA",
+      "serial": null,
+      "certificate_der_b64": "MIIBajCCARCgAwIBAgIUDaAj1ZGIMjjRDV99+zGzlFopcbgwCgYIKoZIzj0EAwIwGjEYMBYGA1UEAwwPTWFydHkgRGVtbyBDU0NBMCAXDTc1MDEwMTAwMDAwMFoYDzQwOTYwMTAxMDAwMDAwWjAaMRgwFgYDVQQDDA9NYXJ0eSBEZW1vIENTQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQKog2izyH5wGarcuH7KMg+21SrZAKQv3FXUjv0RFnDqBPvdGy7x3pllMgp/DkS1fVP1ddikdVFKICB0jTspDKHozIwMDAdBgNVHQ4EFgQUU6udGqgaR9tvlTfl7kPox7rmD0gwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiEAssEgway6aVllrRJJ4fwW/a0sU5MydzCb/gJLJ5uyragCIGF3rAFV0BQPnrkkS89E7GBwq4OpD4q5N+AMocLJ0YQf"
+    }
+  ],
+  "dsc_certificates": [],
+  "open_badge_verification_methods": []
+}
