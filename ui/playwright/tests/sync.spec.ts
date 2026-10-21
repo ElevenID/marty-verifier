@@ -15,7 +15,7 @@ test.describe('Sync Page', () => {
   });
 
   test('should show online status', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Online' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Online', exact: true })).toBeVisible();
   });
 
   test('should display certificate counts', async ({ page }) => {
