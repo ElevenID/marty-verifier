@@ -38,7 +38,7 @@ export default function SyncPage() {
   const [error, setError] = useState<string | null>(null);
   const [usbPackagePath, setUsbPackagePath] = useState('');
   const [openBadgePolicy, setOpenBadgePolicy] = useState<string | null>(null);
-  const { sync, syncError, loadSyncStatus, isOnline, networkTransition, networkError } = useAppStore();
+  const { sync, syncError, loadSyncStatus, isOnline, hostOnline, offlineMode, networkBusy, networkTransition, networkError } = useAppStore();
 
   useEffect(() => {
     getConfig()
@@ -46,7 +46,10 @@ export default function SyncPage() {
       .catch(() => setOpenBadgePolicy(null));
   }, []);
 
+  const canSyncCloud = isOnline && hostOnline && !offlineMode && !networkBusy && !syncing && !importing;
+
   const handleSync = async () => {
+    if (!canSyncCloud) return;
     setSyncing(true);
     setError(null);
     setResult(null);
@@ -280,7 +283,7 @@ export default function SyncPage() {
                 variant="contained"
                 startIcon={<SyncIcon />}
                 onClick={handleSync}
-                disabled={syncing || importing || !isOnline}
+                disabled={!canSyncCloud}
                 fullWidth
               >
                 {syncing ? 'Syncing...' : 'Sync from Cloud'}
