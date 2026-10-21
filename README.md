@@ -336,6 +336,22 @@ cd ui
 pnpm test
 ```
 
+For a persistent browser development loop, run `pnpm --dir ui dev` in one
+terminal and use the existing test commands in another:
+
+```bash
+pnpm --dir ui test:unit
+pnpm --dir ui test:e2e
+pnpm --dir ui test:e2e:headed
+pnpm --dir ui test:e2e:ui
+```
+
+Playwright starts Vite automatically when needed and reuses an existing server
+outside CI. Its JSON/HTML reports and Vitest's JSON report remain under
+`ui/test-results/`. Install Chromium first with `pnpm --dir ui playwright:install`.
+These commands replace the standalone test-watch launcher; native desktop and
+hardware qualification still require their own test environments.
+
 ### Code Quality
 
 ```bash
