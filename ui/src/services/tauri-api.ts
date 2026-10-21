@@ -172,7 +172,7 @@ export interface OfflineQueueStatus {
 export interface NetworkTransitionResult {
   online: boolean;
   flushed_events: number;
-  pending_events: number;
+  pending_events: number | null;
   reporting_error: string | null;
 }
 

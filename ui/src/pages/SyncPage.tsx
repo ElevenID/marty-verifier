@@ -233,13 +233,13 @@ export default function SyncPage() {
 
           {networkTransition &&
             !networkTransition.reporting_error &&
-            (networkTransition.flushed_events > 0 || networkTransition.pending_events > 0) && (
+            (networkTransition.flushed_events > 0 || (networkTransition.pending_events ?? 0) > 0) && (
               <Alert
                 severity={networkTransition.pending_events === 0 ? 'success' : 'warning'}
                 sx={{ mb: 2 }}
               >
                 Reconnect audit sync: {networkTransition.flushed_events} uploaded,{' '}
-                {networkTransition.pending_events} pending.
+                {networkTransition.pending_events ?? 'unknown'} pending.
               </Alert>
             )}
 

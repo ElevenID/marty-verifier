@@ -25,8 +25,8 @@ export default function VerificationModePanel() {
           onClick={() => void refreshQueue()}>Refresh audit queue</Button>
       </Stack>
       <Typography sx={{ mt: 1 }} data-testid="audit-queue-status">
-        Pending audit events: {queue?.pending_events ?? 'not yet read'}
-        {networkTransition && ` · Last mode change: ${networkTransition.flushed_events} acknowledged, ${networkTransition.pending_events} remaining`}
+        Pending audit events: {queue?.pending_events ?? (networkError ? 'unavailable' : 'not yet read')}
+        {networkTransition && ` · Last mode change: ${networkTransition.flushed_events} acknowledged, ${networkTransition.pending_events ?? 'unknown'} remaining`}
       </Typography>
       {networkError && <Alert severity="error" sx={{ mt: 1 }}>{networkError}</Alert>}
     </Paper>

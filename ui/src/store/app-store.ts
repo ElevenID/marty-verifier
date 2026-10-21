@@ -111,7 +111,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       set({ queue: await getOfflineQueueStatus() });
     } catch (error) {
-      set({ networkError: error instanceof Error ? error.message : 'Failed to read audit queue' });
+      set({ queue: null, networkError: get().networkError ??
+        (error instanceof Error ? error.message : 'Failed to read audit queue') });
     }
   },
 

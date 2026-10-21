@@ -81,6 +81,35 @@ describe('AppStore', () => {
       expect(useAppStore.getState().networkBusy).toBe(false);
     });
 
+    it('acknowledges an applied offline mode when queue observation fails and clears stale counts', async () => {
+      mockTauriCommands({
+        set_network_status: {
+          online: false, flushed_events: 0, pending_events: null,
+          reporting_error: 'Audit queue status unavailable: storage unavailable',
+        },
+        get_offline_queue_status: { __error: 'storage unavailable' },
+      });
+      const { useAppStore } = await import('@/store/app-store');
+      useAppStore.setState({ isOnline: true, hostOnline: true, queue: {
+        pending_events: 7, oldest_event: null, data_size_bytes: 70,
+        last_sync_attempt: null, last_successful_sync: null, last_error: null,
+      } });
+      await useAppStore.getState().setOfflineMode(true);
+      expect(useAppStore.getState().isOnline).toBe(false);
+      expect(useAppStore.getState().networkTransition?.pending_events).toBeNull();
+      expect(useAppStore.getState().queue).toBeNull();
+      expect(useAppStore.getState().networkError).toContain('Audit queue status unavailable');
+      expect(useAppStore.getState().networkBusy).toBe(false);
+      mockTauriCommands({
+        set_network_status: { online: true, flushed_events: 2, pending_events: 0, reporting_error: null },
+        get_offline_queue_status: { pending_events: 0 },
+      });
+      await useAppStore.getState().setOfflineMode(false);
+      expect(useAppStore.getState().isOnline).toBe(true);
+      expect(useAppStore.getState().queue?.pending_events).toBe(0);
+      expect(useAppStore.getState().networkError).toBeNull();
+    });
+
     it('should set verification in progress', async () => {
       const { useAppStore } = await import('@/store/app-store');
 
