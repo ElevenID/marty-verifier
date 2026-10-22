@@ -11,6 +11,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod hardware;
+pub mod instance;
 pub mod runtime_config;
 pub mod startup_self_check;
 pub mod state;

@@ -38,7 +38,7 @@ export default function SyncPage() {
   const [error, setError] = useState<string | null>(null);
   const [usbPackagePath, setUsbPackagePath] = useState('');
   const [openBadgePolicy, setOpenBadgePolicy] = useState<string | null>(null);
-  const { sync, syncError, loadSyncStatus, isOnline, networkTransition, networkError } = useAppStore();
+  const { sync, syncError, loadSyncStatus, isOnline, hostOnline, offlineMode, networkBusy, networkTransition, networkError } = useAppStore();
 
   useEffect(() => {
     getConfig()
@@ -46,7 +46,10 @@ export default function SyncPage() {
       .catch(() => setOpenBadgePolicy(null));
   }, []);
 
+  const canSyncCloud = isOnline && hostOnline && !offlineMode && !networkBusy && !syncing && !importing;
+
   const handleSync = async () => {
+    if (!canSyncCloud) return;
     setSyncing(true);
     setError(null);
     setResult(null);
@@ -230,13 +233,13 @@ export default function SyncPage() {
 
           {networkTransition &&
             !networkTransition.reporting_error &&
-            (networkTransition.flushed_events > 0 || networkTransition.pending_events > 0) && (
+            (networkTransition.flushed_events > 0 || (networkTransition.pending_events ?? 0) > 0) && (
               <Alert
                 severity={networkTransition.pending_events === 0 ? 'success' : 'warning'}
                 sx={{ mb: 2 }}
               >
                 Reconnect audit sync: {networkTransition.flushed_events} uploaded,{' '}
-                {networkTransition.pending_events} pending.
+                {networkTransition.pending_events ?? 'unknown'} pending.
               </Alert>
             )}
 
@@ -259,6 +262,10 @@ export default function SyncPage() {
           {(syncing || importing) && <LinearProgress sx={{ mb: 2 }} />}
 
           <Stack spacing={2}>
+            <details open>
+              <summary data-testid="trust-package-toggle" style={{ cursor: 'pointer', marginBottom: 12 }}>
+                Signed trust package{usbPackagePath ? ` - ${usbPackagePath.split(/[\\/]/).pop()}` : ''}
+              </summary>
             <TextField
               label="Signed trust package path"
               value={usbPackagePath}
@@ -269,13 +276,14 @@ export default function SyncPage() {
               disabled={syncing || importing}
               fullWidth
             />
+            </details>
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <Button
                 variant="contained"
                 startIcon={<SyncIcon />}
                 onClick={handleSync}
-                disabled={syncing || importing || !isOnline}
+                disabled={!canSyncCloud}
                 fullWidth
               >
                 {syncing ? 'Syncing...' : 'Sync from Cloud'}

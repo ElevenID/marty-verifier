@@ -1,0 +1,53 @@
+{
+  "dtc_id": "1791518232Z",
+  "passport_number": "D09DEMO1",
+  "issuing_authority": "UTO",
+  "issue_date": "2026-10-08",
+  "expiry_date": "2036-10-06",
+  "personal_details": {
+    "first_name": "MARTY",
+    "last_name": "DEMO",
+    "date_of_birth": "1990-01-01",
+    "gender": "X",
+    "nationality": "UTO",
+    "place_of_birth": "",
+    "portrait": "",
+    "signature": "",
+    "other_names": []
+  },
+  "data_groups": [
+    {
+      "dg_number": 1,
+      "data": "ZGVtby1kZzE=",
+      "data_type": "MRZ"
+    }
+  ],
+  "dtc_type": 4,
+  "access_control": 0,
+  "access_key": "",
+  "dtc_valid_from": "",
+  "dtc_valid_until": "",
+  "type1_profile": {
+    "mrz_line1": "P<UTODEMO<<MARTY<<<<<<<<<<<<<<<<<<<<<",
+    "mrz_line2": "D09DEMO10UTO9001018X2708257<<<<<<<2",
+    "sod_hash": "6b267039fffbd47ac17d11241233ac6dea04c72ed73096f2c0b0540bf835307a",
+    "issuing_state": "UTO",
+    "passive_auth_ok": true
+  },
+  "type2_profile": null,
+  "type3_profile": null,
+  "is_signed": true,
+  "is_revoked": false,
+  "linked_passport": null,
+  "creation_date": "1791518232Z",
+  "signature_info": {
+    "signature_date": "1791518232Z",
+    "signer_id": "marty-demo-dtc-signer",
+    "signature": "MEUCIQCNOQJ3FV0QLtHw2AphQfHDPVPuYnj5bO+XzoY1Pi+OEAIgAKWELNh/7qIzXeHnCe6ipOFk6y0q2vax8Yq1u2lR5gY=",
+    "is_valid": true
+  },
+  "signer_public_key_pem": "-----BEGIN PUBLIC KEY-----\r\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeWK5ZY3Vm3DwzDQxf7lgzVwVeF93\r\nguH/5HG63fJ3N8I+BHQObToE6JDAfy99+zzK2T6yUxbs8vhfFYkywot53A==\r\n-----END PUBLIC KEY-----\r\n",
+  "certificate_chain_pem": [
+    "-----BEGIN CERTIFICATE-----\r\nMIIBVzCB/aADAgECAhReKXZxQTxx7wwN7kunzbY/rIsmRzAKBggqhkjOPQQDAjAa\r\nMRgwFgYDVQQDDA9NYXJ0eSBEZW1vIENTQ0EwIBcNNzUwMTAxMDAwMDAwWhgPNDA5\r\nNjAxMDEwMDAwMDBaMCAxHjAcBgNVBAMMFU1hcnR5IERlbW8gRFRDIFNpZ25lcjBZ\r\nMBMGByqGSM49AgEGCCqGSM49AwEHA0IABHliuWWN1Ztw8Mw0MX+5YM1cFXhfd4Lh\r\n/+Rxut3ydzfCPgR0Dm06BOiQwH8vffs8ytk+slMW7PL4XxWJMsKLedyjGTAXMBUG\r\nA1UdJQEB/wQLMAkGB2eBCAEBDAEwCgYIKoZIzj0EAwIDSQAwRgIhAK0sPE3dVe15\r\nWY4HGHQ6I2dw2+Fhh1L/eLTP9MNFc5kPAiEA7KDaKqrQKVOBTs88osVOU/Xy55mV\r\n/R673HXTDWefG7Q=\r\n-----END CERTIFICATE-----\r\n"
+  ]
+}

@@ -11,6 +11,9 @@ use tauri::Manager;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() {
+    if let Some(exit_code) = marty_verifier::instance::cleanup_if_requested() {
+        std::process::exit(exit_code);
+    }
     if let Some(exit_code) = startup_self_check::run_if_requested() {
         std::process::exit(exit_code);
     }

@@ -15,7 +15,7 @@ test.describe('Sync Page', () => {
   });
 
   test('should show online status', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: 'Online' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Online', exact: true })).toBeVisible();
   });
 
   test('should display certificate counts', async ({ page }) => {
@@ -59,7 +59,7 @@ test.describe('Sync Status Variations', () => {
     await mockTauri();
     await page.goto('/#/sync');
 
-    await expect(page.getByText(/offline mode/i)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Offline Mode', exact: true })).toBeVisible();
     
     // Cloud sync should be disabled when offline
     await expect(page.getByRole('button', { name: /sync from cloud/i })).toBeDisabled();
@@ -148,11 +148,34 @@ test.describe('Sync Status Variations', () => {
     });
     await page.goto('/#/sync');
 
-    await expect(page.getByText(/reporting endpoint returned http 503/i)).toBeVisible();
+    await expect(page.getByTestId('verification-mode-panel').getByRole('alert')).toHaveText(/reporting endpoint returned http 503/i);
   });
 });
 
 test.describe('Sync Actions', () => {
+  test('denies cloud sync during a pending or rejected offline change and recovers online', async ({ page, mockTauri }) => {
+    await mockTauri();
+    await page.goto('/#/sync');
+    const syncButton = page.getByRole('button', { name: /sync from cloud/i });
+    await expect(syncButton).toBeEnabled();
+    await page.evaluate(() => {
+      const state = window as any;
+      state.__TAURI_MOCK_COMMANDS__.set_network_status = () => new Promise((_resolve, reject) => {
+        state.__rejectNativeNetworkChange = () => reject(new Error('Native mode change unavailable'));
+      });
+    });
+    await page.getByTestId('verification-offline').click();
+    await expect(syncButton).toBeDisabled();
+    await page.evaluate(() => (window as any).__rejectNativeNetworkChange());
+    await expect(page.getByTestId('verification-mode-panel').getByRole('alert'))
+      .toHaveText('Native mode change unavailable');
+    await expect(page.getByTestId('verification-mode-status')).toHaveText('Verification mode: Online');
+    await expect(syncButton).toBeDisabled();
+    await page.evaluate(() => { delete (window as any).__TAURI_MOCK_COMMANDS__.set_network_status; });
+    await page.getByTestId('verification-online').click();
+    await expect(syncButton).toBeEnabled();
+  });
+
   test('should trigger cloud sync', async ({ page, mockTauri }) => {
     await mockTauri({
       sync_trust_anchors: {

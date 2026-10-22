@@ -115,12 +115,13 @@ pnpm --dir ui tauri build --features "iaca,csca,oid4vp,sd-jwt,biometrics,reporti
 ### Native Demo Qualification Fixtures
 
 The `marty-sync` crate has an opt-in `demo-fixtures` feature for native release
-qualification. Its DTC lane generates a fresh signed USB package and a DTC whose
-signer chains to the package CSCA by calling the production canonicalization and
-DTC signing code. Its eMRTD lane creates a real EF.SOD, DSC chain, and data
-groups, then proves both the trusted passport and DG-tampered denial through the
-canonical Rust verifier before emitting them. Private keys remain process-local;
-the output contains only public keys and signed synthetic artifacts.
+qualification. It emits reviewed, time-bounded signed public vectors without
+creating or loading credential or trust-package private keys. The DTC lane
+verifies the signed USB package and DTC chain. The eMRTD lane verifies its real
+EF.SOD, DSC chain and data groups, plus DG-tampered denial, before emitting
+the artifacts. Refresh the vectors through remote custody before they expire.
+Repeated runs emit the same synthetic signed vectors; they do not create a new
+trust-package sequence.
 
 ```bash
 cargo build -p marty-sync --features demo-fixtures --bin marty-demo-fixtures
@@ -131,6 +132,22 @@ cargo build -p marty-sync --features demo-fixtures --bin marty-emrtd-demo-fixtur
 ```
 
 Normal verifier builds do not compile this feature.
+
+### Isolated native instances
+
+Set `MARTY_VERIFIER_INSTANCE` to a unique lowercase alphanumeric/hyphen identifier
+to isolate the real platform keychain under `com.marty.verifier.instance.<id>`.
+Empty names, `default`, `prod`, `production`, separators and names over 64 bytes
+are rejected before startup. Without this variable, existing storage is unchanged.
+Also set absolute `MARTY_VERIFIER_DATA_DIR` ending in that exact identifier and
+`MARTY_VERIFIER_CONFIG_PATH` to a file directly inside that directory. Use a fresh,
+task-owned directory; do not point an instance at an existing production database.
+The native UI, encryption, trust verification and durable audit storage remain real.
+
+After closing the instance and retiring only its task-owned data directory, run
+the same executable with `--remove-instance-keys` and the same environment. Cleanup
+refuses an existing data directory or missing namespace, and can remove only the
+two keys belonging to that validated instance. Never delete the default service.
 
 ## Configuration
 
