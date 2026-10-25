@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use x509_cert::{der::Decode, Certificate};
 
-use crate::demo_fixtures::{absolute_display, public_signed_trust_package, write_json};
+use crate::demo_fixtures::{absolute_display, demo_trust_package, write_json};
 
 const COUNTRY: &str = "UTO";
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,11 +31,7 @@ pub fn generate_emrtd_demo_fixtures(output_dir: &Path) -> Result<EmrtdDemoFixtur
     fs::create_dir_all(output_dir)
         .with_context(|| format!("create fixture directory {}", output_dir.display()))?;
 
-    let signed_trust = public_signed_trust_package(
-        include_str!("fixtures/demo_emrtd/trust-package.json"),
-        include_str!("fixtures/demo_emrtd/usb-signing-public-key.txt"),
-        include_str!("fixtures/demo_emrtd/usb-recovery-public-key.txt"),
-    )?;
+    let signed_trust = demo_trust_package("emrtd")?;
     let valid_passport: Value =
         serde_json::from_str(include_str!("fixtures/demo_emrtd/valid-passport.json"))
             .context("parse signed public eMRTD vector")?;

@@ -15,6 +15,112 @@ use serde_json::{json, Value};
 
 use crate::usb::{canonical_signed_payload, signer_key_id};
 
+fn embedded_trust_package(kind: &str) -> Result<SignedTrustPackage> {
+    let (package, signing, recovery) = match kind {
+        "dtc" => (
+            include_str!("fixtures/demo_dtc/trust-package.json"),
+            include_str!("fixtures/demo_dtc/usb-signing-public-key.txt"),
+            include_str!("fixtures/demo_dtc/usb-recovery-public-key.txt"),
+        ),
+        "emrtd" => (
+            include_str!("fixtures/demo_emrtd/trust-package.json"),
+            include_str!("fixtures/demo_emrtd/usb-signing-public-key.txt"),
+            include_str!("fixtures/demo_emrtd/usb-recovery-public-key.txt"),
+        ),
+        _ => bail!("unknown public demo trust kind"),
+    };
+    public_signed_trust_package(package, signing, recovery)
+}
+
+fn require_fresh_trust(package: &Value, now: DateTime<Utc>) -> Result<()> {
+    let created = DateTime::parse_from_rfc3339(
+        package["created_at"]
+            .as_str()
+            .context("public trust package has no creation time")?,
+    )?
+    .with_timezone(&Utc);
+    let maximum_age =
+        chrono::Duration::hours(crate::SyncConfig::default().max_offline_hours as i64);
+    if created > now || now - created >= maximum_age {
+        bail!("public demo trust package is stale or future-dated; refresh through remote KMS custody");
+    }
+    Ok(())
+}
+
+/// Both generators consume only public, verified KMS signing outputs. An
+/// explicitly configured input cannot silently fall back to an embedded vector.
+pub(crate) fn demo_trust_package(kind: &str) -> Result<SignedTrustPackage> {
+    let Some(root) = std::env::var_os("MARTY_DEMO_PUBLIC_TRUST_DIRECTORY") else {
+        return embedded_trust_package(kind);
+    };
+    if !matches!(kind, "dtc" | "emrtd") {
+        bail!("unknown public demo trust kind");
+    }
+    let directory = Path::new(&root).join(kind);
+    let package = public_signed_trust_package(
+        &fs::read_to_string(directory.join("trust-package.json"))?,
+        &fs::read_to_string(directory.join("usb-signing-public-key.txt"))?,
+        &fs::read_to_string(directory.join("usb-recovery-public-key.txt"))?,
+    )?;
+    require_fresh_trust(&package.trust_package, Utc::now())?;
+    Ok(package)
+}
+
+/// Prepare the existing production canonical payload for an external KMS.
+/// CSCA certificates and all signed document bytes remain unchanged.
+pub fn prepare_public_trust_refresh(kind: &str, public_keys: &Path, output: &Path) -> Result<()> {
+    let mut package = embedded_trust_package(kind)?.trust_package;
+    let signing_text = fs::read_to_string(public_keys.join("usb-signing-public-key.txt"))?;
+    let recovery_text = fs::read_to_string(public_keys.join("usb-recovery-public-key.txt"))?;
+    let signing = public_key(&signing_text)?;
+    let recovery = public_key(&recovery_text)?;
+    if signing == recovery {
+        bail!("demo trust signing and recovery custody must be distinct");
+    }
+    let now = Utc::now();
+    package["created_at"] = json!(now.to_rfc3339());
+    package["expires_at"] = json!((now
+        + chrono::Duration::hours(crate::SyncConfig::default().max_offline_hours as i64))
+    .to_rfc3339());
+    package["sequence"] = json!(now.timestamp_millis());
+    package["version"] = json!(format!("demo-{}", now.timestamp_millis()));
+    package["signer_key_id"] = json!(signer_key_id(&signing));
+    package["recovery_signer_key_id"] = json!(signer_key_id(&recovery));
+    package["next_signer_key_id"] = Value::Null;
+    package["signature"] = json!("");
+    let payload = canonical_signed_payload(&package)?;
+    fs::create_dir(output).context("create new public trust refresh directory")?;
+    write_json(&output.join("trust-package.json"), &package)?;
+    write_json(
+        &output.join("kms-input.json"),
+        &json!({"input":STANDARD.encode(payload)}),
+    )?;
+    fs::write(
+        output.join("usb-signing-public-key.txt"),
+        STANDARD.encode(signing),
+    )?;
+    fs::write(
+        output.join("usb-recovery-public-key.txt"),
+        STANDARD.encode(recovery),
+    )?;
+    Ok(())
+}
+
+/// Accept a public detached signature only after real verification. No private
+/// key or KMS credential enters the generator or the resulting artifact.
+pub fn complete_public_trust_refresh(directory: &Path, signature: &Path) -> Result<()> {
+    let file = directory.join("trust-package.json");
+    let mut package: Value = serde_json::from_str(&fs::read_to_string(&file)?)?;
+    package["signature"] = json!(fs::read_to_string(signature)?.trim());
+    let verified = public_signed_trust_package(
+        &serde_json::to_string(&package)?,
+        &fs::read_to_string(directory.join("usb-signing-public-key.txt"))?,
+        &fs::read_to_string(directory.join("usb-recovery-public-key.txt"))?,
+    )?;
+    require_fresh_trust(&verified.trust_package, Utc::now())?;
+    write_json(&file, &verified.trust_package)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DemoFixtureManifest {
     pub trust_package_path: String,
@@ -128,11 +234,7 @@ pub fn generate_demo_fixtures(output_dir: &Path) -> Result<DemoFixtureManifest> 
 }
 
 fn generate_values() -> Result<GeneratedFixtures> {
-    let signed_trust = public_signed_trust_package(
-        include_str!("fixtures/demo_dtc/trust-package.json"),
-        include_str!("fixtures/demo_dtc/usb-signing-public-key.txt"),
-        include_str!("fixtures/demo_dtc/usb-recovery-public-key.txt"),
-    )?;
+    let signed_trust = demo_trust_package("dtc")?;
     let dtc: Value = serde_json::from_str(include_str!("fixtures/demo_dtc/dtc.json"))
         .context("parse signed public DTC vector")?;
     let certificate_b64 = signed_trust.trust_package["csca_certificates"][0]["certificate_der_b64"]
@@ -194,6 +296,63 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     use marty_verification::dtc::verify_dtc_json;
+
+    #[test]
+    fn refreshed_trust_rejects_old_future_and_missing_creation_times() {
+        let now = Utc::now();
+        for created in [
+            now - chrono::Duration::hours(73),
+            now + chrono::Duration::seconds(1),
+        ] {
+            assert!(require_fresh_trust(&json!({"created_at":created.to_rfc3339()}), now).is_err());
+        }
+        assert!(require_fresh_trust(&json!({}), now).is_err());
+        assert!(require_fresh_trust(&json!({"created_at":now.to_rfc3339()}), now).is_ok());
+    }
+
+    #[test]
+    fn refresh_preserves_public_anchors_and_uses_production_canonical_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let original = embedded_trust_package("dtc").unwrap();
+        fs::write(
+            root.path().join("usb-signing-public-key.txt"),
+            STANDARD.encode(original.signing_public_key),
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("usb-recovery-public-key.txt"),
+            STANDARD.encode(original.recovery_public_key),
+        )
+        .unwrap();
+        let output = root.path().join("prepared");
+        prepare_public_trust_refresh("dtc", root.path(), &output).unwrap();
+        let package: Value =
+            serde_json::from_str(&fs::read_to_string(output.join("trust-package.json")).unwrap())
+                .unwrap();
+        let request: Value =
+            serde_json::from_str(&fs::read_to_string(output.join("kms-input.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            package["csca_certificates"],
+            original.trust_package["csca_certificates"]
+        );
+        assert_eq!(
+            STANDARD.decode(request["input"].as_str().unwrap()).unwrap(),
+            canonical_signed_payload(&package).unwrap()
+        );
+        require_fresh_trust(&package, Utc::now()).unwrap();
+        // The old valid signature must never authorize the refreshed envelope.
+        let signature = root.path().join("signature.txt");
+        fs::write(
+            &signature,
+            original.trust_package["signature"].as_str().unwrap(),
+        )
+        .unwrap();
+        let before = fs::read(output.join("trust-package.json")).unwrap();
+        assert!(complete_public_trust_refresh(&output, &signature).is_err());
+        assert_eq!(fs::read(output.join("trust-package.json")).unwrap(), before);
+        assert!(prepare_public_trust_refresh("dtc", root.path(), &output).is_err());
+    }
 
     #[test]
     fn fixtures_use_real_production_signing_and_never_serialize_private_keys() {
