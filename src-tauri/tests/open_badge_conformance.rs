@@ -192,6 +192,10 @@ async fn mixed_ob2_and_ob3_inputs_cannot_use_the_ob3_path() {
         .push(serde_json::json!("Assertion"));
     assert_ob2_retired(serde_json::json!({ "credential": credential })).await;
 
+    let mut credential = signed_ob3_public_request()["credential"].clone();
+    credential["context"] = serde_json::json!(OBV2_CONTEXT);
+    assert_ob2_retired(credential).await;
+
     let mut request = signed_ob3_public_request();
     request["assertion"] = ob2_hosted_assertion();
     assert_ob2_retired(request).await;
