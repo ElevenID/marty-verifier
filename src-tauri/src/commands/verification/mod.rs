@@ -18,8 +18,8 @@ use marty_secure_storage::{
 };
 use marty_verification::chip_io::{verify_from_reader, MockPassportReader};
 use marty_verification::open_badges::{
-    detect_version as detect_open_badges_version, ArtifactProvenance, AuthenticatedStatusList,
-    DocumentStore, OpenBadgesVersion, StatusAuthorityProvenance,
+    detect_version as detect_open_badges_version, is_retired_ob2, ArtifactProvenance,
+    AuthenticatedStatusList, DocumentStore, OpenBadgesVersion, StatusAuthorityProvenance,
 };
 use marty_verification::policy::{IssuerConstraintChecker, PresentationPolicy};
 use marty_verification::trust_anchor::CscaRegistry;

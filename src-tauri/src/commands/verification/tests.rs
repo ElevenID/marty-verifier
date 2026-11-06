@@ -453,14 +453,13 @@ async fn mock_pad_cannot_authorize() {
 }
 
 #[test]
-fn open_badge_request_auto_detects_versions() {
+fn open_badge_request_accepts_only_ob3() {
     let ob2 = json!({
         "@context": "https://w3id.org/openbadges/v2",
         "type": "Assertion"
     });
-    let (version, request) = build_open_badge_request(&ob2).expect("ob2 request");
-    assert_eq!(version, OpenBadgesVersion::V2);
-    assert!(request.get("assertion").is_some());
+    let error = build_open_badge_request(&ob2).expect_err("OB2 must be retired");
+    assert!(error.to_string().contains("Open Badges 2.0 is retired"));
 
     let ob3 = json!({
         "@context": "https://purl.imsglobal.org/spec/ob/v3p0/context.json",
@@ -468,7 +467,11 @@ fn open_badge_request_auto_detects_versions() {
     });
     let (version, request) = build_open_badge_request(&ob3).expect("ob3 request");
     assert_eq!(version, OpenBadgesVersion::V3);
-    assert!(request.get("credential").is_some());
+    assert_eq!(request.get("credential"), Some(&ob3));
+
+    let wrapped = json!({ "credential": ob3, "document_store": {} });
+    let (_, request) = build_open_badge_request(&wrapped).expect("wrapped ob3 request");
+    assert_eq!(request, wrapped);
 }
 
 fn active_open_badge_method(now: DateTime<Utc>) -> OpenBadgeVerificationMethod {
@@ -917,17 +920,6 @@ fn production_open_badge_store_replaces_credential_documents() {
     assert_eq!(installed_store, trusted_store);
     assert!(!installed_store.contains_key("did:example:untrusted"));
     assert!(!installed_store.contains_key("https://issuer.example/status"));
-}
-
-#[test]
-fn extract_open_badge_method_id_from_ob2_creator() {
-    let request = json!({
-        "assertion": {
-            "verification": { "creator": "https://issuer.example.org/keys/1" }
-        }
-    });
-    let method = extract_open_badge_method_id(&request, OpenBadgesVersion::V2).expect("method id");
-    assert_eq!(method, "https://issuer.example.org/keys/1");
 }
 
 #[test]
