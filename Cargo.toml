@@ -69,12 +69,12 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # External crates from marty-core
-marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
-marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "3f650f7eff13e31958228c222ebcc386afc0cab9", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb", default-features = false }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb", features = ["native", "onnx"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "b04128ab576f3171de529153538eb963f6f08dcb", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }
@@ -90,6 +90,8 @@ strip = true
 opt-level = "z"
 
 [patch.crates-io]
+# Core requires the verification-only ECDSA compatibility surface.
+ecdsa = { git = "https://github.com/ElevenID/ssi-elevenid", rev = "234723638447c30f90cf499bce1d6b092f865e9d" }
 # Reviewed KMS-only SSI fork; keep all selected SSI and DID crates on one revision.
 # https://github.com/ElevenID/ssi-elevenid/pull/9
 ssi-bbs = { git = "https://github.com/ElevenID/ssi-elevenid", rev = "584a0d1e2f6a80f92a8483151f6cc6b78b021ad1" }
