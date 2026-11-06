@@ -31,6 +31,7 @@ jobs:
           python scripts/test_update_core_dependencies.py
           python scripts/test_stable_tag_gate.py
           python scripts/test_native_build_contract.py
+          python scripts/test_private_forks.py
 
   test-rust:
     name: Rust ${{ matrix.task }} (${{ matrix.os }})
@@ -46,15 +47,20 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
         task: [tests, clippy]
     steps:
-      - name: Enforce private native build boundary
-        if: vars.PRIVATE_FORKS_ENABLED == 'true'
-        shell: bash
-        working-directory: ${{ runner.temp }}
-        run: |
-          echo "::error::Public native work is paused for the private fork cutover. See docs/private-native-builds.md."
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
+
+      - name: Set up private fork helper runtime
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Require trusted private fork access
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" check
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
 
@@ -85,6 +91,14 @@ jobs:
             ~/.cargo/git/db
           key: ${{ runner.os }}-cargo-inputs-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Fetch locked private fork dependencies
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          PRIVATE_FORKS_READ_TOKEN: ${{ secrets.PRIVATE_FORKS_READ_TOKEN }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" fetch --manifest-path "$GITHUB_WORKSPACE/Cargo.toml"
+
       - name: Run tests
         if: matrix.task == 'tests'
         run: cargo nextest run --locked --workspace --all-features
@@ -112,15 +126,20 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce private native build boundary
-        if: vars.PRIVATE_FORKS_ENABLED == 'true'
-        shell: bash
-        working-directory: ${{ runner.temp }}
-        run: |
-          echo "::error::Public native work is paused for the private fork cutover. See docs/private-native-builds.md."
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
+
+      - name: Set up private fork helper runtime
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Require trusted private fork access
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" check
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
 
@@ -135,6 +154,14 @@ jobs:
           if ! command -v cargo-audit &> /dev/null; then
             cargo install cargo-audit --locked
           fi
+
+      - name: Fetch locked private fork dependencies
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          PRIVATE_FORKS_READ_TOKEN: ${{ secrets.PRIVATE_FORKS_READ_TOKEN }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" fetch --manifest-path "$GITHUB_WORKSPACE/Cargo.toml"
 
       - name: Run cargo-audit
         continue-on-error: true

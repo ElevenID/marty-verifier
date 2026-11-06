@@ -29,13 +29,6 @@ jobs:
       actions: write # Read gate runs, upload evidence, and dispatch the tag-bound release.
       contents: write # Create one previously unused annotated stable tag.
     steps:
-      - name: Enforce private native build boundary
-        if: vars.PRIVATE_FORKS_ENABLED == 'true'
-        shell: bash
-        working-directory: ${{ runner.temp }}
-        run: |
-          echo "::error::Public native work is paused for the private fork cutover. See docs/private-native-builds.md."
-          exit 1
       - name: Require exact protected-main dispatch
         shell: bash
         env:
