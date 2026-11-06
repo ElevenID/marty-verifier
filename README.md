@@ -54,6 +54,10 @@ marty-verifier/
 
 ## Building
 
+Native builds depend on the private-fork access boundary. See
+[Native build access](docs/private-native-builds.md) for the inactive cutover
+switch and its effect on CI and releases.
+
 ### Prerequisites
 - Rust 1.87+
 - Node.js 24+
