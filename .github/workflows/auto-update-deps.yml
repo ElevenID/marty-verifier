@@ -26,6 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Enforce private native build boundary
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          echo "::error::Public native work is paused for the private fork cutover. See docs/private-native-builds.md."
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
@@ -296,7 +303,7 @@ jobs:
             --body "$body"
 
       - name: Roll back an unpublished exact automation branch
-        if: failure() && steps.commit.outputs.sha != ''
+        if: vars.PRIVATE_FORKS_ENABLED != 'true' && (failure() && steps.commit.outputs.sha != '')
         shell: bash
         env:
           BRANCH: ${{ steps.identity.outputs.branch }}
@@ -318,7 +325,7 @@ jobs:
           echo "Removed unpublished exact automation branch ${BRANCH} at ${EXPECTED_SHA}."
 
       - name: Record a bounded failure issue
-        if: failure()
+        if: vars.PRIVATE_FORKS_ENABLED != 'true' && (failure())
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           CORE_TAG: ${{ steps.requested.outputs.tag }}
