@@ -69,12 +69,12 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # External crates from marty-core
-marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
-marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "f116ceb9b62d68a5f87f645faa0560ec4cbedd0c", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22", default-features = false }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22", features = ["native", "onnx"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "0c8f77eb61a8b36d448c9d7333f71b873c6ecf22", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }
