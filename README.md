@@ -59,6 +59,10 @@ marty-verifier/
 
 ## Building
 
+Native builds use the existing CI with a scoped reader when the Rust forks
+are private. See [Native build access](docs/private-native-builds.md) for
+authentication, source-cache controls, and local development.
+
 ### Prerequisites
 - Rust 1.87+
 - Node.js 24+
