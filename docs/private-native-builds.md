@@ -29,6 +29,13 @@ Core pins with the reader, then validates and tests without it. Frontend and
 source-only checks continue normally. The public `marty-sync` source release
 and optional registry publication retain their existing scope and gates.
 
+Authentication applies to future release tags that include these workflows.
+Rerunning an older tag uses that tag's older workflow, without the new helper.
+The existing release provenance gate also rejects dispatching today's main
+workflow against an older tag. Previously published artifacts remain unchanged.
+To rebuild an older version, use an owner-authenticated local build or create
+a new release version and tag with the current pipeline; never move old tags.
+
 ## Caches, outputs, and local development
 
 Private-mode jobs do not restore or save Cargo Git sources or compiler caches.
