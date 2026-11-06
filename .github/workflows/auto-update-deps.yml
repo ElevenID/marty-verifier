@@ -32,6 +32,18 @@ jobs:
           persist-credentials: false
           ref: main
 
+      - name: Set up private fork helper runtime
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+
+      - name: Require trusted private fork access
+        if: vars.PRIVATE_FORKS_ENABLED == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" check
+
       - name: Normalize requested stable tag
         id: requested
         shell: bash
@@ -157,21 +169,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         if: steps.update.outputs.changed == 'true'
 
+      - name: Resolve updated Core dependencies with scoped reader
+        if: vars.PRIVATE_FORKS_ENABLED == 'true' && steps.update.outputs.changed == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          PRIVATE_FORKS_READ_TOKEN: ${{ secrets.PRIVATE_FORKS_READ_TOKEN }}
+        run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" update-core --manifest-path "$GITHUB_WORKSPACE/Cargo.toml" --package marty-crypto --package marty-verification --package marty-biometrics --package marty-secure-storage --package marty-types --package marty-oid4vci
+
       - name: Update and validate the lockfile
         if: steps.update.outputs.changed == 'true'
         shell: bash
         env:
           CORE_SHA: ${{ steps.identity.outputs.sha }}
           CORE_TAG: ${{ steps.requested.outputs.tag }}
+          PRIVATE_FORKS_ENABLED: ${{ vars.PRIVATE_FORKS_ENABLED }}
         run: |
           set -euo pipefail
-          cargo update \
-            -p marty-crypto \
-            -p marty-verification \
-            -p marty-biometrics \
-            -p marty-secure-storage \
-            -p marty-types \
-            -p marty-oid4vci
+          if [[ "$PRIVATE_FORKS_ENABLED" != true ]]; then
+            cargo update \
+              -p marty-crypto \
+              -p marty-verification \
+              -p marty-biometrics \
+              -p marty-secure-storage \
+              -p marty-types \
+              -p marty-oid4vci
+          fi
           python scripts/update_core_dependencies.py \
             --root . --core-tag "$CORE_TAG" --core-sha "$CORE_SHA" --check
           cargo metadata --locked --format-version 1 >/dev/null
