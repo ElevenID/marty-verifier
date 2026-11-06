@@ -22,7 +22,7 @@ const credentialTypes = [
   { value: 'oid4vp', label: 'OID4VP', icon: <OidIcon /> },
   { value: 'sd-jwt', label: 'SD-JWT', icon: <OidIcon /> },
   { value: 'dtc', label: 'DTC', icon: <DtcIcon /> },
-  { value: 'open-badge', label: 'Open Badge', icon: <OpenBadgeIcon /> },
+  { value: 'open-badge', label: 'Open Badge 3.0', icon: <OpenBadgeIcon /> },
 ];
 
 export default function VerificationPage() {

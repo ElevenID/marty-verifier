@@ -2,7 +2,7 @@
 
 use super::VERIFIER_SOFTWARE_PROVENANCE;
 use super::{
-    detect_open_badges_version, parse_json_input, AppError, AppResult, AppState,
+    detect_open_badges_version, is_retired_ob2, parse_json_input, AppError, AppResult, AppState,
     ArtifactProvenance, AuthenticatedStatusList, DateTime, DocumentStore, Duration,
     GovernedOpenBadgeStore, HashSet, IssuerInfo, OpenBadgeDetails, OpenBadgeStatusEvidence,
     OpenBadgeStatusEvidenceOutcome, OpenBadgeTrustConfig, OpenBadgeTrustFreshness,
@@ -12,8 +12,8 @@ use super::{
     MAX_OPEN_BADGE_STATUS_LIST_SIGNED_AGE_HOURS, MAX_OPEN_BADGE_TRUST_AGE_HOURS,
 };
 use marty_verification::open_badges::{
-    verify_ob2, verify_ob3_with_status_lists_async, OpenBadgeStatusCheck, OpenBadgeStatusOutcome,
-    OpenBadgesVerificationResult, VerifyOb2Request, VerifyOb3Request,
+    verify_ob3_with_status_lists_async, OpenBadgeStatusCheck, OpenBadgeStatusOutcome,
+    OpenBadgesVerificationResult, VerifyOb3Request,
 };
 use std::io::Read;
 
@@ -106,25 +106,29 @@ pub(super) async fn verify_open_badge_payload(
 }
 
 pub(super) fn build_open_badge_request(raw: &Value) -> AppResult<(OpenBadgesVersion, Value)> {
-    if let Value::Object(obj) = raw {
-        if let Some(assertion) = obj.get("assertion") {
-            let version = detect_open_badges_version(assertion);
-            return Ok((version, raw.clone()));
-        }
-        if let Some(credential) = obj.get("credential") {
-            let version = detect_open_badges_version(credential);
-            return Ok((version, raw.clone()));
-        }
+    // An assertion wrapper is a retired protocol shape, even if its contents
+    // claim an OB3 context. Never reinterpret legacy input as a new credential.
+    if raw.get("assertion").is_some() || is_retired_ob2(raw) {
+        return Err(AppError::Verification(
+            "Open Badges 2.0 is retired; reissue this badge as an Open Badges 3.0 credential"
+                .to_string(),
+        ));
     }
 
-    let version = detect_open_badges_version(raw);
-    match version {
-        OpenBadgesVersion::V2 => Ok((version, serde_json::json!({ "assertion": raw }))),
-        OpenBadgesVersion::V3 => Ok((version, serde_json::json!({ "credential": raw }))),
-        OpenBadgesVersion::Unknown => Err(AppError::Verification(
-            "Unable to detect Open Badge version".to_string(),
-        )),
+    let credential = raw.get("credential").unwrap_or(raw);
+    let version = detect_open_badges_version(credential);
+    if version != OpenBadgesVersion::V3 {
+        return Err(AppError::Verification(
+            "Unable to detect an Open Badges 3.0 credential".to_string(),
+        ));
     }
+
+    let request = if raw.get("credential").is_some() {
+        raw.clone()
+    } else {
+        serde_json::json!({ "credential": raw })
+    };
+    Ok((version, request))
 }
 
 pub(super) fn build_governed_open_badge_store(
@@ -286,31 +290,8 @@ pub(super) fn extract_open_badge_method_id(
     version: OpenBadgesVersion,
 ) -> Option<String> {
     match version {
-        OpenBadgesVersion::V2 => request.get("assertion").and_then(extract_ob2_method_id),
         OpenBadgesVersion::V3 => request.get("credential").and_then(extract_ob3_method_id),
         OpenBadgesVersion::Unknown => None,
-    }
-}
-
-pub(super) fn extract_ob2_method_id(assertion: &Value) -> Option<String> {
-    let verification = assertion.get("verification")?;
-    extract_ob2_verification_value(verification)
-}
-
-pub(super) fn extract_ob2_verification_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(_) => extract_method_id_from_value(value),
-        Value::Object(obj) => {
-            if let Some(creator) = obj.get("creator") {
-                return extract_method_id_from_value(creator);
-            }
-            if let Some(method) = obj.get("verificationMethod") {
-                return extract_method_id_from_value(method);
-            }
-            None
-        }
-        Value::Array(items) => items.iter().find_map(extract_ob2_verification_value),
-        _ => None,
     }
 }
 
@@ -698,17 +679,6 @@ async fn verify_open_badge_request(
     status_lists: &[AuthenticatedStatusList],
 ) -> AppResult<OpenBadgesVerificationResult> {
     let result = match version {
-        OpenBadgesVersion::V2 => {
-            let request: VerifyOb2Request = serde_json::from_value(request).map_err(|error| {
-                AppError::Verification(format!(
-                    "Open Badge verify failed: {}",
-                    marty_verification::VerificationError::open_badges(format!(
-                        "Invalid OB2 verify request: {error}"
-                    ))
-                ))
-            })?;
-            verify_ob2(request)
-        }
         OpenBadgesVersion::V3 => {
             let request: VerifyOb3Request = serde_json::from_value(request).map_err(|error| {
                 AppError::Verification(format!(
@@ -855,7 +825,6 @@ pub(super) async fn open_badge_trust_freshness(
 
 pub(super) fn open_badge_version_label(version: OpenBadgesVersion) -> &'static str {
     match version {
-        OpenBadgesVersion::V2 => "2.0",
         OpenBadgesVersion::V3 => "3.0",
         OpenBadgesVersion::Unknown => "unknown",
     }
@@ -894,7 +863,7 @@ pub(super) fn build_open_badge_result(
         trust_chain: TrustChainStatus {
             valid,
             chain_type: match version {
-                OpenBadgesVersion::V2 | OpenBadgesVersion::V3 => "did".to_string(),
+                OpenBadgesVersion::V3 => "did".to_string(),
                 OpenBadgesVersion::Unknown => "unknown".to_string(),
             },
             trust_anchor,
@@ -914,23 +883,9 @@ pub(super) fn build_open_badge_result(
 pub(super) fn open_badge_claims_from_normalized(normalized: &Value) -> Value {
     let mut claims = serde_json::Map::new();
 
-    for (key, field) in [
-        ("assertion_id", "assertion_id"),
-        ("badge_id", "badge_id"),
-        ("issuer_id", "issuer_id"),
-        ("credential_id", "credential_id"),
-        ("issuer", "issuer"),
-    ] {
+    for (key, field) in [("credential_id", "credential_id"), ("issuer", "issuer")] {
         if let Some(value) = normalized.get(field).and_then(|v| v.as_str()) {
             claims.insert(key.to_string(), Value::String(value.to_string()));
-        }
-    }
-
-    if let Some(recipient) = normalized.get("recipient") {
-        if let Some(identity) = recipient.get("identity").and_then(|v| v.as_str()) {
-            claims.insert("recipient".to_string(), Value::String(identity.to_string()));
-        } else if let Some(value) = recipient.as_str() {
-            claims.insert("recipient".to_string(), Value::String(value.to_string()));
         }
     }
 
@@ -947,9 +902,7 @@ pub(super) fn open_badge_claims_from_normalized(normalized: &Value) -> Value {
 }
 
 pub(super) fn open_badge_issuer_from_normalized(normalized: &Value) -> Option<IssuerInfo> {
-    let issuer_value = normalized
-        .get("issuer")
-        .or_else(|| normalized.get("issuer_id"))?;
+    let issuer_value = normalized.get("issuer")?;
 
     issuer_value.as_str().map(|issuer| IssuerInfo {
         name: Some(issuer.to_string()),
@@ -1005,7 +958,7 @@ pub async fn verify_open_badge_offline(
         trust_chain: TrustChainStatus {
             valid,
             chain_type: match version {
-                OpenBadgesVersion::V2 | OpenBadgesVersion::V3 => "did".to_string(),
+                OpenBadgesVersion::V3 => "did".to_string(),
                 OpenBadgesVersion::Unknown => "unknown".to_string(),
             },
             trust_anchor: method_id,
@@ -1083,11 +1036,7 @@ mod typed_adapter_tests {
 
     #[tokio::test]
     async fn typed_request_adapter_rejects_missing_fields_and_unknown_versions() {
-        for version in [
-            OpenBadgesVersion::V2,
-            OpenBadgesVersion::V3,
-            OpenBadgesVersion::Unknown,
-        ] {
+        for version in [OpenBadgesVersion::V3, OpenBadgesVersion::Unknown] {
             assert!(
                 verify_open_badge_request(version, serde_json::json!({}), &[])
                     .await

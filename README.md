@@ -5,12 +5,17 @@ An on-site credential verification kiosk built with Tauri, designed for edge che
 ## Features
 
 - **Offline-First**: Operates without network for 72+ hours with local trust anchor cache
-- **Multi-Credential Support**: mDL (ISO 18013-5), eMRTD (ICAO 9303), OID4VP, SD-JWT, DTC, Open Badges
+- **Multi-Credential Support**: mDL (ISO 18013-5), eMRTD (ICAO 9303), OID4VP, SD-JWT, DTC, Open Badges 3.0
 - **Secure Storage**: SQLCipher encrypted database with platform keychain integration
 - **Open-Source Capabilities**: Every capability compiled into the OSS build is available without a license key
 - **Trust Anchor Sync**: AAMVA DTS, ICAO PKD sources with USB import for air-gapped environments
 - **Hardware Tiers**: Simple (camera only) and Complex (NFC, BLE, biometrics, TPM) kiosks
 - **Optional Reporting**: Queue-and-forward reporting with local-only mode option
+
+Open Badges verification accepts an OB3 credential or a request with a
+`credential` field. OB2 assertions and the old `assertion` request wrapper are
+retired and return a migration error. Obtain a newly issued OB3 credential from
+the issuer; changing the context or wrapper does not migrate an OB2 assertion.
 
 ## Architecture
 

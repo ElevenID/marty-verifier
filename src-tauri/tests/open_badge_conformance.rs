@@ -1,53 +1,25 @@
-//! Open Badges v2 / v3 Conformance Tests — Marty Verifier (Tauri app layer).
+//! Open Badges 3.0 conformance and retired OB2 rejection at the Tauri boundary.
 //!
-//! Tests the JSON wire-format accepted by `verify_open_badge_offline` covering
-//! version detection, result shape, error propagation, and the `FailOpen` trust
-//! policy used by the offline path (empty trusted-key store, embedded key
-//! documents accepted without prior enrollment).
+//! The supported wire formats are a raw OB3 credential or a request with a
+//! `credential` field and optional `document_store`. Historical OB2 assertions
+//! remain below as negative vectors; neither raw assertions nor the retired
+//! `assertion` request wrapper may enter a verification path.
 //!
-//! Wire-format options:
-//!
-//! ```json
-//! // Option A — raw credential (version auto-detected from @context)
-//! { "@context": "https://w3id.org/openbadges/v2", "type": "Assertion", … }
-//!
-//! // Option B — OBv2 wrapper
-//! { "assertion": { "@context": "https://w3id.org/openbadges/v2", … } }
-//!
-//! // Option C — OBv3 wrapper
-//! { "credential": { "@context": "https://purl.imsglobal.org/spec/ob/v3p0/context.json", … } }
-//! ```
-//!
-//! All tests call the `async` function via `#[tokio::test]`.
-//!
-//! Coverage:
-//!   §1  JSON parsing errors
-//!   §2  Unknown-version error
-//!   §3  OBv2 hosted-badge happy path — raw credential
-//!   §4  OBv2 hosted-badge happy path — explicit `assertion` wrapper
-//!   §5  OBv2 result shape (credential_type, verification_id, open_badge_details)
-//!   §6  OBv2 version label in open_badge_details
-//!   §7  OBv2 — missing @context produces context error
-//!   §8  OBv2 — missing Assertion type produces type error
-//!   §9  OBv2 — inline badge without inline issuer produces issuer-missing error
-//!   §10 OBv2 offline warning always present
-//!   §11 OBv3 context triggers V3 path (parse error → Err, not panic)
-//!   §12 OBv3 wrapper `{ "credential": … }` is forwarded to OBv3 path
-//!   §13 OBv3 signed credential — valid Ed25519 DataIntegrityProof → Valid
+//! Positive signature tests use the reviewed public-only OB3 vector. The
+//! offline helper accepts supplied public key documents without a database;
+//! production trust-store enrollment is tested separately.
 
 use marty_verifier::commands::verification::{verify_open_badge_offline, VerificationStatus};
 
-// ── OBv2 context constant (matches contexts.rs CONTEXT_OPENBADGES_V2) ────────
+// Retired OB2 context retained only for rejection vectors.
 const OBV2_CONTEXT: &str = "https://w3id.org/openbadges/v2";
 // ── OBv3 context constant (matches contexts.rs CONTEXT_OPENBADGES_V3) ────────
 const OBV3_CONTEXT: &str = "https://purl.imsglobal.org/spec/ob/v3p0/context.json";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Minimal OBv2 Assertion with inline badge and issuer.
-///
-/// Uses `verification.type = "HostedBadge"` so no cryptographic proof is
-/// required; the verifier adds a warning rather than an error.
+/// Historical hosted OB2 assertion, retained as a negative vector.
+/// It must be rejected before any trust or cryptographic verification.
 fn ob2_hosted_assertion() -> serde_json::Value {
     serde_json::json!({
         "@context": OBV2_CONTEXT,
@@ -147,281 +119,96 @@ async fn json_array_returns_error() {
     );
 }
 
-// ── §3  OBv2 hosted-badge happy path — raw credential ────────────────────────
-
-/// A well-formed Hosted OBv2 assertion supplied as-is (not wrapped) must
-/// return `Ok` with `status = Valid`.
-#[tokio::test]
-async fn ob2_raw_hosted_assertion_is_valid() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json)
+async fn assert_ob2_retired(value: serde_json::Value) {
+    let error = verify_open_badge_offline(&value.to_string())
         .await
-        .expect("verify_open_badge_offline failed");
-
-    assert_eq!(
-        result.status,
-        VerificationStatus::Valid,
-        "Hosted OBv2 assertion should be Valid; errors: {:?}",
-        result.open_badge_details.as_ref().map(|d| &d.errors)
-    );
-}
-
-/// Same assertion passes with a JSON @context array that includes the OBv2 URI.
-#[tokio::test]
-async fn ob2_context_array_is_accepted() {
-    let mut assertion = ob2_hosted_assertion();
-    assertion["@context"] = serde_json::json!([OBV2_CONTEXT]);
-    let result = verify_open_badge_offline(&assertion.to_string())
-        .await
-        .expect("verify_open_badge_offline failed");
-    assert_eq!(result.status, VerificationStatus::Valid);
-}
-
-// ── §4  OBv2 hosted-badge happy path — explicit `assertion` wrapper ───────────
-
-/// Same assertion wrapped in `{ "assertion": … }` must also return `Valid`.
-#[tokio::test]
-async fn ob2_explicit_assertion_wrapper_is_valid() {
-    let wrapped = serde_json::json!({ "assertion": ob2_hosted_assertion() }).to_string();
-    let result = verify_open_badge_offline(&wrapped)
-        .await
-        .expect("verify_open_badge_offline failed for wrapped assertion");
-    assert_eq!(result.status, VerificationStatus::Valid);
-}
-
-// ── §5  OBv2 result shape ─────────────────────────────────────────────────────
-
-/// The `VerificationResult` for a valid OBv2 badge must carry the expected fields.
-#[tokio::test]
-async fn ob2_result_shape() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json)
-        .await
-        .expect("verify_open_badge_offline failed");
-
-    assert_eq!(result.credential_type, "open-badge");
+        .expect_err("retired OB2 input must not produce a verification result");
+    let message = error.to_string();
     assert!(
-        !result.verification_id.is_empty(),
-        "verification_id must not be empty"
-    );
-    assert!(
-        result.open_badge_details.is_some(),
-        "open_badge_details must be Some"
-    );
-    assert!(result.emrtd_details.is_none(), "emrtd_details must be None");
-    assert!(result.dtc_details.is_none(), "dtc_details must be None");
-}
-
-/// `trust_chain.offline_verified` must be `true` for the offline path.
-#[tokio::test]
-async fn ob2_trust_chain_offline_verified() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json).await.unwrap();
-    assert!(result.trust_chain.offline_verified);
-}
-
-// ── §6  OBv2 version label ────────────────────────────────────────────────────
-
-/// `open_badge_details.version` must report `"2.0"` for an OBv2 assertion.
-#[tokio::test]
-async fn ob2_version_label_is_two_point_zero() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json).await.unwrap();
-    let details = result
-        .open_badge_details
-        .expect("open_badge_details must be Some");
-    assert_eq!(
-        details.version, "2.0",
-        "OBv2 version label must be '2.0', got: {}",
-        details.version
+        message.contains("Open Badges 2.0 is retired") && message.contains("Open Badges 3.0"),
+        "Retired input must explain the migration: {message}"
     );
 }
 
-// ── §7  OBv2 — missing @context ───────────────────────────────────────────────
-
-/// An assertion where `@context` is a different URI (not OBv2) that nevertheless
-/// contains `"Assertion"` type but wrong context must be detected as v2 only if
-/// context matches.  When no known context is present the call returns `Err`
-/// (unknown version) rather than an `Ok` with errors.
-///
-/// This test verifies that the context-detection gate fires *before* the
-/// verifier layer.
 #[tokio::test]
-async fn ob2_wrong_context_uri_is_unknown_version() {
-    let json = serde_json::json!({
-        "@context": "https://schema.org/",
-        "type": "Assertion",
-        "badge": { "type": "BadgeClass", "name": "Test",
-                    "issuer": { "type": "Issuer", "name": "Test", "url": "https://example.org" } },
-        "verification": { "type": "HostedBadge" }
-    })
-    .to_string();
-
-    let result = verify_open_badge_offline(&json).await;
-    assert!(
-        result.is_err(),
-        "Non-OB context should be rejected as unknown version, got Ok: {:?}",
-        result.as_ref().ok()
-    );
+async fn ob2_raw_and_context_array_are_retired() {
+    let assertion = ob2_hosted_assertion();
+    assert_ob2_retired(assertion.clone()).await;
+    let mut context_array = assertion;
+    context_array["@context"] = serde_json::json!([OBV2_CONTEXT]);
+    assert_ob2_retired(context_array).await;
 }
 
-/// A correctly-shaped OBv2 assertion but with `@context` removed returns `Err`
-/// (unknown version — not an `Ok` with errors).
 #[tokio::test]
-async fn ob2_missing_context_is_unknown_version() {
-    let mut assertion = ob2_hosted_assertion();
-    assertion.as_object_mut().unwrap().remove("@context");
-    let result = verify_open_badge_offline(&assertion.to_string()).await;
-    assert!(
-        result.is_err(),
-        "Assertion without @context should be Err (unknown version), got Ok"
-    );
+async fn ob2_wrappers_are_retired() {
+    let assertion = ob2_hosted_assertion();
+    for field in ["assertion", "credential", "vc"] {
+        let mut wrapper = serde_json::Map::new();
+        wrapper.insert(field.to_string(), assertion.clone());
+        assert_ob2_retired(serde_json::Value::Object(wrapper)).await;
+    }
 }
 
-/// An OBv2 assertion that has the context but is missing `@context` in
-/// the *wrapped* format (i.e., the assertion value has no context) must
-/// return `Err` because version detection runs on the *inner* value:
-/// `detect_open_badges_version` finds no OBv2 context → `Unknown` → `Err`.
 #[tokio::test]
-async fn ob2_wrapped_missing_context_returns_error() {
-    let mut inner = ob2_hosted_assertion();
-    inner.as_object_mut().unwrap().remove("@context");
+async fn ob2_partial_and_malformed_assertions_still_report_retirement() {
+    let mut missing_context = ob2_hosted_assertion();
+    missing_context.as_object_mut().unwrap().remove("@context");
+    assert_ob2_retired(missing_context.clone()).await;
+    assert_ob2_retired(serde_json::json!({ "assertion": missing_context })).await;
 
-    let wrapped = serde_json::json!({ "assertion": inner }).to_string();
-    // Version is detected from the inner value, not the wrapper key:
-    // inner has no @context → Unknown → Err.
-    let result = verify_open_badge_offline(&wrapped).await;
-    assert!(
-        result.is_err(),
-        "Wrapped assertion without @context must return Err (Unknown version), got Ok"
-    );
+    let mut wrong_context = ob2_hosted_assertion();
+    wrong_context["@context"] = serde_json::json!("https://schema.org/");
+    assert_ob2_retired(wrong_context).await;
+
+    let mut missing_type = ob2_hosted_assertion();
+    missing_type.as_object_mut().unwrap().remove("type");
+    assert_ob2_retired(missing_type).await;
+
+    let mut missing_issuer = ob2_hosted_assertion();
+    missing_issuer["badge"]
+        .as_object_mut()
+        .unwrap()
+        .remove("issuer");
+    assert_ob2_retired(missing_issuer).await;
+
+    let mut unresolved_badge = ob2_hosted_assertion();
+    unresolved_badge["badge"] = serde_json::json!("https://example.org/badges/unreachable");
+    assert_ob2_retired(unresolved_badge).await;
 }
 
-// ── §8  OBv2 — missing Assertion type ────────────────────────────────────────
-
-/// An OBv2 assertion where `type` is absent or wrong must be `Invalid` with a
-/// type-related error.
 #[tokio::test]
-async fn ob2_missing_type_returns_invalid() {
-    let mut assertion = ob2_hosted_assertion();
-    assertion.as_object_mut().unwrap().remove("type");
-    let result = verify_open_badge_offline(&assertion.to_string())
-        .await
-        .expect("verify_open_badge_offline failed for missing-type assertion");
+async fn mixed_ob2_and_ob3_inputs_cannot_use_the_ob3_path() {
+    let mut credential = signed_ob3_public_request()["credential"].clone();
+    credential["@context"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(OBV2_CONTEXT));
+    assert_ob2_retired(credential).await;
 
-    assert_eq!(result.status, VerificationStatus::Invalid);
-    let details = result
-        .open_badge_details
-        .expect("open_badge_details must be Some");
-    let has_type_error = details
-        .errors
-        .iter()
-        .any(|e| e.to_lowercase().contains("type") || e.to_lowercase().contains("assertion"));
-    assert!(
-        has_type_error,
-        "Expected a type-related error; got: {:?}",
-        details.errors
-    );
+    let mut credential = signed_ob3_public_request()["credential"].clone();
+    credential["type"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("Assertion"));
+    assert_ob2_retired(serde_json::json!({ "credential": credential })).await;
+
+    let mut credential = signed_ob3_public_request()["credential"].clone();
+    credential["context"] = serde_json::json!(OBV2_CONTEXT);
+    assert_ob2_retired(credential).await;
+
+    let mut request = signed_ob3_public_request();
+    request["assertion"] = ob2_hosted_assertion();
+    assert_ob2_retired(request).await;
 }
 
-// ── §9  OBv2 — badge without inline issuer ───────────────────────────────────
-
-/// When the `badge` object omits the `issuer` field altogether the verifier
-/// must return `Invalid` with an issuer-related error (badge resolve is Ok,
-/// but issuer resolve fails).
 #[tokio::test]
-async fn ob2_badge_without_issuer_is_invalid() {
-    let json = serde_json::json!({
-        "@context": OBV2_CONTEXT,
-        "type": "Assertion",
-        "badge": {
-            "type": "BadgeClass",
-            "name": "No-Issuer Badge"
-            // no "issuer" key
-        },
-        "verification": { "type": "HostedBadge" }
-    })
-    .to_string();
-
-    let result = verify_open_badge_offline(&json)
-        .await
-        .expect("verify_open_badge_offline failed");
-
-    assert_eq!(result.status, VerificationStatus::Invalid);
-    let details = result
-        .open_badge_details
-        .expect("open_badge_details must be Some");
-    let has_issuer_error = details
-        .errors
-        .iter()
-        .any(|e| e.to_lowercase().contains("issuer"));
-    assert!(
-        has_issuer_error,
-        "Expected issuer-related error; got: {:?}",
-        details.errors
-    );
+async fn retired_assertion_wrapper_is_not_an_alias_for_ob3() {
+    let credential = signed_ob3_public_request()["credential"].clone();
+    assert_ob2_retired(serde_json::json!({ "assertion": credential })).await;
+    assert_ob2_retired(serde_json::json!({ "assertion": null })).await;
 }
 
-/// When `badge` is a string URL reference the verifier attempts document-store
-/// resolution.  With an empty store this must fail to resolve the badge and
-/// return `Invalid`.
-#[tokio::test]
-async fn ob2_badge_url_reference_unresolvable_is_invalid() {
-    let json = serde_json::json!({
-        "@context": OBV2_CONTEXT,
-        "type": "Assertion",
-        "badge": "https://example.org/badges/unreachable",
-        "verification": { "type": "HostedBadge" }
-    })
-    .to_string();
-
-    let result = verify_open_badge_offline(&json)
-        .await
-        .expect("verify_open_badge_offline failed");
-
-    assert_eq!(result.status, VerificationStatus::Invalid);
-}
-
-// ── §10 OBv2 offline warning ──────────────────────────────────────────────────
-
-/// The offline path must always carry a warning that the empty trust store has
-/// been used (so callers are aware this is not a fully-trusted verification).
-#[tokio::test]
-async fn ob2_offline_warning_present() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json).await.unwrap();
-    let has_offline_warning = result
-        .warnings
-        .iter()
-        .any(|w| w.to_lowercase().contains("offline") || w.to_lowercase().contains("trust"));
-    assert!(
-        has_offline_warning,
-        "Expected an offline / trust-store warning; got: {:?}",
-        result.warnings
-    );
-}
-
-/// The hosted-assertion warning ("Hosted assertion not cryptographically verified")
-/// is passed through by the offline path as part of `open_badge_details.warnings`.
-#[tokio::test]
-async fn ob2_hosted_assertion_carries_crypto_warning() {
-    let json = ob2_hosted_assertion().to_string();
-    let result = verify_open_badge_offline(&json).await.unwrap();
-    let details = result
-        .open_badge_details
-        .expect("open_badge_details must be Some");
-    let has_hosted_warning = details
-        .warnings
-        .iter()
-        .any(|w| w.to_lowercase().contains("hosted") || w.to_lowercase().contains("cryptograph"));
-    assert!(
-        has_hosted_warning,
-        "Expected a hosted-badge crypto warning in open_badge_details.warnings; got: {:?}",
-        details.warnings
-    );
-}
-
-// ── §11 OBv3 — parse error returns Err ───────────────────────────────────────
+// ── OBv3 — parse error returns Err ───────────────────────────────────────
 
 /// A raw JSON object with an OBv3 context but no valid VC structure (missing
 /// `issuer`, `@type`, proof, etc.) cannot be deserialized by the SSI library
@@ -446,7 +233,7 @@ async fn ob3_malformed_vc_returns_error() {
     );
 }
 
-// ── §12 OBv3 wrapper `{ "credential": … }` ───────────────────────────────────
+// ── OBv3 wrapper `{ "credential": … }` ───────────────────────────────────
 
 /// When the outer key is `"credential"` the version is detected as V3 and
 /// the OBv3 path is taken.  The SSI library can still deserialise a VC
@@ -497,7 +284,7 @@ async fn ob3_credential_wrapper_takes_v3_path() {
     );
 }
 
-// ── §13 OBv3 signed credential — DataIntegrityProof (Ed25519) ─────────────────
+// ── OBv3 signed credential — DataIntegrityProof (Ed25519) ─────────────────
 //
 // These tests use Core's reviewed public-only OBv3 Ed25519 signature vector.
 // The credential is verified with its public method in `document_store`;
@@ -560,6 +347,15 @@ async fn ob3_signed_credential_with_jwk2020_is_valid() {
         "Signed OBv3 credential must be Valid; errors: {:?}",
         result.open_badge_details.as_ref().map(|d| &d.errors)
     );
+    assert!(!result.verification_id.is_empty());
+    assert!(result.emrtd_details.is_none());
+    assert!(result.dtc_details.is_none());
+    assert!(result.trust_chain.offline_verified);
+    assert_eq!(result.trust_chain.chain_type, "did");
+    assert!(result
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("offline")));
 }
 
 /// The signed credential's `open_badge_details.version` must be `"3.0"`.
