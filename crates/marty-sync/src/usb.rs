@@ -1,13 +1,11 @@
 //! USB import for air-gapped deployments
 
 use std::collections::HashSet;
-use std::fmt;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use der::Decode;
 use marty_types::open_badges::contains_private_key_material;
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use x509_cert::Certificate;
@@ -247,109 +245,56 @@ pub(crate) async fn import_from_usb(path: &Path) -> Result<VerifiedTrustPackage,
     })
 }
 
-struct StrictJson(Value);
-
-impl<'de> Deserialize<'de> for StrictJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(StrictJsonVisitor)
-    }
-}
-
-struct StrictJsonVisitor;
-
-impl<'de> Visitor<'de> for StrictJsonVisitor {
-    type Value = StrictJson;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("JSON without duplicate object members")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::Bool(value)))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::Number(value.into())))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::Number(value.into())))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .map(StrictJson)
-            .ok_or_else(|| E::custom("non-finite JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::String(value.to_string())))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::String(value)))
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::Null))
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJson(Value::Null))
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        StrictJson::deserialize(deserializer)
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut values = Vec::new();
-        while let Some(StrictJson(value)) = sequence.next_element()? {
-            values.push(value);
-        }
-        Ok(StrictJson(Value::Array(values)))
-    }
-
-    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut values = serde_json::Map::new();
-        while let Some(key) = object.next_key::<String>()? {
-            if values.contains_key(&key) {
-                return Err(de::Error::custom(format!(
-                    "duplicate JSON object member '{key}'"
-                )));
-            }
-            let StrictJson(value) = object.next_value()?;
-            values.insert(key, value);
-        }
-        Ok(StrictJson(Value::Object(values)))
-    }
-}
-
 fn parse_strict_package(raw_json: &str) -> Result<(TrustAnchorPackage, Value), SyncError> {
-    let mut deserializer = serde_json::Deserializer::from_str(raw_json);
-    let StrictJson(value) = StrictJson::deserialize(&mut deserializer)
+    let value = marty_crypto::strict_json::parse_unique_json(raw_json.as_bytes())
         .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
-    deserializer
-        .end()
-        .map_err(|error| SyncError::UsbImport(format!("Invalid package format: {error}")))?;
-    let package = serde_json::from_value(value.clone())
+
+    // Schema conversion must not deserialize embedded JSON Values a second time:
+    // consumer-enabled Serde features can reinterpret literal marker-looking
+    // objects. Keep those exact values while checking the remaining typed schema.
+    let mut schema_value = value.clone();
+    let methods = schema_value
+        .get_mut("open_badge_verification_methods")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take);
+    let declared_times =
+        ["iaca_certificates", "csca_certificates", "dsc_certificates"].map(|field| {
+            schema_value
+                .get_mut(field)
+                .and_then(Value::as_array_mut)
+                .map(|entries| {
+                    entries
+                        .iter_mut()
+                        .map(|entry| {
+                            entry
+                                .as_object_mut()
+                                .map(|entry| {
+                                    (entry.remove("not_before"), entry.remove("not_after"))
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        });
+    let mut package: TrustAnchorPackage = serde_json::from_value(schema_value)
         .map_err(|error| SyncError::UsbImport(format!("Invalid package schema: {error}")))?;
+    if let Some(methods) = methods {
+        package.open_badge_verification_methods = methods;
+    }
+    for (entries, timestamps) in [
+        &mut package.iaca_certificates,
+        &mut package.csca_certificates,
+        &mut package.dsc_certificates,
+    ]
+    .into_iter()
+    .zip(declared_times)
+    {
+        for (entry, (not_before, not_after)) in entries.iter_mut().zip(timestamps) {
+            entry.not_before = not_before.map(DeclaredValue::Present).unwrap_or_default();
+            entry.not_after = not_after.map(DeclaredValue::Present).unwrap_or_default();
+        }
+    }
     Ok((package, value))
 }
 
@@ -980,6 +925,199 @@ mod tests {
                     .expect_err("missing signed transition field must fail");
             assert!(error.to_string().contains(required_policy_field));
         }
+    }
+
+    #[test]
+    fn signed_package_preserves_numeric_and_literal_object_meaning() {
+        // Independent RFC 8785 bytes and an Ed25519 signature were generated
+        // outside this implementation. Only public evidence is retained.
+        let fixture: Value =
+            serde_json::from_str(include_str!("usb_json_shape_public.json")).unwrap();
+        let raw = fixture["package_json"].as_str().unwrap();
+        let (package, value) = parse_strict_package(raw).unwrap();
+        assert_eq!(
+            package.open_badge_verification_methods,
+            value["open_badge_verification_methods"]
+                .as_array()
+                .unwrap()
+                .clone()
+        );
+        let evidence = &package.open_badge_verification_methods[0]["json_shape_evidence"];
+        for (index, expected) in [1.5, 100.0, -0.0, 0.001].into_iter().enumerate() {
+            assert!(evidence["numbers"][index].is_number());
+            assert_eq!(evidence["numbers"][index].as_f64(), Some(expected));
+        }
+        assert!(evidence["number_marker"].is_object());
+        assert_eq!(
+            evidence["number_marker"]["$serde_json::private::Number"],
+            "1.5"
+        );
+        assert!(evidence["raw_marker"].is_object());
+        assert_eq!(
+            evidence["raw_marker"]["$serde_json::private::RawValue"],
+            r#"{"nested":true}"#
+        );
+
+        let canonical = canonical_signed_payload(&value).unwrap();
+        assert_eq!(
+            canonical,
+            fixture["canonical_payload"].as_str().unwrap().as_bytes()
+        );
+        let public_key: [u8; 32] = base64::engine::general_purpose::STANDARD
+            .decode(fixture["public_key_base64"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let verified = verify_package_signature(&value, &package, &public_key).unwrap();
+        assert_eq!(verified.package_digest, fixture["canonical_payload_blake3"]);
+        validate_package_metadata(
+            &package,
+            &verified.signer_key_id,
+            &package.recovery_signer_key_id,
+        )
+        .unwrap();
+        let created_at = parse_required_timestamp(&package.created_at, "created_at").unwrap();
+        let method =
+            parse_open_badge_method(&package.open_badge_verification_methods[0], created_at)
+                .unwrap();
+        assert_eq!(method.document, package.open_badge_verification_methods[0]);
+
+        let mut changed = value;
+        changed["open_badge_verification_methods"][0]["json_shape_evidence"]["numbers"][0] =
+            json!(1.75);
+        assert!(verify_package_signature(&changed, &package, &public_key).is_err());
+    }
+
+    #[tokio::test]
+    async fn authenticated_usb_method_survives_apply_and_readback() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("usb_json_shape_public.json")).unwrap();
+        let decode_key = |field: &str| -> [u8; 32] {
+            base64::engine::general_purpose::STANDARD
+                .decode(fixture[field].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap()
+        };
+        let (package, value) =
+            parse_strict_package(fixture["package_json"].as_str().unwrap()).unwrap();
+        // Exercise the actual signed USB authentication and record construction
+        // before the same governed storage transition used by SyncEngine.
+        let verified =
+            verify_package_signature(&value, &package, &decode_key("public_key_base64")).unwrap();
+        validate_package_metadata(
+            &package,
+            &verified.signer_key_id,
+            &signer_key_id(&decode_key("recovery_public_key_base64")),
+        )
+        .unwrap();
+        let created_at = parse_required_timestamp(&package.created_at, "created_at").unwrap();
+        let expires_at = parse_required_timestamp(&package.expires_at, "expires_at").unwrap();
+        let imported_at = Utc::now();
+        validate_package_times(created_at, expires_at, imported_at).unwrap();
+        let methods = package
+            .open_badge_verification_methods
+            .iter()
+            .map(|value| parse_open_badge_method(value, created_at).unwrap())
+            .collect::<Vec<_>>();
+        let provenance = TrustPackageProvenance {
+            trust_domain: package.trust_domain,
+            sequence: package.sequence,
+            package_version: package.version,
+            created_at,
+            expires_at,
+            signer_key_id: verified.signer_key_id,
+            package_digest: verified.package_digest,
+            imported_at,
+        };
+        let signer_policy = TrustPackageSignerPolicy {
+            next_signer_key_id: package.next_signer_key_id,
+            recovery_signer_key_id: package.recovery_signer_key_id,
+        };
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = crate::engine::tests::test_storage(data_dir.path());
+        let engine = crate::SyncEngine::new(
+            storage.clone(),
+            crate::SyncConfig {
+                usb_trust_domain: provenance.trust_domain.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let imported = engine
+            .apply_verified_package(VerifiedTrustPackage {
+                provenance: provenance.clone(),
+                signer_policy,
+                anchors: vec![],
+                open_badge_methods: methods.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(imported.success && imported.signature_valid);
+        assert_eq!(imported.open_badge_keys_imported, methods.len());
+        let stored = storage.get_open_badge_trust_records().await.unwrap();
+        assert_eq!(stored.len(), methods.len());
+        for (record, expected) in stored.iter().zip(methods) {
+            assert_eq!(record.method.document, expected.document);
+            assert_eq!(record.provenance.as_ref(), Some(&provenance));
+        }
+    }
+
+    #[test]
+    fn declared_timestamp_marker_objects_cannot_become_strings() {
+        let raw = minimal_package_json("").replace(
+            "\"iaca_certificates\":[]",
+            r#""iaca_certificates":[{
+                "jurisdiction":"US",
+                "certificate_der_b64":"AA==",
+                "not_before":{"$serde_json::private::RawValue":"\"2026-01-01T00:00:00Z\""},
+                "not_after":{"$serde_json::private::Number":"1.5"}
+            }]"#,
+        );
+        let (package, _) = parse_strict_package(&raw).unwrap();
+        let entry = &package.iaca_certificates[0];
+        for declared in [&entry.not_before, &entry.not_after] {
+            assert!(matches!(declared, DeclaredValue::Present(Value::Object(_))));
+            assert!(parse_declared_timestamp(declared, "declared timestamp").is_err());
+        }
+    }
+
+    #[test]
+    fn strict_package_retains_nested_duplicates_schema_and_input_limits() {
+        let base = minimal_package_json("");
+        let duplicate = base.replace(
+            "\"open_badge_verification_methods\":[]",
+            r#""open_badge_verification_methods":[{"id":"first","\u0069d":"second"}]"#,
+        );
+        assert!(parse_strict_package(&duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate JSON object member"));
+        assert!(parse_strict_package(&format!("{base} true")).is_err());
+        let deep = base.replace(
+            "\"open_badge_verification_methods\":[]",
+            &format!(
+                "\"open_badge_verification_methods\":[{}0{}]",
+                "[".repeat(128),
+                "]".repeat(128)
+            ),
+        );
+        assert!(parse_strict_package(&deep).is_err());
+        for replacement in ["null", "{}", "false"] {
+            let invalid = base.replace(
+                "\"open_badge_verification_methods\":[]",
+                &format!("\"open_badge_verification_methods\":{replacement}"),
+            );
+            assert!(parse_strict_package(&invalid).is_err());
+        }
+        let unknown_certificate_field = base.replace(
+            "\"iaca_certificates\":[]",
+            r#""iaca_certificates":[{"jurisdiction":"US","certificate_der_b64":"AA==","unexpected":true}]"#,
+        );
+        assert!(parse_strict_package(&unknown_certificate_field)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field"));
     }
 
     #[test]

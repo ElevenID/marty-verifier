@@ -284,6 +284,15 @@ package must include
 `recovery_signer_key_id`; both fields are covered by the package signature.
 `signing_cert` is never a source of trust.
 
+Signed USB packages use Core's strict JSON parser before schema validation and
+canonicalization. Fractional numbers and literal JSON objects keep their signed
+meaning even when another consumer enables Serde's arbitrary-precision or raw
+JSON features. Embedded verification-method documents and declared certificate
+timestamps retain those exact parsed values; duplicate members, malformed
+schemas, trailing data, and excessive nesting remain errors. The public-only
+`crates/marty-sync/src/usb_json_shape_public.json` regression fixture includes an
+independent Ed25519 signature and RFC 8785 canonical bytes for this boundary.
+
 To rotate an operational key, the current signer first signs a higher-sequence
 package whose `next_signer_key_id` is the BLAKE3-derived id of the replacement
 public key. The operator then installs that already-authorized public key through

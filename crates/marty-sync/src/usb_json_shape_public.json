@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "description": "Public-only signed USB package. Independent RFC8785 bytes and Ed25519 signature; ephemeral signing keys discarded. Long test-only validity avoids calendar-dependent storage failures.",
+  "generator_versions": {
+    "cryptography": "50.0.2",
+    "rfc8785": "0.1.4",
+    "blake3": "1.0.11"
+  },
+  "public_key_base64": "sH3rdCOqHrF7kBBFlMxM2ryoF3+2PE25hzobN5bbcV0=",
+  "package_json": "{\"trust_domain\":\"usb:json-shape-fixture\",\"sequence\":1,\"version\":\"1.0.0\",\"created_at\":\"2020-01-01T00:00:00Z\",\"expires_at\":\"9999-12-31T23:59:59Z\",\"signer_key_id\":\"ed25519:0cdc8fa15a677d53609cd14ff6aa730f59648a16afbe2035d086ec31f65899d7\",\"next_signer_key_id\":null,\"recovery_signer_key_id\":\"ed25519:9e2e5c80a836246c5b5de6cceda3937ed7fc3c647ce5eaea9bea0b725b5c703d\",\"signing_cert\":\"informational-only\",\"iaca_certificates\":[],\"csca_certificates\":[],\"dsc_certificates\":[],\"open_badge_verification_methods\":[{\"id\":\"did:example:json-shape#public-key\",\"type\":\"JsonWebKey2020\",\"controller\":\"did:example:json-shape\",\"publicKeyJwk\":{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"sH3rdCOqHrF7kBBFlMxM2ryoF3-2PE25hzobN5bbcV0\"},\"status\":\"active\",\"not_before\":\"2020-01-01T00:00:00Z\",\"not_after\":\"9999-12-31T23:59:59Z\",\"json_shape_evidence\":{\"numbers\":[1.5,1e2,-0.0,1e-3],\"number_marker\":{\"$serde_json::private::Number\":\"1.5\"},\"raw_marker\":{\"$serde_json::private::RawValue\":\"{\\\"nested\\\":true}\"},\"unicode\":\"café 😀\"}}],\"signature\":\"efipd6HlgbL/htDXBqkJjP3pXK2/W78lI6L6ZgtSyLFY5L8Enl44C0ToIYCRd8LZngQlVDKiO+xyBTWxMDCHDw==\"}",
+  "canonical_payload": "{\"created_at\":\"2020-01-01T00:00:00Z\",\"csca_certificates\":[],\"dsc_certificates\":[],\"expires_at\":\"9999-12-31T23:59:59Z\",\"iaca_certificates\":[],\"next_signer_key_id\":null,\"open_badge_verification_methods\":[{\"controller\":\"did:example:json-shape\",\"id\":\"did:example:json-shape#public-key\",\"json_shape_evidence\":{\"number_marker\":{\"$serde_json::private::Number\":\"1.5\"},\"numbers\":[1.5,100,0,0.001],\"raw_marker\":{\"$serde_json::private::RawValue\":\"{\\\"nested\\\":true}\"},\"unicode\":\"café 😀\"},\"not_after\":\"9999-12-31T23:59:59Z\",\"not_before\":\"2020-01-01T00:00:00Z\",\"publicKeyJwk\":{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"sH3rdCOqHrF7kBBFlMxM2ryoF3-2PE25hzobN5bbcV0\"},\"status\":\"active\",\"type\":\"JsonWebKey2020\"}],\"recovery_signer_key_id\":\"ed25519:9e2e5c80a836246c5b5de6cceda3937ed7fc3c647ce5eaea9bea0b725b5c703d\",\"sequence\":1,\"signer_key_id\":\"ed25519:0cdc8fa15a677d53609cd14ff6aa730f59648a16afbe2035d086ec31f65899d7\",\"signing_cert\":\"informational-only\",\"trust_domain\":\"usb:json-shape-fixture\",\"version\":\"1.0.0\"}",
+  "canonical_payload_blake3": "f6ee0b235b444f6905c5f007a6d03bd2804a60239bf37247c3d51dea0b150b2b",
+  "recovery_public_key_base64": "7HOHoe3t2tIGOyGbl7P9YuXYnKLRbckIHmIeaoxanC0="
+}
