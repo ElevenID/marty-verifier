@@ -103,6 +103,10 @@ jobs:
         if: matrix.task == 'tests'
         run: cargo nextest run --locked --workspace --all-features
 
+      - name: Preserve signed USB JSON across consumer features
+        if: matrix.task == 'tests'
+        run: cargo test --locked -p marty-sync --features serde_json/arbitrary_precision,serde_json/raw_value
+
       - name: Retain Rust documentation tests
         if: matrix.task == 'tests'
         run: cargo test --locked --doc --workspace --all-features
