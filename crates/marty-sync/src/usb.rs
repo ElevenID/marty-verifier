@@ -976,7 +976,7 @@ mod tests {
             &package.recovery_signer_key_id,
         )
         .unwrap();
-        let created_at = Utc.with_ymd_and_hms(2026, 11, 7, 0, 0, 0).unwrap();
+        let created_at = parse_required_timestamp(&package.created_at, "created_at").unwrap();
         let method =
             parse_open_badge_method(&package.open_badge_verification_methods[0], created_at)
                 .unwrap();
@@ -986,6 +986,81 @@ mod tests {
         changed["open_badge_verification_methods"][0]["json_shape_evidence"]["numbers"][0] =
             json!(1.75);
         assert!(verify_package_signature(&changed, &package, &public_key).is_err());
+    }
+
+    #[tokio::test]
+    async fn authenticated_usb_method_survives_apply_and_readback() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("usb_json_shape_public.json")).unwrap();
+        let decode_key = |field: &str| -> [u8; 32] {
+            base64::engine::general_purpose::STANDARD
+                .decode(fixture[field].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap()
+        };
+        let (package, value) =
+            parse_strict_package(fixture["package_json"].as_str().unwrap()).unwrap();
+        // Exercise the actual signed USB authentication and record construction
+        // before the same governed storage transition used by SyncEngine.
+        let verified =
+            verify_package_signature(&value, &package, &decode_key("public_key_base64")).unwrap();
+        validate_package_metadata(
+            &package,
+            &verified.signer_key_id,
+            &signer_key_id(&decode_key("recovery_public_key_base64")),
+        )
+        .unwrap();
+        let created_at = parse_required_timestamp(&package.created_at, "created_at").unwrap();
+        let expires_at = parse_required_timestamp(&package.expires_at, "expires_at").unwrap();
+        let imported_at = Utc::now();
+        validate_package_times(created_at, expires_at, imported_at).unwrap();
+        let methods = package
+            .open_badge_verification_methods
+            .iter()
+            .map(|value| parse_open_badge_method(value, created_at).unwrap())
+            .collect::<Vec<_>>();
+        let provenance = TrustPackageProvenance {
+            trust_domain: package.trust_domain,
+            sequence: package.sequence,
+            package_version: package.version,
+            created_at,
+            expires_at,
+            signer_key_id: verified.signer_key_id,
+            package_digest: verified.package_digest,
+            imported_at,
+        };
+        let signer_policy = TrustPackageSignerPolicy {
+            next_signer_key_id: package.next_signer_key_id,
+            recovery_signer_key_id: package.recovery_signer_key_id,
+        };
+        let data_dir = tempfile::tempdir().unwrap();
+        let storage = crate::engine::tests::test_storage(data_dir.path());
+        let engine = crate::SyncEngine::new(
+            storage.clone(),
+            crate::SyncConfig {
+                usb_trust_domain: provenance.trust_domain.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let imported = engine
+            .apply_verified_package(VerifiedTrustPackage {
+                provenance: provenance.clone(),
+                signer_policy,
+                anchors: vec![],
+                open_badge_methods: methods.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(imported.success && imported.signature_valid);
+        assert_eq!(imported.open_badge_keys_imported, methods.len());
+        let stored = storage.get_open_badge_trust_records().await.unwrap();
+        assert_eq!(stored.len(), methods.len());
+        for (record, expected) in stored.iter().zip(methods) {
+            assert_eq!(record.method.document, expected.document);
+            assert_eq!(record.provenance.as_ref(), Some(&provenance));
+        }
     }
 
     #[test]

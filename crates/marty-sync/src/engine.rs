@@ -322,7 +322,7 @@ impl SyncEngine {
     }
 
     #[cfg(test)]
-    async fn apply_verified_package(
+    pub(crate) async fn apply_verified_package(
         &self,
         package: VerifiedTrustPackage,
     ) -> Result<UsbImportResult, SyncError> {
@@ -393,7 +393,7 @@ fn ensure_cache_fresh_at(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use marty_secure_storage::{
         OpenBadgeKeySource, OpenBadgeVerificationMethod, StorageError, TrustAnchor,
         TrustAnchorSource, TrustPackageProvenance,
@@ -401,7 +401,7 @@ mod tests {
 
     use super::*;
 
-    fn test_storage(data_dir: &std::path::Path) -> Arc<SecureStorage> {
+    pub(crate) fn test_storage(data_dir: &std::path::Path) -> Arc<SecureStorage> {
         static PROCESS_LOCAL_KEYRING: std::sync::Once = std::sync::Once::new();
         PROCESS_LOCAL_KEYRING.call_once(|| {
             keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
