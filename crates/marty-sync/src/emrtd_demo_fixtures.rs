@@ -12,7 +12,6 @@ use marty_verification::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use x509_cert::{der::Decode, Certificate};
 
 use crate::demo_fixtures::{absolute_display, demo_trust_package, write_json};
 
@@ -78,7 +77,8 @@ pub fn generate_emrtd_demo_fixtures(output_dir: &Path) -> Result<EmrtdDemoFixtur
 }
 
 fn assert_cryptographic_outcomes(valid: &Value, invalid: &Value, csca_der: &[u8]) -> Result<()> {
-    let csca = Certificate::from_der(csca_der).context("parse generated D-01 CSCA")?;
+    let csca = marty_crypto::certificate::load_certificate_der(csca_der)
+        .context("parse generated D-01 CSCA")?;
     let mut registry = CscaRegistry::new();
     registry
         .add_country_csca(COUNTRY, csca)

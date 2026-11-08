@@ -1,60 +1,161 @@
-//! Policy verification operations.
+//! Bind the configured policy to protocol-verified facts and delegate decisions to Core.
 
-use super::{AppResult, AppState, IssuerConstraintChecker, PresentationPolicy, VerifyRequest};
+use marty_verification::policy::{PolicyEvaluationInput, PolicyEvaluationResult, PolicyEvaluator};
 
-/// Load cached presentation policies from storage
-pub(super) async fn load_cached_policies(state: &AppState) -> AppResult<Vec<PresentationPolicy>> {
-    // Get current deployment profile ID from runtime config
-    let profile_id = state.runtime_config.get_deployment_profile_id().await;
+use super::{
+    AppError, AppResult, AppState, HashMap, PresentationPolicy, RevocationStatus, Value,
+    VerificationResult, VerificationStatus,
+};
 
-    // Load policies for this profile (or all if no profile set)
-    state
+/// Resolve the active policy from one runtime-configuration snapshot. A policy
+/// accepting the same format is not a substitute for the configured policy.
+pub(super) async fn load_active_policy(state: &AppState) -> AppResult<PresentationPolicy> {
+    let configuration = state.runtime_config.snapshot().await;
+    let policies = state
         .storage
-        .get_presentation_policies(profile_id.as_deref())
+        .get_presentation_policies(configuration.deployment_profile_id.as_deref())
         .await
-        .map_err(|e| crate::error::AppError::Config(e.to_string()))
+        .map_err(|error| AppError::Config(error.to_string()))?;
+
+    select_active_policy(configuration.active_policy_id.as_deref(), policies)
 }
 
-/// Evaluate policy constraints for a verification request
-pub(super) async fn evaluate_policy_constraints(
-    request: &VerifyRequest,
-    issuer_id: &str,
-    trust_verified: bool,
-    state: &AppState,
-) -> AppResult<Vec<String>> {
-    let mut violations = Vec::new();
+fn select_active_policy(
+    active_policy_id: Option<&str>,
+    policies: Vec<PresentationPolicy>,
+) -> AppResult<PresentationPolicy> {
+    let active_policy_id = active_policy_id
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| AppError::Config("No active presentation policy is configured".into()))?;
+    let mut selected = policies
+        .into_iter()
+        .filter(|policy| policy.id == active_policy_id);
+    let policy = selected.next().ok_or_else(|| {
+        AppError::Config(format!(
+            "Active presentation policy {active_policy_id} is unavailable for this deployment profile"
+        ))
+    })?;
+    if selected.next().is_some() {
+        return Err(AppError::Config(format!(
+            "Active presentation policy {active_policy_id} is ambiguous"
+        )));
+    }
+    Ok(policy)
+}
 
-    // Load cached policies
-    let policies = load_cached_policies(state).await?;
+/// The local IPC label selects a protocol adapter, not a credential template.
+/// Normalize it once before entitlement checks, dispatch, policy and reporting.
+pub(super) fn normalize_credential_type(credential_type: &str) -> String {
+    credential_type.to_ascii_lowercase()
+}
 
-    // Find applicable policy by credential type
-    let policy = policies.iter().find(|p| {
-        p.accepted_credential_types
-            .contains(&request.credential_type)
-    });
+/// Project only facts established by a successful protocol adapter. In
+/// particular, request labels, display timestamps, online connectivity and the
+/// placeholder biometric adapters do not prove policy requirements.
+fn verified_policy_input(
+    result: &VerificationResult,
+    evaluation_time_epoch_seconds: u64,
+) -> PolicyEvaluationInput {
+    let mut credential_types = Vec::new();
+    let mut claims = HashMap::new();
+    let mut presentation_count = 0;
 
-    if let Some(policy) = policy {
-        // Check issuer constraints
-        let issuer_checker =
-            IssuerConstraintChecker::new(policy.trust_profile_id.as_ref(), &policy.allowed_issuers);
-        let issuer_result = issuer_checker.check_issuer(issuer_id, trust_verified);
-        if let Some(msg) = issuer_result.violation_message() {
-            violations.push(msg.to_string());
+    if result.status == VerificationStatus::Valid {
+        // These adapters verify one credential of the indicated protocol. The
+        // online OID4VP compatibility response has no authenticated credential
+        // type/count evidence, so its request label cannot fill these fields.
+        let protocol = if result.emrtd_details.is_some() {
+            Some("emrtd")
+        } else if result.dtc_details.is_some() {
+            Some("dtc")
+        } else if result.open_badge_details.is_some() {
+            Some("open-badge")
+        } else {
+            None
+        };
+        if let Some(protocol) = protocol {
+            credential_types.push(protocol.to_owned());
+            presentation_count = 1;
         }
-
-        // Check trust profile requirement
-        if policy.trust_profile_id.is_some() && !trust_verified {
-            violations.push("Credential does not meet trust profile requirements".to_string());
+        if let Some(values) = result.disclosed_claims.as_object() {
+            claims.extend(values.clone());
         }
-
-        // Check freshness if specified
-        if let Some(max_age_seconds) = policy.freshness_requirements.max_credential_age_seconds {
-            violations.push(format!(
-                "Credential freshness could not be established (max age: {} seconds)",
-                max_age_seconds
-            ));
+        // Open Badge display claims intentionally contain only a small summary.
+        // Core's normalized subject contains the authenticated claim values.
+        if let Some(subject) = result
+            .open_badge_details
+            .as_ref()
+            .and_then(|details| details.normalized.as_ref())
+            .and_then(|normalized| normalized.get("credential_subject"))
+            .and_then(Value::as_object)
+        {
+            claims.extend(subject.clone());
         }
     }
 
-    Ok(violations)
+    PolicyEvaluationInput {
+        credential_types,
+        claims,
+        issuer_id: result
+            .issuer
+            .as_ref()
+            .and_then(|issuer| issuer.subject.clone())
+            .unwrap_or_default(),
+        // The adapters verify their governed trust stores, but do not return
+        // evidence identifying the PresentationPolicy's selected TrustProfile.
+        trust_profile_verified: false,
+        trust_profile_id: None,
+        issued_at_epoch_seconds: None,
+        proof_epoch_seconds: None,
+        evaluation_time_epoch_seconds,
+        holder_binding_verified: false,
+        // Cached authenticated status can establish a known revocation state;
+        // it does not establish that the policy's live check was performed.
+        revocation_checked: false,
+        not_revoked: match result.revocation_status {
+            RevocationStatus::Valid | RevocationStatus::CachedValid => Some(true),
+            RevocationStatus::Revoked => Some(false),
+            RevocationStatus::Unknown => None,
+        },
+        presentation_count,
+    }
 }
+
+pub(super) fn evaluate_policy_constraints(
+    policy: &PresentationPolicy,
+    result: &VerificationResult,
+    evaluation_time_epoch_seconds: u64,
+) -> PolicyEvaluationResult {
+    PolicyEvaluator::new(policy.clone()).evaluate(&verified_policy_input(
+        result,
+        evaluation_time_epoch_seconds,
+    ))
+}
+
+pub(super) fn apply_presentation_policy(
+    policy: &PresentationPolicy,
+    result: &mut VerificationResult,
+    evaluation_time_epoch_seconds: u64,
+) {
+    // Policy evaluation must never promote a failed protocol verification.
+    if result.status != VerificationStatus::Valid {
+        return;
+    }
+    let evaluation = evaluate_policy_constraints(policy, result, evaluation_time_epoch_seconds);
+    tracing::info!(
+        policy_id = %policy.id,
+        policy_version = policy.version,
+        satisfied = evaluation.is_satisfied,
+        "Evaluated active presentation policy"
+    );
+    if !evaluation.is_satisfied {
+        result.status = VerificationStatus::Invalid;
+        result
+            .warnings
+            .extend(evaluation.errors.into_iter().map(|error| error.message));
+    }
+    result.warnings.extend(evaluation.warnings);
+}
+
+#[cfg(test)]
+mod tests;

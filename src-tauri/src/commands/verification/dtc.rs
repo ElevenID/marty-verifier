@@ -1,13 +1,12 @@
 //! Dtc verification operations.
 
 use super::{
-    extract_string_list, parse_json_input, AppError, AppResult, AppState, Certificate,
-    CoreTrustAnchorType, DateTime, DtcDetails, Duration, HashSet, IssuerInfo, RevocationStatus,
-    TrustAnchorRecord, TrustChainStatus, Utc, Value, VerificationCheck, VerificationCheckOutcome,
-    VerificationResult, VerificationStatus, VerifyRequest, BASE64_STANDARD,
+    extract_string_list, parse_json_input, AppError, AppResult, AppState, CoreTrustAnchorType,
+    DateTime, DtcDetails, Duration, HashSet, IssuerInfo, RevocationStatus, TrustAnchorRecord,
+    TrustChainStatus, Utc, Value, VerificationCheck, VerificationCheckOutcome, VerificationResult,
+    VerificationStatus, VerifyRequest, BASE64_STANDARD,
 };
 use base64::Engine;
-use x509_cert::der::Decode;
 
 pub(super) async fn verify_dtc_payload(
     request: &VerifyRequest,
@@ -84,8 +83,8 @@ pub(super) async fn verify_dtc_payload(
         credential_type: request.credential_type.clone(),
         issuer: issuer.map(|issuer| IssuerInfo {
             name: Some(issuer.clone()),
-            jurisdiction: Some(issuer),
-            subject: None,
+            jurisdiction: Some(issuer.clone()),
+            subject: Some(issuer),
         }),
         disclosed_claims: build_dtc_claims(&dtc_data),
         trust_chain: TrustChainStatus {
@@ -173,9 +172,13 @@ pub(super) fn build_governed_dtc_csca_store(
             continue;
         }
 
-        Certificate::from_der(&record.anchor.certificate_der).map_err(|_| {
-            AppError::Verification("Stored governed DTC CSCA certificate is malformed".to_string())
-        })?;
+        marty_crypto::certificate::load_certificate_der(&record.anchor.certificate_der).map_err(
+            |_| {
+                AppError::Verification(
+                    "Stored governed DTC CSCA certificate is malformed".to_string(),
+                )
+            },
+        )?;
         anchors.push(certificate_der_to_pem(&record.anchor.certificate_der));
     }
 

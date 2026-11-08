@@ -16,14 +16,12 @@ targets = [
 db-path = "~/.cargo/advisory-db"
 # The url(s) of the advisory databases to use
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# Vulnerability level that will fail the check
-vulnerability = "deny"
-# Unmaintained crate advisories will fail the check
-unmaintained = "warn"
+# cargo-deny 0.20 always rejects vulnerability and notice advisories.
+# Check unmaintained and unsound advisories throughout the graph.
+unmaintained = "all"
+unsound = "all"
 # Yanked crate detection
 yanked = "warn"
-# Notices (informational advisories)
-notice = "warn"
 # A list of advisory IDs to ignore (useful for false positives)
 ignore = [
     #"RUSTSEC-0000-0000",
@@ -44,20 +42,14 @@ allow = [
     "Zlib",
     "0BSD",
 ]
-# List of explicitly denied licenses
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-3.0",
-]
-# Copyleft licenses should be flagged
-copyleft = "warn"
+# cargo-deny 0.20 rejects every license not explicitly allowed above or in
+# an existing crate-specific exception, including GPL and AGPL licenses.
 # Allow 1 or more licenses on a per-crate basis
 exceptions = [
     # ring uses a custom license that is permissive but not OSI approved
-    { allow = ["OpenSSL", "ISC"], name = "ring" },
+    { allow = ["OpenSSL", "ISC"], crate = "ring" },
     # webpki-roots uses MPL-2.0 which is weak copyleft but commonly used for Mozilla projects
-    { allow = ["MPL-2.0"], name = "webpki-roots" },
+    { allow = ["MPL-2.0"], crate = "webpki-roots" },
 ]
 
 [bans]

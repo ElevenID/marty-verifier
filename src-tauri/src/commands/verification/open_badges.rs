@@ -902,12 +902,11 @@ pub(super) fn open_badge_claims_from_normalized(normalized: &Value) -> Value {
 }
 
 pub(super) fn open_badge_issuer_from_normalized(normalized: &Value) -> Option<IssuerInfo> {
-    let issuer_value = normalized.get("issuer")?;
-
-    issuer_value.as_str().map(|issuer| IssuerInfo {
-        name: Some(issuer.to_string()),
+    // Core preserves both scalar and object-form authenticated issuer values.
+    credential_issuer_id(normalized).map(|issuer| IssuerInfo {
+        name: Some(issuer.clone()),
         jurisdiction: None,
-        subject: None,
+        subject: Some(issuer),
     })
 }
 

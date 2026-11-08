@@ -21,7 +21,7 @@ use marty_verification::open_badges::{
     detect_version as detect_open_badges_version, is_retired_ob2, ArtifactProvenance,
     AuthenticatedStatusList, DocumentStore, OpenBadgesVersion, StatusAuthorityProvenance,
 };
-use marty_verification::policy::{IssuerConstraintChecker, PresentationPolicy};
+use marty_verification::policy::PresentationPolicy;
 use marty_verification::trust_anchor::CscaRegistry;
 use marty_verification::verification::emrtd::{verify_emrtd, SecurityObject};
 use ring::hmac;
@@ -30,7 +30,6 @@ use serde_json::Value;
 use tauri::State;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
-use x509_cert::Certificate;
 
 use crate::config::{
     LivenessRetentionConfig, OpenBadgeTrustConfig, OpenBadgeTrustPolicy, PadProviderConfig,
@@ -312,8 +311,8 @@ pub struct VerifyRequest {
     /// Optional threshold for face match
     #[serde(default)]
     pub face_threshold: Option<f32>,
-    /// Verification policy to apply
-    #[allow(dead_code)]
+    /// Retired inline policy input. Configure a governed active policy instead.
+    /// Non-null values are rejected rather than silently ignored.
     pub policy: Option<VerificationPolicy>,
 }
 
@@ -548,11 +547,22 @@ pub enum RevocationStatus {
 /// Verify a credential
 #[tauri::command]
 pub async fn verify_credential(
-    request: VerifyRequest,
+    mut request: VerifyRequest,
     state: State<'_, AppState>,
 ) -> AppResult<VerificationResult> {
     #[cfg(feature = "reporting")]
     let started_at = std::time::Instant::now();
+    request.credential_type = normalize_credential_type(&request.credential_type);
+    if request.policy.is_some() {
+        return Err(AppError::Config(
+            "Inline verification policies are unsupported; configure an active presentation policy"
+                .into(),
+        ));
+    }
+    // Hold the chosen policy value for the entire operation. A later sync or
+    // lane change must not silently change the policy applied to these facts.
+    let active_policy = load_active_policy(state.inner()).await?;
+
     tracing::info!(
         credential_type = %request.credential_type,
         "Verifying credential"
@@ -623,11 +633,10 @@ pub async fn verify_credential(
     // Check online status
     let is_online = *state.is_online.read().await;
 
-    let credential_type = request.credential_type.to_lowercase();
-    if matches!(credential_type.as_str(), "emrtd" | "dtc") {
+    if matches!(request.credential_type.as_str(), "emrtd" | "dtc") {
         state.sync_engine.ensure_csca_cache_fresh().await?;
     }
-    let mut result = match credential_type.as_str() {
+    let mut result = match request.credential_type.as_str() {
         "emrtd" => verify_emrtd_payload(&request, &state, is_online).await?,
         "dtc" => verify_dtc_payload(&request, &state, is_online).await?,
         "open-badge" => verify_open_badge_payload(&request, &state, is_online).await?,
@@ -680,32 +689,9 @@ pub async fn verify_credential(
         );
     }
 
-    // Evaluate policy constraints if credential verified
-    if result.status == VerificationStatus::Valid {
-        // Extract issuer_id from result (placeholder for now)
-        let issuer_id = result
-            .issuer
-            .as_ref()
-            .and_then(|i| i.subject.as_deref())
-            .unwrap_or("unknown");
-
-        let trust_verified = result.trust_chain.valid;
-
-        match evaluate_policy_constraints(&request, issuer_id, trust_verified, state.inner()).await
-        {
-            Ok(violations) if !violations.is_empty() => {
-                result.status = VerificationStatus::Invalid;
-                result.warnings.extend(violations);
-            }
-            Ok(_) => {}
-            Err(error) => {
-                result.status = VerificationStatus::Failed;
-                result
-                    .warnings
-                    .push(format!("Policy evaluation unavailable: {error}"));
-            }
-        }
-    }
+    let evaluation_time = u64::try_from(Utc::now().timestamp())
+        .map_err(|_| AppError::Verification("Policy evaluation clock is invalid".into()))?;
+    apply_presentation_policy(&active_policy, &mut result, evaluation_time);
 
     // Store verification event
     result.verification_id = verification_id.clone();
