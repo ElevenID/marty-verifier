@@ -2,8 +2,10 @@
 
 This review addresses [issue 70](https://github.com/ElevenID/marty-verifier/issues/70)
 on top of Verifier `94c24fdf59fd03dcb008ab2053cf74d492165210`. The Core revision
-remains `a11313be1fdb6035c11c87b42b4120e395d63aba`; no cryptographic library version,
-fork revision, supported credential profile or custody configuration changes.
+remains `a11313be1fdb6035c11c87b42b4120e395d63aba`. The adapter/keyring cleanup in
+`cd88a0bf4ab2bbea5bcf0569b09e7c707c0a3109` preserves library versions; the security
+patches below update selected transitive libraries. Fork revisions, credential
+profiles and custody configuration remain unchanged.
 
 ## Remove the obsolete keyring path
 
@@ -112,6 +114,45 @@ pre-existing findings. Cargo-deny 0.20.2 also rejects the existing
 `unmaintained = "warn"` configuration before it can scan the graph; the current
 schema requires a dependency selection value. Those results are separate from
 the successfully validated dependency-health review record.
+
+## Compatible TLS and transport security patches
+
+The next checkpoint updates only these five locked packages, using compatible
+stable releases from their existing dependency families:
+
+| Package | Previous | Patched | Existing parents | Resolved findings |
+| --- | --- | --- | --- | --- |
+| quinn-proto | 0.11.16 | [0.11.19](https://crates.io/api/v1/crates/quinn-proto/0.11.19) | quinn 0.11.11 | RUSTSEC-2026-0338, 0339, 0340, 0341, 0342 |
+| rustls | 0.23.43 | [0.23.46](https://crates.io/api/v1/crates/rustls/0.23.46) | reqwest, hyper-rustls, ldap3, quinn, tokio-rustls, platform verifier, updater | RUSTSEC-2026-0285, 0346, 0348, 0349 |
+| rustls-webpki | 0.103.13 | [0.103.16](https://crates.io/api/v1/crates/rustls-webpki/0.103.16) | rustls, rustls-platform-verifier | RUSTSEC-2026-0382 |
+| webpki-roots | 1.0.9 | [1.0.11](https://crates.io/api/v1/crates/webpki-roots/1.0.11) | reqwest, hyper-rustls | RUSTSEC-2026-0381 |
+| webpki-root-certs | 1.0.9 | [1.0.11](https://crates.io/api/v1/crates/webpki-root-certs/1.0.11) | ureq, rustls-platform-verifier | RUSTSEC-2026-0383 |
+
+The advisory database's fixed-version ranges require quinn-proto at least
+0.11.18, rustls at least 0.23.46, rustls-webpki at least 0.103.16 within its stable
+family, and both root bundles at least 1.0.10. The selected releases satisfy all
+those ranges without changing their parent versions or introducing a new crypto
+backend. Existing aws-lc-rs 1.18.0 satisfies the new TLS requirements.
+
+Scanning against the same advisory database reduces the vulnerability count from
+**17 to 5**: RSA's unresolved advisory and four findings in zip 4.6.1 remain at
+this checkpoint. The 14 unmaintained and two yanked warnings remain visible.
+These numbers describe lockfile findings, not a claim that every vulnerable
+function is reachable on every supported platform.
+
+`deny.toml` is also migrated to the supported
+[cargo-deny 0.20 advisory schema](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/advisories/cfg.md)
+and [license schema](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/licenses/cfg.md).
+Vulnerability and notice advisories are errors by default; unmaintained and
+unsound selection explicitly covers the whole graph. The license allowlist and
+two existing crate-specific exceptions are unchanged. Removing obsolete
+`licenses.deny`/`copyleft` fields does not permit GPL/AGPL: unlisted licenses are
+denied by the current schema. No advisory ignore is added, and all five platform
+targets remain in the graph.
+
+Cargo-deny now completes its scan instead of rejecting its configuration. It
+still reports the unresolved advisories, unmaintained dependencies and existing
+license-policy findings. The scan is not presented as a passing security gate.
 
 ## Retention decision and exit criteria
 
