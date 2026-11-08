@@ -22,6 +22,20 @@ struct RuntimeConfigInner {
     active_policy_id: Option<String>,
 }
 
+impl RuntimeConfigInner {
+    fn effective_policy_id(&self) -> Option<String> {
+        self.lane
+            .as_ref()
+            .and_then(|lane| lane.default_policy_id.clone())
+            .or_else(|| self.active_policy_id.clone())
+            .or_else(|| {
+                self.deployment_profile
+                    .as_ref()
+                    .and_then(|profile| profile.default_presentation_policy_id.clone())
+            })
+    }
+}
+
 impl RuntimeConfig {
     /// Create a new runtime configuration
     pub fn new() -> Self {
@@ -56,12 +70,8 @@ impl RuntimeConfig {
     /// Apply lane configuration
     pub async fn apply_lane(&self, lane: Lane) {
         let mut inner = self.inner.write().await;
-
-        // Use lane's default policy if specified
-        if let Some(policy_id) = &lane.default_policy_id {
-            inner.active_policy_id = Some(policy_id.clone());
-        }
-
+        // Lane defaults are resolved dynamically, not copied into the explicit
+        // selection. Otherwise changing lanes can retain the previous default.
         inner.lane = Some(lane);
     }
 
@@ -86,23 +96,7 @@ impl RuntimeConfig {
 
     /// Get active policy ID (from lane or profile default)
     pub async fn get_active_policy_id(&self) -> Option<String> {
-        let inner = self.inner.read().await;
-
-        // Priority: lane default > explicit active > profile default
-        if let Some(lane) = &inner.lane {
-            if let Some(policy_id) = &lane.default_policy_id {
-                return Some(policy_id.clone());
-            }
-        }
-
-        if let Some(policy_id) = &inner.active_policy_id {
-            return Some(policy_id.clone());
-        }
-
-        inner
-            .deployment_profile
-            .as_ref()
-            .and_then(|p| p.default_presentation_policy_id.clone())
+        self.inner.read().await.effective_policy_id()
     }
 
     /// Get offline cache TTL in hours
@@ -209,11 +203,17 @@ impl RuntimeConfig {
                 .as_ref()
                 .map(|p| p.update_policy.clone()),
             network_mode,
-            active_policy_id: inner.active_policy_id.clone(),
-            offline_cache_ttl_hours: self.get_offline_cache_ttl_hours().await,
-            operator_biometric_authentication_required: self
-                .is_operator_biometric_authentication_required()
-                .await,
+            active_policy_id: inner.effective_policy_id(),
+            offline_cache_ttl_hours: inner
+                .deployment_profile
+                .as_ref()
+                .map(|profile| profile.offline_cache_ttl_hours)
+                .unwrap_or(24),
+            operator_biometric_authentication_required: inner
+                .deployment_profile
+                .as_ref()
+                .map(|profile| profile.operator_biometric_authentication_required)
+                .unwrap_or(false),
             ux_language,
             ux_theme,
         }
@@ -257,7 +257,7 @@ mod tests {
             offline_cache_ttl_hours: 48,
             operator_biometric_authentication_required: true,
             audit_all_events: true,
-            default_presentation_policy_id: None,
+            default_presentation_policy_id: Some("profile-policy".into()),
         };
 
         config.apply_deployment_profile(profile).await;
@@ -273,5 +273,52 @@ mod tests {
         let ux = config.get_ux_config().await.unwrap();
         assert_eq!(ux.language, "fr");
         assert_eq!(ux.theme, "airport");
+
+        assert_eq!(
+            config.get_active_policy_id().await.as_deref(),
+            Some("profile-policy")
+        );
+        assert_eq!(
+            config.snapshot().await.active_policy_id.as_deref(),
+            Some("profile-policy")
+        );
+        config
+            .apply_lane(Lane {
+                id: "lane-1".into(),
+                name: "First lane".into(),
+                deployment_profile_id: "profile-1".into(),
+                default_policy_id: Some("lane-policy".into()),
+                device_ids: Vec::new(),
+                metadata: serde_json::Value::Null,
+            })
+            .await;
+        assert_eq!(
+            config.get_active_policy_id().await.as_deref(),
+            Some("lane-policy")
+        );
+        assert_eq!(
+            config.snapshot().await.active_policy_id.as_deref(),
+            Some("lane-policy")
+        );
+
+        config
+            .apply_lane(Lane {
+                id: "lane-2".into(),
+                name: "Second lane".into(),
+                deployment_profile_id: "profile-1".into(),
+                default_policy_id: None,
+                device_ids: Vec::new(),
+                metadata: serde_json::Value::Null,
+            })
+            .await;
+        // Changing to a lane without an override restores the profile default.
+        assert_eq!(
+            config.get_active_policy_id().await.as_deref(),
+            Some("profile-policy")
+        );
+        assert_eq!(
+            config.snapshot().await.active_policy_id.as_deref(),
+            Some("profile-policy")
+        );
     }
 }

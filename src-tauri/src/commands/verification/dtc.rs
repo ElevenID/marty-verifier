@@ -84,8 +84,8 @@ pub(super) async fn verify_dtc_payload(
         credential_type: request.credential_type.clone(),
         issuer: issuer.map(|issuer| IssuerInfo {
             name: Some(issuer.clone()),
-            jurisdiction: Some(issuer),
-            subject: None,
+            jurisdiction: Some(issuer.clone()),
+            subject: Some(issuer),
         }),
         disclosed_claims: build_dtc_claims(&dtc_data),
         trust_chain: TrustChainStatus {

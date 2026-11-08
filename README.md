@@ -2,6 +2,20 @@
 
 An on-site credential verification kiosk built with Tauri, designed for edge checkpoint deployments with offline-first operation.
 
+Verification requires an active, locally available presentation policy from the
+lane or deployment profile. The verifier captures that policy for the operation
+and delegates its complete requirements to Core after protocol verification.
+Missing policies and unsupported inline request policies fail closed. Protocol
+labels are normalized before capability checks and dispatch; they cannot stand
+in for authenticated credential-template identities.
+
+The current native adapters provide verified credential claims and issuer facts,
+but do not prove a selected trust-profile identity, holder binding, credential
+or presentation issue time, or a live revocation retrieval. Policies requiring
+that unavailable evidence are rejected with Core's policy reasons. Cached status
+can still identify a revoked credential; network connectivity and local display
+timestamps never satisfy freshness or live-check requirements.
+
 ## Features
 
 - **Offline-First**: Operates without network for 72+ hours with local trust anchor cache
