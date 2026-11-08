@@ -17,10 +17,10 @@ repository = "https://github.com/ElevenID/marty-verifier"
 
 [workspace.dependencies]
 # Tauri
-tauri = { version = "2.1", features = ["devtools"] }
+tauri = { version = "2.12.5", features = ["devtools"] }
 tauri-build = "2.0"
 tauri-plugin-shell = "2.0"
-tauri-plugin-updater = "2.1.0"
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "zip"] }
 
 # Async runtime
 tokio = { version = "1.42", features = ["full"] }

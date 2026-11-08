@@ -3,9 +3,12 @@
 This review addresses [issue 70](https://github.com/ElevenID/marty-verifier/issues/70)
 on top of Verifier `94c24fdf59fd03dcb008ab2053cf74d492165210`. The Core revision
 remains `a11313be1fdb6035c11c87b42b4120e395d63aba`. The adapter/keyring cleanup in
-`cd88a0bf4ab2bbea5bcf0569b09e7c707c0a3109` preserves library versions; the security
-patches below update selected transitive libraries. Fork revisions, credential
-profiles and custody configuration remain unchanged.
+[29af53ad](https://github.com/ElevenID/marty-verifier/commit/29af53ad110c1545dd93ee94026fe8a78ad0afa1)
+preserves library versions; the compatible TLS patches in
+[9884667b](https://github.com/ElevenID/marty-verifier/commit/9884667b9c0a6da8d4744fc65e7e0d8fe3d3e85d)
+update five transitive libraries. The final updater migration below uses the
+stable upstream owner to remove the affected ZIP family. Fork revisions,
+credential profiles and custody configuration remain unchanged.
 
 ## Remove the obsolete keyring path
 
@@ -153,6 +156,125 @@ targets remain in the graph.
 Cargo-deny now completes its scan instead of rejecting its configuration. It
 still reports the unresolved advisories, unmaintained dependencies and existing
 license-policy findings. The scan is not presented as a passing security gate.
+
+## Migrate the updater through its stable owner
+
+The four remaining ZIP advisories have fixed-version ranges beginning at ZIP 9:
+[RUSTSEC-2026-0367](https://rustsec.org/advisories/RUSTSEC-2026-0367.html),
+[0368](https://rustsec.org/advisories/RUSTSEC-2026-0368.html),
+[0369](https://rustsec.org/advisories/RUSTSEC-2026-0369.html) and
+[0429](https://rustsec.org/advisories/RUSTSEC-2026-0429.html). The locked updater
+2.10.1 requires ZIP 4 on Windows. Its stable successor
+[2.14.1](https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.1/dependencies)
+requires Tauri 2.12 and supports ZIP 9. The migration follows that supported owner
+path rather than overriding the old updater's ZIP requirement.
+
+| Component | Previous locked version | Qualified version |
+| --- | --- | --- |
+| Tauri runtime | 2.11.5 | [2.12.5](https://crates.io/api/v1/crates/tauri/2.12.5) |
+| Tauri updater plugin | 2.10.1 | [2.14.1](https://crates.io/api/v1/crates/tauri-plugin-updater/2.14.1) |
+| Windows updater ZIP dependency | 4.6.1 | [9.4.2](https://crates.io/api/v1/crates/zip/9.4.2) |
+| JavaScript Tauri API | 2.11.1 | [2.12.4](https://registry.npmjs.org/@tauri-apps/api/2.12.4) |
+| Tauri CLI and platform binaries | 2.11.4 | [2.12.4](https://registry.npmjs.org/@tauri-apps/cli/2.12.4) |
+
+The Rust lock also updates the required Tauri build/codegen/runtime, Wry/Tao and
+platform support family. The npm and pnpm locks update the Tauri API/CLI
+records and existing shell plugin's API edge. The npm lock also reconciles its
+root metadata with the already-declared `@emotion/cache` dependency; no unrelated
+package version changes. The API and Rust runtime share major/minor 2.12,
+satisfying the CLI's version compatibility check. Tauri and
+updater declare Rust 1.90; ZIP declares 1.88, within this repository's pinned
+Rust 1.97.1 toolchain. The frontend continues to use Node 24 and pnpm 9.
+
+The updater explicitly selects `rustls-tls` and `zip` with default features
+disabled. This preserves the previous resolved capabilities and Windows ZIP
+support without adopting the new `system-proxy` default. Release targets,
+`createUpdaterArtifacts = "v1Compatible"`, the pinned updater public key,
+capability grants, and the existing signed-artifact/startup gates are unchanged.
+Regenerated Tauri schemas add only the framework's explicit allow/deny definitions
+for app exit and fullscreen-on-monitor; every previous permission, permission set
+and default grant is preserved. Adding a schema definition does not grant it to
+the application.
+
+Review of the checksum-verified
+[updater source at 12819068](https://github.com/tauri-apps/plugins-workspace/tree/128190689dbe59b59d344e01bf07b00862aa3791/plugins/updater)
+confirms that downloaded bytes still require verification with the configured
+public key before installation. `install()` additionally verifies bytes supplied
+directly by its caller. The Windows path still extracts an authenticated archive
+into a fresh temporary directory and selects the installer. The selected
+[ZIP source at 0d7adbeb](https://github.com/zip-rs/zip2/tree/0d7adbeb0c86c1f367b0cc84237abb106948cb8e)
+uses the default enclosed-path extraction checks, including Windows path and
+reparse-point handling; no unrestricted extraction option is enabled. This does
+not assert universal archive resource bounds. The updater's public-signature
+verification does not introduce an application private signing key or software
+credential-signing fallback.
+
+The official updater crate SHA-256 is
+`d957abbcb3f9f6c76d22a3a0f012f30880640d0bccb5634d2b12a9937e4c872b`;
+ZIP 9.4.2 is
+`df3845f734baabdd02de353a20580e30ceccd03897def44a4eb8e9654992e294`.
+Both downloaded crates matched crates.io metadata before source review.
+
+## Final security and custody results
+
+Using the same cargo-audit version and advisory database throughout gives this
+comparison:
+
+| Locked graph | Vulnerability findings | Unmaintained warnings | Yanked warnings |
+| --- | ---: | ---: | ---: |
+| Original / adapter cleanup | 17 | 14 | 2 |
+| Five compatible TLS patches | 5 | 14 | 2 |
+| Stable updater/Tauri migration | 1 | 9 | 2 |
+
+The remaining vulnerability is **RUSTSEC-2023-0071 in RSA 0.9.10**. The updater
+migration also removes five obsolete `unic-*` dependencies. The nine remaining
+unmaintained dependencies are `clear_on_drop`, `derivative`, `proc-macro-error`,
+`serde_cbor`, `smallstr`, `unsafe-libyaml`, `zbus_names`, `zvariant` and
+`zvariant_derive`. These remain visible for their owners' follow-up; no advisory
+ignore is added.
+
+The final cargo-deny 0.20.2 scan completes and exits unsuccessfully with **one
+vulnerability, nine unmaintained-dependency errors and 32 license rejection
+findings**. Its bans and sources checks pass, with the existing duplicate/source
+warnings still reported. The license allowlist and its two existing exceptions
+have not changed. These are real policy findings, not a configuration parse
+failure or a clean security result.
+
+Actual non-dev Cargo feature graphs were checked for both
+`x86_64-unknown-linux-gnu` and `x86_64-pc-windows-msvc`, using the final lock and
+`-p marty-verifier -e features,no-dev`. They retain `kms-only` on
+`marty-crypto`, `marty-verification` and `marty-oid4vci` at the same Core revision.
+Their `default`, `local-key-operations` and `test-fixtures` features are absent.
+The resolved graph also excludes the ECDSA signing feature, combined EC signing
+features, jsonwebtoken's software crypto backend, Ed448 signing/key-export
+features and isomdl's local issuer-signing feature. Updater features are exactly
+`rustls-tls,zip`; Windows resolves ZIP 9.4.2 and no ZIP 4. This qualifies the
+credential/private-signing capability boundary; ordinary TLS transport and
+existing symmetric local-storage protection are not credential signing.
+
+These are resolved graph and source checks for Windows, not execution of a
+Windows installer. Windows/macOS packaging, signing, installation and upgrade
+runtime checks remain the responsibility of the existing platform release gates.
+
+## Local qualification of the final graph
+
+| Gate | Result |
+| --- | --- |
+| `cargo test --locked --workspace --all-features` | 237 passed, zero failed, one existing network-policy test ignored. Includes the signed USB, DTC/eMRTD, OID4VP and OpenBadge suites and real owned-storage startup regression. |
+| `cargo clippy --locked --offline --workspace --all-targets --all-features -- -D warnings` | Passed. |
+| pnpm 9 frozen install, type-check and ESLint | Passed with the updated frontend lock. |
+| Frontend unit tests | 42 passed across five files. |
+| Existing native-build, packaged-startup, stable-tag, Core-pin and private-fork Python contracts | 44 passed, plus 20 passing subtests. |
+| `tauri build --debug --no-bundle --ci -- --locked --offline` | Passed the normal Rust/JavaScript version check, production frontend/obfuscation hook and Linux native application build. No mismatch bypass, installer generation or code signing was used. |
+| Built application's `--self-check --report` | Passed all six checks: embedded frontend, safe defaults, application migrations, trust-storage initialization, runtime restore and command registration. |
+| Formatting, diff check and the organization's dependency-health validator | Passed. |
+
+The Linux native gates linked the official Microsoft ONNX Runtime 1.28.0 library
+required by the unchanged `ort-sys` selection. The upstream CDN was unavailable,
+so the matching official release archive was used after SHA-256 verification;
+no native dependency was stubbed or feature disabled. These checks qualify the
+Linux debug application and its startup contract, not signed release installers
+or actual update installation on any platform.
 
 ## Retention decision and exit criteria
 
