@@ -8,7 +8,6 @@ use std::{fs, path::Path};
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use marty_verification::dtc::verify_dtc_json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -174,14 +173,12 @@ pub(crate) fn public_signed_trust_package(
                 .context("public trust signature missing")?,
         )
         .context("decode public trust signature")?;
-    let signature = Signature::from_slice(&signature).context("parse public trust signature")?;
-    VerifyingKey::from_bytes(&signing_public_key)
-        .context("parse public trust signer")?
-        .verify(
-            &canonical_signed_payload(&trust_package).context("canonicalize trust package")?,
-            &signature,
-        )
-        .context("verify public trust package")?;
+    marty_crypto::ed25519::verify(
+        &signing_public_key,
+        &canonical_signed_payload(&trust_package).context("canonicalize trust package")?,
+        &signature,
+    )
+    .context("verify public trust package")?;
     Ok(SignedTrustPackage {
         trust_package,
         signing_public_key,
@@ -294,7 +291,6 @@ pub(crate) fn absolute_display(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     use marty_verification::dtc::verify_dtc_json;
 
     #[test]
@@ -362,9 +358,7 @@ mod tests {
         let signature = STANDARD
             .decode(generated.trust_package["signature"].as_str().unwrap())
             .unwrap();
-        VerifyingKey::from_bytes(&generated.signing_public_key)
-            .unwrap()
-            .verify(&payload, &Signature::from_slice(&signature).unwrap())
+        marty_crypto::ed25519::verify(&generated.signing_public_key, &payload, &signature)
             .expect("trust package signature");
 
         let mut dtc = generated.dtc;

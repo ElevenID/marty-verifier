@@ -2,12 +2,11 @@
 
 use super::{
     governed_csca_record_is_usable, verify_emrtd, verify_from_reader, AppError, AppResult,
-    AppState, Certificate, CoreTrustAnchorType, CscaRegistry, EmrtdDetails, EmrtdPayload, HashMap,
-    IssuerInfo, MockPassportReader, RevocationStatus, SecurityObject, TrustChainStatus, Utc,
+    AppState, CoreTrustAnchorType, CscaRegistry, EmrtdDetails, EmrtdPayload, HashMap, IssuerInfo,
+    MockPassportReader, RevocationStatus, SecurityObject, TrustChainStatus, Utc,
     VerificationResult, VerificationStatus, VerifyRequest, BASE64_STANDARD,
 };
 use base64::Engine;
-use x509_cert::der::Decode;
 
 /// Testable offline entry point for eMRTD verification (no `AppState`).
 ///
@@ -264,12 +263,13 @@ pub(super) async fn build_csca_registry(state: &AppState) -> AppResult<CscaRegis
         .filter(|record| governed_csca_record_is_usable(record, now, max_offline_hours))
     {
         let anchor = record.anchor;
-        let cert = Certificate::from_der(&anchor.certificate_der).map_err(|e| {
-            AppError::Verification(format!(
-                "Failed to parse CSCA certificate {}: {}",
-                anchor.id, e
-            ))
-        })?;
+        let cert = marty_crypto::certificate::load_certificate_der(&anchor.certificate_der)
+            .map_err(|e| {
+                AppError::Verification(format!(
+                    "Failed to parse CSCA certificate {}: {}",
+                    anchor.id, e
+                ))
+            })?;
         registry
             .add_country_csca(&anchor.jurisdiction, cert)
             .map_err(|e| AppError::Verification(e.to_string()))?;

@@ -2,8 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::{any::Any, collections::HashMap};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
@@ -22,73 +21,6 @@ const CHECKS: [&str; 6] = [
     "command_registration",
 ];
 const MAX_FAILURE_DIAGNOSTIC_CHARS: usize = 2_048;
-
-type LegacySecrets = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
-#[derive(Debug, Default)]
-struct LegacyMemoryBuilder {
-    secrets: LegacySecrets,
-}
-
-#[derive(Debug)]
-struct LegacyMemoryCredential {
-    key: String,
-    secrets: LegacySecrets,
-}
-
-impl keyring_legacy::credential::CredentialBuilderApi for LegacyMemoryBuilder {
-    fn build(
-        &self,
-        target: Option<&str>,
-        service: &str,
-        user: &str,
-    ) -> keyring_legacy::Result<Box<keyring_legacy::Credential>> {
-        Ok(Box::new(LegacyMemoryCredential {
-            key: format!("{}\0{service}\0{user}", target.unwrap_or_default()),
-            secrets: Arc::clone(&self.secrets),
-        }))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn persistence(&self) -> keyring_legacy::credential::CredentialPersistence {
-        keyring_legacy::credential::CredentialPersistence::ProcessOnly
-    }
-}
-
-impl keyring_legacy::credential::CredentialApi for LegacyMemoryCredential {
-    fn set_secret(&self, secret: &[u8]) -> keyring_legacy::Result<()> {
-        self.secrets
-            .lock()
-            .expect("legacy self-check keyring lock poisoned")
-            .insert(self.key.clone(), secret.to_vec());
-        Ok(())
-    }
-
-    fn get_secret(&self) -> keyring_legacy::Result<Vec<u8>> {
-        self.secrets
-            .lock()
-            .expect("legacy self-check keyring lock poisoned")
-            .get(&self.key)
-            .cloned()
-            .ok_or(keyring_legacy::Error::NoEntry)
-    }
-
-    fn delete_credential(&self) -> keyring_legacy::Result<()> {
-        self.secrets
-            .lock()
-            .expect("legacy self-check keyring lock poisoned")
-            .remove(&self.key)
-            .map(|_| ())
-            .ok_or(keyring_legacy::Error::NoEntry)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 #[derive(Debug, Serialize)]
 struct SelfCheckReport<'a> {
@@ -189,11 +121,17 @@ fn write_report(path: &Path, report: &SelfCheckReport<'_>) -> Result<()> {
 }
 
 fn perform_self_check() -> Result<()> {
-    let current_store_id = install_ephemeral_keyrings()?;
+    let current_store_id = install_ephemeral_keyring()?;
 
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     validate_context(&context)?;
 
+    validate_owned_runtime(&current_store_id)?;
+    let _handler = crate::app::command_handler();
+    Ok(())
+}
+
+fn validate_owned_runtime(current_store_id: &str) -> Result<()> {
     let temporary = tempfile::tempdir().context("create isolated self-check directory")?;
     let config = AppConfig {
         data_dir: temporary.path().join("data"),
@@ -203,7 +141,7 @@ fn perform_self_check() -> Result<()> {
 
     let state = AppState::from_config_with_process_local_keyring(config)
         .context("initialize application state")?;
-    validate_ephemeral_keyring(&current_store_id)?;
+    validate_ephemeral_keyring(current_store_id)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -226,23 +164,20 @@ fn perform_self_check() -> Result<()> {
         Result::<()>::Ok(())
     })?;
 
-    let _handler = crate::app::command_handler();
     Ok(())
 }
 
-fn install_ephemeral_keyrings() -> Result<String> {
+fn install_ephemeral_keyring() -> Result<String> {
     let current_store: Arc<keyring_core::CredentialStore> =
         keyring_core::mock::Store::new().context("create current keyring store")?;
     let current_store_id = current_store.id();
     keyring_core::set_default_store(current_store);
-    keyring_legacy::set_default_credential_builder(Box::new(LegacyMemoryBuilder::default()));
     validate_ephemeral_keyring(&current_store_id)?;
 
     let database_key = base64::engine::general_purpose::STANDARD.encode([0x42_u8; 32]);
     let pii_key = base64::engine::general_purpose::STANDARD.encode([0x24_u8; 32]);
     seed_current_keyring("database_encryption_key", &database_key)?;
     seed_current_keyring("pii_encryption_key", &pii_key)?;
-    seed_legacy_keyring("database_encryption_key", &database_key)?;
     Ok(current_store_id)
 }
 
@@ -265,13 +200,6 @@ fn validate_ephemeral_keyring(expected_id: &str) -> Result<()> {
         return Err(anyhow!("current keyring escaped the process-local store"));
     }
     Ok(())
-}
-
-fn seed_legacy_keyring(name: &str, value: &str) -> Result<()> {
-    keyring_legacy::Entry::new("com.marty.verifier", name)
-        .context("create legacy keyring entry")?
-        .set_password(value)
-        .context("seed legacy keyring")
 }
 
 fn validate_context(context: &tauri::Context<tauri::Wry>) -> Result<()> {
@@ -317,11 +245,26 @@ fn validate_safe_defaults(config: &AppConfig) -> Result<()> {
 mod tests {
     use super::*;
 
+    struct RestoreDefaultStore(Option<Arc<keyring_core::CredentialStore>>);
+
+    impl Drop for RestoreDefaultStore {
+        fn drop(&mut self) {
+            keyring_core::unset_default_store();
+            if let Some(previous) = self.0.take() {
+                keyring_core::set_default_store(previous);
+            }
+        }
+    }
+
     #[test]
     fn complete_startup_self_check_initializes_owned_runtime() {
+        let _restore = RestoreDefaultStore(keyring_core::unset_default_store());
         if tauri::is_dev() {
             // Cargo's ordinary test profile intentionally uses the dev URL and
-            // has no embedded frontend. Release payloads exercise this path.
+            // has no embedded frontend. Qualify real storage initialization in
+            // this profile too; release payloads also qualify embedded assets.
+            let store_id = install_ephemeral_keyring().expect("install process-local keyring");
+            validate_owned_runtime(&store_id).expect("owned runtime must initialize");
             return;
         }
         perform_self_check().expect("complete startup self-check must pass");

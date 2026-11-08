@@ -30,7 +30,6 @@ use serde_json::Value;
 use tauri::State;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
-use x509_cert::Certificate;
 
 use crate::config::{
     LivenessRetentionConfig, OpenBadgeTrustConfig, OpenBadgeTrustPolicy, PadProviderConfig,

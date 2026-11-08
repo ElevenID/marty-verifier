@@ -43,7 +43,6 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 base64.workspace = true
-x509-cert = { workspace = true }
 ring.workspace = true
 url.workspace = true
 
@@ -51,10 +50,9 @@ url.workspace = true
 directories = "6.0"
 tempfile = "3.14"
 
-# The packaged startup self-check replaces both keyring generations with
-# process-local stores before initializing either storage implementation.
+# The packaged startup self-check installs the same process-local keyring store
+# consumed by Marty secure storage before initializing application state.
 keyring-core = "1.0"
-keyring-legacy = { package = "keyring", version = "3.6" }
 
 # Internal crates
 marty-app-storage.workspace = true
@@ -68,7 +66,7 @@ marty-reporting.workspace = true
 
 # Verification crates from marty-core (via workspace)
 marty-verification.workspace = true
-marty-crypto.workspace = true
+marty-crypto = { workspace = true, features = ["x509-parsing"] }
 marty-oid4vci = { workspace = true, optional = true }
 
 # HTTP client (for online OID4VP verification fallback)

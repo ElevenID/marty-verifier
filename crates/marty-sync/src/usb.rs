@@ -4,11 +4,9 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use der::Decode;
 use marty_types::open_badges::contains_private_key_material;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use x509_cert::Certificate;
 
 use crate::{error::SyncError, signing_key::decode_signing_public_key};
 use marty_secure_storage::{
@@ -462,7 +460,7 @@ fn parse_certificate_entry(
             "Certificate must contain between 1 and {MAX_CERTIFICATE_BYTES} DER bytes"
         )));
     }
-    Certificate::from_der(&certificate_der)
+    marty_crypto::certificate::load_certificate_der(&certificate_der)
         .map_err(|error| SyncError::Certificate(format!("Malformed certificate DER: {error}")))?;
 
     let not_before = parse_declared_timestamp(&entry.not_before, "certificate not_before")?;
@@ -817,30 +815,22 @@ fn write_jcs_value(value: &Value, output: &mut Vec<u8>) -> Result<(), SyncError>
 /// The signature covers RFC 8785 JSON Canonicalization Scheme bytes for every
 /// field except `signature`. Identity and digest are derived from the actual pinned
 /// key and these exact signed bytes, never from `signing_cert`.
+/// Marty owns strict Ed25519 verification, including rejection of small-order keys.
 fn verify_package_signature(
     package_value: &Value,
     package: &TrustAnchorPackage,
     trusted_public_key: &[u8; 32],
 ) -> Result<VerifiedSignature, SyncError> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
-    // ── Load the trusted public key ─────────────────────────────────
-    let verifying_key = VerifyingKey::from_bytes(trusted_public_key)
-        .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 public key: {e}")))?;
-
     // ── Decode the signature from the package ───────────────────────
     use base64::Engine;
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&package.signature)
         .map_err(|e| SyncError::UsbImport(format!("Invalid signature base64: {e}")))?;
-    let signature = Signature::from_slice(&sig_bytes)
-        .map_err(|e| SyncError::UsbImport(format!("Invalid Ed25519 signature: {e}")))?;
-
     // ── Build the signed payload (JSON without the "signature" field)
     let canonical = canonical_signed_payload(package_value)?;
 
     // ── Verify ──────────────────────────────────────────────────────
-    match verifying_key.verify(&canonical, &signature) {
+    match marty_crypto::ed25519::verify(trusted_public_key, &canonical, &sig_bytes) {
         Ok(()) => {
             tracing::info!("USB package signature verified successfully");
             Ok(VerifiedSignature {
@@ -924,6 +914,36 @@ mod tests {
                 parse_strict_package(&serde_json::to_string(&missing_transition_field).unwrap())
                     .expect_err("missing signed transition field must fail");
             assert!(error.to_string().contains(required_policy_field));
+        }
+    }
+
+    #[test]
+    fn strict_package_verification_rejects_small_order_keys_and_malformed_signatures() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("usb_json_shape_public.json")).unwrap();
+        let (mut package, mut value) =
+            parse_strict_package(fixture["package_json"].as_str().unwrap()).unwrap();
+
+        // Public identity-point encoding with R = identity and s = zero is an
+        // unsigned forgery that permissive Ed25519 verification can accept.
+        // No signing key is generated or loaded to construct this negative.
+        let mut weak_key = [0_u8; 32];
+        weak_key[0] = 1;
+        let mut forgery = [0_u8; 64];
+        forgery[0] = 1;
+        package.signature = base64::engine::general_purpose::STANDARD.encode(forgery);
+        value["signature"] = json!(package.signature);
+        assert!(verify_package_signature(&value, &package, &weak_key).is_err());
+
+        let trusted_key: [u8; 32] = base64::engine::general_purpose::STANDARD
+            .decode(fixture["public_key_base64"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        for length in [0, 63, 65] {
+            package.signature = base64::engine::general_purpose::STANDARD.encode(vec![0; length]);
+            value["signature"] = json!(package.signature);
+            assert!(verify_package_signature(&value, &package, &trusted_key).is_err());
         }
     }
 
@@ -1342,6 +1362,45 @@ mod tests {
         let mut conflicting = public_method();
         conflicting["publicKeyMultibase"] = json!("z6Mkh...");
         assert!(parse_open_badge_method(&conflicting, created_at).is_err());
+    }
+
+    #[test]
+    fn certificate_adapter_preserves_signed_metadata_and_requires_der() {
+        let (package, _) =
+            parse_strict_package(include_str!("fixtures/demo_emrtd/trust-package.json")).unwrap();
+        let created_at = parse_required_timestamp(&package.created_at, "created_at").unwrap();
+        let mut entry = package.csca_certificates.into_iter().next().unwrap();
+        let anchor = parse_certificate_entry(
+            &entry,
+            marty_secure_storage::TrustAnchorType::Csca,
+            created_at,
+        )
+        .unwrap();
+        assert_eq!(anchor.subject, entry.subject);
+        assert_eq!(anchor.issuer, entry.issuer);
+        assert_eq!(anchor.serial_number, entry.serial);
+        assert_eq!(anchor.synced_at, created_at);
+        assert_eq!(
+            anchor.not_before,
+            parse_declared_timestamp(&entry.not_before, "not_before").unwrap()
+        );
+        assert_eq!(
+            anchor.not_after,
+            parse_declared_timestamp(&entry.not_after, "not_after").unwrap()
+        );
+        let pem = format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            entry.certificate_der_b64
+        );
+        entry.certificate_der_b64 = base64::engine::general_purpose::STANDARD.encode(pem);
+        assert!(matches!(
+            parse_certificate_entry(
+                &entry,
+                marty_secure_storage::TrustAnchorType::Csca,
+                created_at,
+            ),
+            Err(SyncError::Certificate(_))
+        ));
     }
 
     #[test]

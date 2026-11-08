@@ -1915,7 +1915,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
  "pkcs8 0.10.2",
- "serde",
  "signature 2.2.0",
 ]
 
@@ -3832,16 +3831,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring"
-version = "3.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
-dependencies = [
- "log",
- "zeroize",
-]
-
-[[package]]
 name = "keyring-core"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4400,8 +4389,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chrono",
- "der 0.7.10",
- "ed25519-dalek",
  "keyring-core",
  "marty-crypto",
  "marty-secure-storage",
@@ -4415,7 +4402,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
- "x509-cert",
 ]
 
 [[package]]
@@ -4500,7 +4486,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
- "keyring",
  "keyring-core",
  "marty-app-storage",
  "marty-biometrics",
@@ -4526,7 +4511,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "x509-cert",
 ]
 
 [[package]]

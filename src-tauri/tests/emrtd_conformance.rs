@@ -24,6 +24,7 @@
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use marty_crypto::certificate::load_certificate_der;
 
 use marty_verifier::commands::verification::{verify_emrtd_offline, VerificationStatus};
 
@@ -405,14 +406,12 @@ fn csca_chain_valid_with_populated_registry() {
     use marty_verification::trust_anchor::CscaRegistry;
     use marty_verification::verification::emrtd::{verify_emrtd, ChainStatus, SecurityObject};
     use std::collections::HashMap;
-    use x509_cert::der::Decode;
-    use x509_cert::Certificate;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
     let (sod_der, csca_der) = signed_fixture(&dgs);
 
     // Populate the registry with the CSCA that signed this chain.
-    let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA DER");
+    let csca_cert = load_certificate_der(&csca_der).expect("parse CSCA DER");
     let mut registry = CscaRegistry::new();
     registry
         .add_country_csca("DEU", csca_cert)
@@ -439,13 +438,11 @@ fn full_emrtd_verification_succeeds_with_csca_in_registry() {
     use marty_verification::trust_anchor::CscaRegistry;
     use marty_verification::verification::emrtd::{verify_emrtd, SecurityObject};
     use std::collections::HashMap;
-    use x509_cert::der::Decode;
-    use x509_cert::Certificate;
 
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
     let (sod_der, csca_der) = signed_fixture(&dgs);
 
-    let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA DER");
+    let csca_cert = load_certificate_der(&csca_der).expect("parse CSCA DER");
     let mut registry = CscaRegistry::new();
     registry
         .add_country_csca("DEU", csca_cert)
@@ -471,8 +468,6 @@ fn wrong_csca_cert_fails_chain_validation() {
     use marty_verification::trust_anchor::CscaRegistry;
     use marty_verification::verification::emrtd::{verify_emrtd, ChainStatus, SecurityObject};
     use std::collections::HashMap;
-    use x509_cert::der::Decode;
-    use x509_cert::Certificate;
 
     // SOD signed with csca_a's DSC; registry will contain csca_b instead.
     let dgs = vec![(1u8, DG1_MRZ.to_vec())];
@@ -484,7 +479,7 @@ fn wrong_csca_cert_fails_chain_validation() {
     let csca_b_der = BASE64
         .decode(vectors["two"]["csca_der_base64"].as_str().unwrap())
         .unwrap();
-    let csca_b_cert = Certificate::from_der(&csca_b_der).expect("parse csca_b DER");
+    let csca_b_cert = load_certificate_der(&csca_b_der).expect("parse csca_b DER");
 
     let mut registry = CscaRegistry::new();
     registry
@@ -515,14 +510,12 @@ fn multi_dg_full_verification_succeeds_with_csca() {
     use marty_verification::trust_anchor::CscaRegistry;
     use marty_verification::verification::emrtd::{verify_emrtd, SecurityObject};
     use std::collections::HashMap;
-    use x509_cert::der::Decode;
-    use x509_cert::Certificate;
 
     let portrait_mock = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG SOI
     let dgs = vec![(1u8, DG1_MRZ.to_vec()), (2u8, portrait_mock.clone())];
     let (sod_der, csca_der) = signed_fixture(&dgs);
 
-    let csca_cert = Certificate::from_der(&csca_der).expect("parse CSCA");
+    let csca_cert = load_certificate_der(&csca_der).expect("parse CSCA");
     let mut registry = CscaRegistry::new();
     registry
         .add_country_csca("DEU", csca_cert)
