@@ -9,6 +9,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import update_stable_tag_contract as CONTRACT_SOURCE
 
 
 SCRIPT = Path(__file__).with_name("stable_tag_gate.py")
@@ -95,6 +98,37 @@ def tag_message() -> str:
 
 
 class StableTagEvidenceTests(unittest.TestCase):
+    def test_offline_contract_matches_immutable_source_pin(self) -> None:
+        CONTRACT_SOURCE.verify_pin()
+
+    def test_modified_contract_or_source_identity_is_rejected(self) -> None:
+        pin = CONTRACT_SOURCE.verify_pin()
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory) / "stable_tag_contract.py"
+            source = Path(directory) / "source.json"
+            module.write_bytes(CONTRACT_SOURCE.MODULE.read_bytes())
+            with patch.object(CONTRACT_SOURCE, "MODULE", module), patch.object(CONTRACT_SOURCE, "PIN", source):
+                for field in ("repository", "path", "revision", "sha256"):
+                    with self.subTest(field=field):
+                        source.write_text(json.dumps({**pin, field: "wrong"}), encoding="utf-8")
+                        with self.assertRaises(ValueError):
+                            CONTRACT_SOURCE.verify_pin()
+                source.write_text(json.dumps(pin), encoding="utf-8")
+                module.write_bytes(module.read_bytes() + b"\n# local edit\n")
+                with self.assertRaisesRegex(ValueError, "digest"):
+                    CONTRACT_SOURCE.verify_pin()
+
+    def test_verifier_keeps_its_additional_workflow_result_checks(self) -> None:
+        for result in ({"run_id": 10, "conclusion": "failure"}, {"run_id": "10", "conclusion": "success"}):
+            with self.subTest(result=result):
+                evidence = release_evidence()
+                evidence["required_workflows"] = [result]
+                with self.assertRaisesRegex(GATE.StableTagGateError, "invalid workflow result"):
+                    GATE.validate_release_proof(
+                        "ElevenID/marty-verifier", "v1.2.3", COMMIT, "tag", TAG_OBJECT,
+                        tag_message(), preparation_run(), evidence,
+                    )
+
     def test_exact_head_terminal_workflows_pass(self) -> None:
         accepted = GATE.validate_workflow_runs(payload(), POLICY, COMMIT, 99)
         self.assertEqual([item["run_id"] for item in accepted], [10, 11])
