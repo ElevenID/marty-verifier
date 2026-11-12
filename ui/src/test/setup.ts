@@ -2,7 +2,7 @@
  * Vitest setup file for unit and component tests.
  * Sets up testing-library matchers and Tauri IPC mocks.
  */
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { vi, beforeEach } from 'vitest';
 
 // Mock Tauri IPC for unit tests

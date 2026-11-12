@@ -26,7 +26,7 @@ required-features = ["demo-fixtures"]
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-ryu-js = "0.2"
+ryu-js = "1.0"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
@@ -38,7 +38,7 @@ marty-crypto = { workspace = true, features = ["eddsa-verification", "x509-parsi
 marty-types.workspace = true
 marty-verification.workspace = true
 
-base64 = "0.22"
+base64 = "0.23"
 blake3 = "1.5"
 anyhow = { workspace = true, optional = true }
 
