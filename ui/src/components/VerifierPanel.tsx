@@ -22,7 +22,7 @@ import {
   ListItemText,
 } from '@mui/material';
 import {
-  QrCodeScanner as ScanIcon,
+  FactCheck as VerifyIcon,
 } from '@mui/icons-material';
 import {
   verifyCredential,
@@ -74,7 +74,7 @@ export default function VerifierPanel({
 }: VerifierPanelProps) {
   const selectedType = credentialType;
   const [useNfc, setUseNfc] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VerificationResult | null>(null);
@@ -97,102 +97,6 @@ export default function VerifierPanel({
   const [faceThreshold, setFaceThreshold] = useState(0.75);
   const [sessionId] = useState<string>(() => crypto.randomUUID());
   const { setLastVerification, setVerificationInProgress } = useAppStore();
-
-  const handleScan = useCallback(async () => {
-    setScanning(true);
-    setError(null);
-    setResult(null);
-    setChallenge(null);
-
-    try {
-      // TODO: Implement actual QR scanning via Tauri plugin
-      // For now, simulate with mock data
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // Use provided data or mock placeholder
-      const payload = credentialData || 'mock_credential_qr_data';
-
-      let activeChallenge: LivenessChallenge | undefined;
-      if (requireLiveness) {
-        activeChallenge = await issueLivenessChallenge({
-          session_id: sessionId,
-          preferred_mode: preferredMode,
-          allow_network_fallback: allowNetworkFallback,
-          accessibility_mode: accessibilityMode,
-          ttl_seconds: 60,
-        });
-        setChallenge(activeChallenge);
-        setActiveStepIndex(0);
-        const firstStep = activeChallenge.steps[0];
-        setStepDeadline(Date.now() + (firstStep.time_limit_ms ?? 5000));
-        const expiresAt = Date.parse(activeChallenge.expires_at);
-        setChallengeExpiresAt(expiresAt);
-        setChallengeRemainingMs(Math.max(0, expiresAt - Date.now()));
-      }
-
-      setScanning(false);
-      setVerifying(false);
-      setVerificationInProgress(false);
-
-      // For liveness flows, wait for the user to complete steps before submitting verification
-      if (requireLiveness) {
-        return;
-      }
-
-      const request: VerifyRequest = {
-        credential_type: selectedType,
-        credential_data: (selectedType === 'oid4vp' || selectedType === 'sd-jwt')
-          ? normalizeOid4vpPayload(payload)
-          : payload,
-        use_nfc: selectedType === 'emrtd' ? useNfc : undefined,
-        liveness_challenge: activeChallenge,
-        require_liveness: requireLiveness,
-        preferred_liveness_mode: preferredMode,
-        allow_network_fallback: allowNetworkFallback,
-        accessibility_mode: accessibilityMode,
-        retain_audit_clip: retainAuditClip,
-        audit_clip_ttl_seconds: auditClipTtlSeconds,
-        session_id: sessionId,
-        perform_face_match: performFaceMatch,
-        reference_image: performFaceMatch ? referenceImage : undefined,
-        probe_image: performFaceMatch ? probeImage : undefined,
-        face_threshold: performFaceMatch ? faceThreshold : undefined,
-        policy: {
-          required_claims: ['given_name', 'family_name'],
-          allow_expired_grace: false,
-        },
-      };
-
-      const verificationResult = await verifyCredential(request);
-      setResult(verificationResult);
-      setLastVerification(verificationResult);
-      onVerificationComplete?.(verificationResult);
-    } catch (err) {
-      setError(errorMessage(err, 'Verification failed'));
-    } finally {
-      setScanning(false);
-      setVerifying(false);
-      setVerificationInProgress(false);
-    }
-  }, [
-    selectedType,
-    useNfc,
-    onVerificationComplete,
-    setLastVerification,
-    setVerificationInProgress,
-    credentialData,
-    requireLiveness,
-    preferredMode,
-    allowNetworkFallback,
-    accessibilityMode,
-    retainAuditClip,
-    auditClipTtlSeconds,
-    sessionId,
-    performFaceMatch,
-    referenceImage,
-    probeImage,
-    faceThreshold,
-  ]);
 
   const allStepsCompleted = challenge ? activeStepIndex >= challenge.steps.length : false;
 
@@ -227,6 +131,10 @@ export default function VerifierPanel({
   }, [challengeExpiresAt]);
 
   const handleSubmitVerification = useCallback(async () => {
+    if (!credentialData.trim()) {
+      setError('Enter credential data before starting verification.');
+      return;
+    }
     if (requireLiveness && !challenge) {
       setError('Issue a liveness challenge first.');
       return;
@@ -237,14 +145,14 @@ export default function VerifierPanel({
     setError(null);
 
     try {
-      const payload = credentialData || 'mock_credential_qr_data';
+      const payload = credentialData;
       const request: VerifyRequest = {
         credential_type: selectedType,
         credential_data: (selectedType === 'oid4vp' || selectedType === 'sd-jwt')
           ? normalizeOid4vpPayload(payload)
           : payload,
         use_nfc: selectedType === 'emrtd' ? useNfc : undefined,
-        liveness_challenge: challenge ?? undefined,
+        liveness_challenge: requireLiveness ? challenge ?? undefined : undefined,
         require_liveness: requireLiveness,
         preferred_liveness_mode: preferredMode,
         allow_network_fallback: allowNetworkFallback,
@@ -256,10 +164,6 @@ export default function VerifierPanel({
         reference_image: performFaceMatch ? referenceImage : undefined,
         probe_image: performFaceMatch ? probeImage : undefined,
         face_threshold: performFaceMatch ? faceThreshold : undefined,
-        policy: {
-          required_claims: ['given_name', 'family_name'],
-          allow_expired_grace: false,
-        },
       };
 
       const verificationResult = await verifyCredential(request);
@@ -291,6 +195,62 @@ export default function VerifierPanel({
     setLastVerification,
     setVerificationInProgress,
     useNfc,
+  ]);
+
+  const handleStartVerification = useCallback(async () => {
+    setError(null);
+    setResult(null);
+    setChallenge(null);
+    setActiveStepIndex(-1);
+    setStepDeadline(null);
+    setStepRemainingMs(0);
+    setChallengeExpiresAt(null);
+    setChallengeRemainingMs(null);
+
+    if (!credentialData.trim()) {
+      setError('Enter credential data before starting verification.');
+      return;
+    }
+    if (!requireLiveness) {
+      await handleSubmitVerification();
+      return;
+    }
+
+    setPreparing(true);
+    setVerificationInProgress(true);
+    try {
+      const nextChallenge = await issueLivenessChallenge({
+        session_id: sessionId,
+        preferred_mode: preferredMode,
+        allow_network_fallback: allowNetworkFallback,
+        accessibility_mode: accessibilityMode,
+        ttl_seconds: 60,
+      });
+      const firstStep = nextChallenge.steps[0];
+      if (!firstStep) {
+        throw new Error('The liveness challenge did not include any steps.');
+      }
+      setChallenge(nextChallenge);
+      setActiveStepIndex(0);
+      setStepDeadline(Date.now() + (firstStep.time_limit_ms ?? 5000));
+      const expiresAt = Date.parse(nextChallenge.expires_at);
+      setChallengeExpiresAt(expiresAt);
+      setChallengeRemainingMs(Math.max(0, expiresAt - Date.now()));
+    } catch (err) {
+      setError(errorMessage(err, 'Could not prepare verification'));
+    } finally {
+      setPreparing(false);
+      setVerificationInProgress(false);
+    }
+  }, [
+    accessibilityMode,
+    allowNetworkFallback,
+    credentialData,
+    handleSubmitVerification,
+    preferredMode,
+    requireLiveness,
+    sessionId,
+    setVerificationInProgress,
   ]);
 
   const handleReset = () => {
@@ -534,52 +494,28 @@ export default function VerifierPanel({
             </Alert>
           )}
 
-          <Box
-            sx={[{
-              width: 200,
-              height: 200,
-              border: '2px dashed',
-              borderRadius: 2,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }, scanning ? {
-              borderColor: 'primary.main'
-            } : {
-              borderColor: 'grey.400'
-            }, scanning ? {
-              bgcolor: 'action.hover'
-            } : {
-              bgcolor: 'transparent'
-            }]}
-          >
-            {scanning || verifying ? (
-              <CircularProgress />
-            ) : (
-              <ScanIcon sx={{ fontSize: 64, color: 'grey.400' }} />
-            )}
-          </Box>
+          {(preparing || verifying) && <CircularProgress />}
 
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
-            {scanning
-              ? 'Scanning QR code...'
+            {preparing
+              ? 'Preparing liveness challenge...'
               : verifying
               ? 'Verifying credential...'
               : requireLiveness && challenge
               ? 'Complete the liveness steps, then submit verification'
-              : 'Position the credential QR code in the camera view'}
+              : 'Paste credential data or QR contents above to verify with the configured presentation policy.'}
           </Typography>
 
           <Button
             data-testid="scan-button"
             variant="contained"
             size="large"
-            startIcon={<ScanIcon />}
-            onClick={handleScan}
-            disabled={scanning || verifying}
+            startIcon={<VerifyIcon />}
+            onClick={handleStartVerification}
+            disabled={preparing || verifying}
             fullWidth
           >
-            {scanning ? 'Scanning...' : verifying ? 'Verifying...' : 'Start Scan'}
+            {preparing ? 'Preparing...' : verifying ? 'Verifying...' : 'Start Verification'}
           </Button>
 
           {requireLiveness && challenge && (
@@ -587,7 +523,7 @@ export default function VerifierPanel({
               variant="contained"
               color="secondary"
               onClick={handleSubmitVerification}
-              disabled={verifying || !allStepsCompleted}
+              disabled={preparing || verifying || !allStepsCompleted}
               fullWidth
             >
               Submit Verification

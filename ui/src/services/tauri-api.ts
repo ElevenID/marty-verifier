@@ -26,13 +26,8 @@ export interface VerifyRequest {
   reference_image?: string;
   probe_image?: string;
   face_threshold?: number;
-  policy?: VerificationPolicy;
-}
-
-export interface VerificationPolicy {
-  required_claims: string[];
-  age_threshold?: number;
-  allow_expired_grace: boolean;
+  /** The native command selects the governed policy from the active deployment or lane. */
+  policy?: never;
 }
 
 export interface VerificationResult {

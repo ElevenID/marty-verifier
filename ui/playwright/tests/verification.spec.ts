@@ -1,7 +1,7 @@
 /**
  * E2E tests for VerificationPage
  * Tests the main verification workflow including credential type selection,
- * QR scanning, and result display.
+ * credential input, and result display.
  */
 import { test, expect } from '../fixtures';
 
@@ -46,9 +46,9 @@ test.describe('Verification Page', () => {
     await expect(page.getByTestId('credential-data-input')).toHaveValue('{"synthetic":"dtc"}');
   });
 
-  test('should show scan button when ready', async ({ page }) => {
+  test('should show verification button when ready', async ({ page }) => {
     await expect(page.getByTestId('scan-button')).toBeVisible();
-    await expect(page.getByTestId('scan-button')).toHaveText(/scan/i);
+    await expect(page.getByTestId('scan-button')).toHaveText(/start verification/i);
   });
 
   test('should display hardware tier information', async ({ page }) => {
@@ -86,13 +86,9 @@ test.describe('Verification Flow', () => {
     await page.goto('/#/');
   });
 
-  test('should start verification when scan button clicked', async ({ page }) => {
-    const scanButton = page.getByTestId('scan-button');
-    await scanButton.click();
-    
-    // Should show scanning state or result
-    // This depends on the mock implementation
-    await expect(page.getByTestId('verifier-panel')).toBeVisible();
+  test('should require credential data before starting verification', async ({ page }) => {
+    await page.getByTestId('scan-button').click();
+    await expect(page.getByRole('alert')).toContainText('Enter credential data before starting verification.');
   });
 
   test('should display verification result on success', async ({ page, mockTauri }) => {
@@ -123,7 +119,9 @@ test.describe('Verification Flow', () => {
 
     await page.getByLabel(/require liveness/i).uncheck();
 
-    // Trigger scan
+    await page.getByTestId('credential-data-input').fill('{"synthetic":"mdl"}');
+
+    // Submit the provided payload
     await page.getByTestId('scan-button').click();
     
     // Should show result
