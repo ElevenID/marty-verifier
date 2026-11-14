@@ -16,6 +16,11 @@ that unavailable evidence are rejected with Core's policy reasons. Cached status
 can still identify a revoked credential; network connectivity and local display
 timestamps never satisfy freshness or live-check requirements.
 
+The verification panel accepts pasted credential data or QR contents. Start
+Verification submits that input to the native command using the configured
+presentation policy. When liveness is requested, prepare the challenge and
+complete its steps before submitting the credential. Empty input is rejected.
+
 ## Features
 
 - **Offline-First**: Operates without network for 72+ hours with local trust anchor cache
