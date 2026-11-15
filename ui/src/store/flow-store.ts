@@ -336,10 +336,11 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       // Load executions for each flow
       for (const flow of flows) {
         const execResponse = await fetch(`${API_BASE}/flows/${flow.id}/executions`);
-        if (execResponse.ok) {
-          const execs = await execResponse.json();
-          allExecutions.push(...execs);
+        if (!execResponse.ok) {
+          throw new Error('Unable to load the complete approval queue. Refresh to try again.');
         }
+        const execs = await execResponse.json();
+        allExecutions.push(...execs);
       }
       
       // Filter for awaiting_approval status
@@ -347,6 +348,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       set({ approvalQueue, approvalQueueLoading: false });
     } catch (error) {
       set({
+        approvalQueue: [],
         approvalQueueError: error instanceof Error ? error.message : 'Failed to load approval queue',
         approvalQueueLoading: false,
       });

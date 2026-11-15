@@ -19,6 +19,7 @@ import {
 import { Save as SaveIcon } from '@mui/icons-material';
 import { getConfig, updateConfig, AppConfig } from '@/services/tauri-api';
 import { useAppStore } from '@/store';
+import { errorMessage } from '@/utils/errors';
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -29,11 +30,13 @@ export default function SettingsPage() {
   const { hardwareTier, hardwareCapabilities } = useAppStore();
 
   const loadConfig = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const cfg = await getConfig();
       setConfig(cfg);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load config');
+      setError(errorMessage(err, 'Failed to load config'));
     } finally {
       setLoading(false);
     }
@@ -60,10 +63,24 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading || !config) {
+  if (loading) {
     return (
       <Container maxWidth="md">
         <Typography>Loading settings...</Typography>
+      </Container>
+    );
+  }
+
+  if (!config) {
+    return (
+      <Container maxWidth="md">
+        <Typography variant="h4" gutterBottom>Settings</Typography>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error || 'Failed to load config'}
+        </Alert>
+        <Button variant="contained" onClick={loadConfig}>
+          Retry loading settings
+        </Button>
       </Container>
     );
   }
