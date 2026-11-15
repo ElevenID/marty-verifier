@@ -122,10 +122,12 @@ export const ApprovalQueuePage: React.FC = () => {
       <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">Approval Queue</Typography>
         <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-          <Chip
-            label={`${approvalQueue.length} Pending`}
-            color={approvalQueue.length > 0 ? 'warning' : 'default'}
-          />
+          {!approvalQueueLoading && !approvalQueueError && (
+            <Chip
+              label={`${approvalQueue.length} Pending`}
+              color={approvalQueue.length > 0 ? 'warning' : 'default'}
+            />
+          )}
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -148,7 +150,7 @@ export const ApprovalQueuePage: React.FC = () => {
         </Box>
       )}
       {/* Empty State */}
-      {!approvalQueueLoading && approvalQueue.length === 0 && (
+      {!approvalQueueLoading && !approvalQueueError && approvalQueue.length === 0 && (
         <Card>
           <CardContent>
             <Typography variant="body1" color="text.secondary" sx={{ textAlign: 'center', py: 8 }}>
