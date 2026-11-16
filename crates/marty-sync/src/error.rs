@@ -7,6 +7,7 @@ pub enum SyncError {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[cfg(feature = "native-sync")]
     #[error("Storage error: {0}")]
     Storage(#[from] marty_secure_storage::StorageError),
 

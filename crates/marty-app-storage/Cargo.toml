@@ -19,7 +19,7 @@ thiserror.workspace = true
 chrono.workspace = true
 
 marty-sync.workspace = true
-marty-verification.workspace = true
+marty-verification = { workspace = true, features = ["icao-client"] }
 
 [dev-dependencies]
 keyring-core = "1.0"

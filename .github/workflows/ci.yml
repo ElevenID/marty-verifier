@@ -107,6 +107,13 @@ jobs:
         if: matrix.task == 'tests'
         run: cargo test --locked -p marty-sync --features serde_json/arbitrary_precision,serde_json/raw_value
 
+      - name: Check portable policy HTTP consumer
+        if: matrix.task == 'tests' && matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --locked --target wasm32-unknown-unknown -p marty-sync --no-default-features --lib
+          cargo test --locked -p marty-sync --no-default-features --lib
+
       - name: Retain Rust documentation tests
         if: matrix.task == 'tests'
         run: cargo test --locked --doc --workspace --all-features
