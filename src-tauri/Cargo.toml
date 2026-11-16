@@ -65,7 +65,7 @@ marty-biometrics = { workspace = true, optional = true }
 marty-reporting.workspace = true
 
 # Verification crates from marty-core (via workspace)
-marty-verification.workspace = true
+marty-verification = { workspace = true, features = ["icao-client"] }
 marty-crypto = { workspace = true, features = ["x509-parsing"] }
 marty-oid4vci = { workspace = true, optional = true }
 
@@ -76,5 +76,5 @@ reqwest.workspace = true
 tauri-build.workspace = true
 
 [dev-dependencies]
-marty-verification.workspace = true
+marty-verification = { workspace = true, features = ["icao-client"] }
 marty-crypto.workspace = true

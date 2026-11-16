@@ -63,7 +63,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 
 # External crates from marty-core
 marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false, features = ["kms-only", "iaca", "csca", "serde"] }
 marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", features = ["native", "onnx"] }
 marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e" }
 marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e" }

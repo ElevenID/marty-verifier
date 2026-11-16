@@ -8,10 +8,13 @@ description = "Trust anchor sync engine for Marty Verifier"
 repository.workspace = true
 
 [features]
-default = ["aamva", "icao"]
-aamva = []  # AAMVA DTS sync
-icao = []   # ICAO PKD sync
-demo-fixtures = ["dep:anyhow"]
+default = ["native-sync", "aamva", "icao"]
+# Policy/profile HTTP clients and PolicyStorage are portable. Native trust-list
+# acquisition, encrypted databases and USB import remain opt-in as a unit.
+native-sync = ["dep:tokio", "dep:marty-secure-storage", "dep:marty-crypto", "dep:marty-types", "marty-verification/icao-client"]
+aamva = ["native-sync"]  # AAMVA DTS sync
+icao = ["native-sync"]   # ICAO PKD sync
+demo-fixtures = ["native-sync", "dep:anyhow"]
 
 [[bin]]
 name = "marty-demo-fixtures"
@@ -28,14 +31,14 @@ serde.workspace = true
 serde_json.workspace = true
 ryu-js = "1.0"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["sync", "time"], optional = true }
 tracing.workspace = true
 chrono.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 
-marty-secure-storage.workspace = true
-marty-crypto = { workspace = true, features = ["eddsa-verification", "x509-parsing"] }
-marty-types.workspace = true
+marty-secure-storage = { workspace = true, optional = true }
+marty-crypto = { workspace = true, features = ["eddsa-verification", "x509-parsing"], optional = true }
+marty-types = { workspace = true, optional = true }
 marty-verification.workspace = true
 
 base64 = "0.23"
