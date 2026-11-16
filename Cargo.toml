@@ -30,7 +30,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Database
-rusqlite = { version = "0.39", features = ["bundled-sqlcipher"] }
+rusqlite = { git = "https://github.com/ElevenID/rusqlite-elevenid", rev = "9500714b77acccbfb9eacdf566691adf584d4477", features = ["bundled-sqlcipher"] }
 
 # Crypto
 ring = "0.17"
@@ -62,12 +62,12 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # External crates from marty-core
-marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1", default-features = false }
-marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
-marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1", features = ["native", "onnx"] }
-marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1" }
-marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1" }
-marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "4ddd60bc6872c6202b13abe52691429031760de1", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
+marty-crypto = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false }
+marty-verification = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false, features = ["kms-only", "iaca", "csca", "icao-client", "serde"] }
+marty-biometrics = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", features = ["native", "onnx"] }
+marty-secure-storage = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e" }
+marty-types = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e" }
+marty-oid4vci = { git = "https://github.com/ElevenID/marty-core", rev = "8e06ee93b44aca4cb956cef5c2b74642620c736e", default-features = false, features = ["kms-only", "verifier", "jwt_vc_json", "sd_jwt", "mso_mdoc"] }
 
 # Internal crates
 marty-entitlements = { path = "crates/marty-entitlements" }

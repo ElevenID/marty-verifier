@@ -841,9 +841,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy"
-version = "4.12.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f73547a0114dff845fcb8d4877548a665fb8ff949a30cb0963444d6c30ffd962"
+checksum = "4a3951fe28ea48b72e618fc7104b5953389b496f06813da3d9038c0da6735982"
 dependencies = [
  "cedar-policy-core",
  "cedar-policy-formatter",
@@ -862,12 +862,12 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy-core"
-version = "4.12.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9d9ec16707c7b60aa73b922dc255ec0b97b6892e8e58e45188b15d874ca3590"
+checksum = "292bc6f7f897fcdfe5291a2fe74e2446817c7b8e01fce0977805877a23943f5b"
 dependencies = [
  "chrono",
- "educe 0.7.6",
+ "educe 0.8.2",
  "either",
  "itertools 0.15.0",
  "lalrpop",
@@ -890,9 +890,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy-formatter"
-version = "4.12.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2483b2fa74f74b1b3945bec59feb7a3fc0ea56b6fb35564ef300884dd8415d4b"
+checksum = "3bb1d7ab0eecb543e4586b556d72343699663093d951169eeedd2e6ec6fca06c"
 dependencies = [
  "cedar-policy-core",
  "itertools 0.15.0",
@@ -1940,9 +1940,9 @@ dependencies = [
 
 [[package]]
 name = "educe"
-version = "0.7.6"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e451fac8dd8dece16234604bf1efce6e90fddd8ab6ad4d66eec0eca5160959dd"
+checksum = "a00371d2607edea062396ef1ce6ade65c8e915ac7a1277daa198208420f682c6"
 dependencies = [
  "enum-ordinalize 4.4.2",
  "proc-macro2",
@@ -2813,14 +2813,17 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash",
+]
 
 [[package]]
 name = "hashlink"
-version = "0.11.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -4020,13 +4023,13 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+version = "0.39.0"
+source = "git+https://github.com/ElevenID/rusqlite-elevenid?rev=9500714b77acccbfb9eacdf566691adf584d4477#9500714b77acccbfb9eacdf566691adf584d4477"
 dependencies = [
  "cc",
  "openssl-sys",
  "pkg-config",
+ "sqlcipher-src",
  "vcpkg",
 ]
 
@@ -4203,7 +4206,7 @@ dependencies = [
 [[package]]
 name = "marty-biometrics"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4219,7 +4222,7 @@ dependencies = [
 [[package]]
 name = "marty-canonical-digest"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -4228,7 +4231,7 @@ dependencies = [
 [[package]]
 name = "marty-crypto"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -4272,7 +4275,7 @@ dependencies = [
 [[package]]
 name = "marty-oid4vci"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4320,7 +4323,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "aes-gcm",
  "apple-native-keyring-store",
@@ -4370,7 +4373,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "chrono",
  "serde",
@@ -4381,7 +4384,7 @@ dependencies = [
 [[package]]
 name = "marty-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4479,7 +4482,7 @@ dependencies = [
 [[package]]
 name = "marty-x509-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=4ddd60bc6872c6202b13abe52691429031760de1#4ddd60bc6872c6202b13abe52691429031760de1"
+source = "git+https://github.com/ElevenID/marty-core?rev=8e06ee93b44aca4cb956cef5c2b74642620c736e#8e06ee93b44aca4cb956cef5c2b74642620c736e"
 dependencies = [
  "chrono",
  "const-oid 0.9.6",
@@ -6233,9 +6236,8 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
+version = "0.41.1"
+source = "git+https://github.com/ElevenID/rusqlite-elevenid?rev=9500714b77acccbfb9eacdf566691adf584d4477#9500714b77acccbfb9eacdf566691adf584d4477"
 dependencies = [
  "bitflags 2.13.1",
  "fallible-iterator",
@@ -7127,6 +7129,12 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+
+[[package]]
+name = "sqlcipher-src"
+version = "420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd6b5280ed2593d07b2816ec531821c15c306903bcca224716f1fbcc2bbfedfe"
 
 [[package]]
 name = "sqlite-wasm-rs"
