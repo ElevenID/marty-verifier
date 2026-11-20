@@ -4206,7 +4206,7 @@ dependencies = [
 [[package]]
 name = "marty-biometrics"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4222,7 +4222,7 @@ dependencies = [
 [[package]]
 name = "marty-canonical-digest"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -4231,12 +4231,11 @@ dependencies = [
 [[package]]
 name = "marty-crypto"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
  "cbc",
- "chrono",
  "cipher",
  "const-oid 0.9.6",
  "der 0.7.10",
@@ -4260,6 +4259,7 @@ dependencies = [
  "shake",
  "spki 0.7.3",
  "thiserror 2.0.21",
+ "time",
  "x509-cert",
  "x509-ocsp",
  "zeroize",
@@ -4275,7 +4275,7 @@ dependencies = [
 [[package]]
 name = "marty-oid4vci"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4297,6 +4297,7 @@ dependencies = [
  "sha2 0.10.9",
  "ssi-jwk",
  "thiserror 2.0.21",
+ "time",
  "tracing",
  "url",
  "uuid",
@@ -4323,7 +4324,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "aes-gcm",
  "apple-native-keyring-store",
@@ -4373,7 +4374,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "chrono",
  "serde",
@@ -4384,7 +4385,7 @@ dependencies = [
 [[package]]
 name = "marty-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4482,13 +4483,13 @@ dependencies = [
 [[package]]
 name = "marty-x509-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=8b553b472890cebbf4972cd0fdcb440141085d35#8b553b472890cebbf4972cd0fdcb440141085d35"
+source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
 dependencies = [
- "chrono",
  "const-oid 0.9.6",
  "der 0.7.10",
  "marty-crypto",
  "serde",
+ "time",
  "x509-cert",
 ]
 
@@ -6476,7 +6477,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sd-jwt-rs"
 version = "0.8.0"
-source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=fbe1e1b2c4bf0d62b0fdf0f47f265ffdaaae1ff2#fbe1e1b2c4bf0d62b0fdf0f47f265ffdaaae1ff2"
+source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=ba5a9a154ae530ddcfcc5b52adf3da71e91b1929#ba5a9a154ae530ddcfcc5b52adf3da71e91b1929"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",
@@ -8394,6 +8395,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdb87b95ec50ddfa440816d227a17b2ccbdda963a316a727fda0fc4334f7d134"
 dependencies = [
  "deranged",
+ "js-sys",
  "num-conv",
  "powerfmt",
  "serde_core",
