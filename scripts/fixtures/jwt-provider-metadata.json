@@ -8,21 +8,21 @@
       "version": "11.1.0"
     },
     {
-      "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-crypto@0.2.2",
+      "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-crypto@0.2.2",
       "name": "marty-crypto",
-      "source": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#bf91a2f83296e9ca4578250df138d01c3842f7ef",
       "version": "0.2.2"
     },
     {
-      "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-oid4vci@0.2.2",
+      "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-oid4vci@0.2.2",
       "name": "marty-oid4vci",
-      "source": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#bf91a2f83296e9ca4578250df138d01c3842f7ef",
       "version": "0.2.2"
     },
     {
-      "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-verification@0.2.2",
+      "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-verification@0.2.2",
       "name": "marty-verification",
-      "source": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#bf91a2f83296e9ca4578250df138d01c3842f7ef",
       "version": "0.2.2"
     },
     {
@@ -60,7 +60,7 @@
           "x509",
           "x509-parsing"
         ],
-        "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-crypto@0.2.2"
+        "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-crypto@0.2.2"
       },
       {
         "deps": [
@@ -82,7 +82,7 @@
               }
             ],
             "name": "marty_crypto",
-            "pkg": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-crypto@0.2.2"
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-crypto@0.2.2"
           },
           {
             "dep_kinds": [
@@ -103,7 +103,7 @@
           "sd_jwt",
           "verifier"
         ],
-        "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-oid4vci@0.2.2"
+        "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-oid4vci@0.2.2"
       },
       {
         "deps": [
@@ -115,7 +115,7 @@
               }
             ],
             "name": "marty_crypto",
-            "pkg": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-crypto@0.2.2"
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-crypto@0.2.2"
           },
           {
             "dep_kinds": [
@@ -125,7 +125,7 @@
               }
             ],
             "name": "marty_oid4vci",
-            "pkg": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-oid4vci@0.2.2"
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-oid4vci@0.2.2"
           }
         ],
         "features": [
@@ -139,7 +139,7 @@
           "serde",
           "tokio"
         ],
-        "id": "git+https://github.com/ElevenID/marty-core?rev=dfccf0210849d3e37a42b7a3c6a0225c0cd0b0db#marty-verification@0.2.2"
+        "id": "git+https://github.com/ElevenID/marty-core?rev=bf91a2f83296e9ca4578250df138d01c3842f7ef#marty-verification@0.2.2"
       },
       {
         "deps": [
