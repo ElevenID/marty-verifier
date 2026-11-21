@@ -199,9 +199,12 @@ jobs:
             cargo install cargo-deny --locked
           fi
 
-      - name: Run cargo-deny
+      - name: Check locked dependency licenses
+        run: cargo deny --locked check licenses
+
+      - name: Run remaining cargo-deny checks
         continue-on-error: true
-        run: cargo deny check
+        run: cargo deny check advisories bans sources
 
   test-frontend-unit:
     name: Frontend Unit Tests

@@ -48,8 +48,43 @@ allow = [
 exceptions = [
     # ring uses a custom license that is permissive but not OSI approved
     { allow = ["OpenSSL", "ISC"], crate = "ring" },
-    # webpki-roots uses MPL-2.0 which is weak copyleft but commonly used for Mozilla projects
-    { allow = ["MPL-2.0"], crate = "webpki-roots" },
+    # Reviewed locked packages. See ElevenID/marty-ui deny.toml for the
+    # CC0, Unicode, MPL and CDLA license selections in the related consumer.
+    { crate = "constant_time_eq@=0.1.5", allow = ["CC0-1.0"] },
+    { crate = "cssparser@=0.37.0", allow = ["MPL-2.0"] },
+    { crate = "cssparser-macros@=0.7.1", allow = ["MPL-2.0"] },
+    { crate = "dtoa-short@=0.3.5", allow = ["MPL-2.0"] },
+    { crate = "icu_collections@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_locale_core@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_normalizer@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_normalizer_data@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_properties@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_properties_data@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "icu_provider@=2.2.0", allow = ["Unicode-3.0"] },
+    { crate = "litemap@=0.8.2", allow = ["Unicode-3.0"] },
+    { crate = "marty-app-storage@=0.1.4", allow = ["AGPL-3.0-only"] },
+    { crate = "marty-entitlements@=0.1.4", allow = ["AGPL-3.0-only"] },
+    { crate = "marty-reporting@=0.1.4", allow = ["AGPL-3.0-only"] },
+    { crate = "marty-sync@=0.1.4", allow = ["AGPL-3.0-only"] },
+    { crate = "marty-verifier@=0.1.4", allow = ["AGPL-3.0-only"] },
+    { crate = "option-ext@=0.2.0", allow = ["MPL-2.0"] },
+    { crate = "potential_utf@=0.1.5", allow = ["Unicode-3.0"] },
+    { crate = "selectors@=0.38.0", allow = ["MPL-2.0"] },
+    # The pinned SQLCipher bundle carries SQLite and LibTomCrypt alongside
+    # the MIT wrapper and BSD-3-Clause SQLCipher sources.
+    { crate = "sqlcipher-src@=420.0.0", allow = ["blessing", "WTFPL"] },
+    { crate = "tiny-keccak@=2.0.2", allow = ["CC0-1.0"] },
+    { crate = "tinystr@=0.8.3", allow = ["Unicode-3.0"] },
+    { crate = "unicode-ident@=1.0.24", allow = ["Unicode-3.0"] },
+    { crate = "webpki-roots@=1.0.11", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "writeable@=0.6.3", allow = ["Unicode-3.0"] },
+    { crate = "yoke@=0.8.3", allow = ["Unicode-3.0"] },
+    { crate = "yoke-derive@=0.8.2", allow = ["Unicode-3.0"] },
+    { crate = "zerofrom@=0.1.8", allow = ["Unicode-3.0"] },
+    { crate = "zerofrom-derive@=0.1.7", allow = ["Unicode-3.0"] },
+    { crate = "zerotrie@=0.2.4", allow = ["Unicode-3.0"] },
+    { crate = "zerovec@=0.11.6", allow = ["Unicode-3.0"] },
+    { crate = "zerovec-derive@=0.11.3", allow = ["Unicode-3.0"] },
 ]
 
 [bans]
