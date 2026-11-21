@@ -29,6 +29,7 @@ jobs:
       - name: Validate dependency and release automation
         run: |
           python scripts/test_update_core_dependencies.py
+          python scripts/test_crypto_provider_boundary.py
           python scripts/test_stable_tag_gate.py
           python scripts/test_native_build_contract.py
           python scripts/test_private_forks.py
@@ -98,6 +99,14 @@ jobs:
         env:
           PRIVATE_FORKS_READ_TOKEN: ${{ secrets.PRIVATE_FORKS_READ_TOKEN }}
         run: python "$GITHUB_WORKSPACE/.github/scripts/private-forks.py" fetch --manifest-path "$GITHUB_WORKSPACE/Cargo.toml"
+
+      - name: Verify resolved crypto provider and public types
+        shell: bash
+        run: |
+          metadata="$RUNNER_TEMP/verifier-crypto-metadata.json"
+          cargo metadata --locked --all-features --format-version 1 > "$metadata"
+          python scripts/check_crypto_provider_boundary.py < "$metadata"
+          MARTY_CRYPTO_METADATA="$metadata" python scripts/test_crypto_provider_boundary.py
 
       - name: Run tests
         if: matrix.task == 'tests'

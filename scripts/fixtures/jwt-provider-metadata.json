@@ -1,0 +1,166 @@
+{
+  "fixture_note": "Projection of the 906-package cargo metadata --locked --all-features result, captured 2026-11-21 UTC. Only provider/KMS-role packages, features and their mutual edges are retained; this is not a complete dependency graph. Tests can use complete Cargo metadata via MARTY_CRYPTO_METADATA.",
+  "packages": [
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#jsonwebtoken@11.1.0",
+      "name": "jsonwebtoken",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "version": "11.1.0"
+    },
+    {
+      "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-crypto@0.2.2",
+      "name": "marty-crypto",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f",
+      "version": "0.2.2"
+    },
+    {
+      "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-oid4vci@0.2.2",
+      "name": "marty-oid4vci",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f",
+      "version": "0.2.2"
+    },
+    {
+      "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-verification@0.2.2",
+      "name": "marty-verification",
+      "source": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f",
+      "version": "0.2.2"
+    },
+    {
+      "id": "git+https://github.com/ElevenID/sd-jwt-rust?rev=9fc75ab0befe6b7f80987acd8b740baead40ee76#sd-jwt-rs@0.8.0",
+      "name": "sd-jwt-rs",
+      "source": "git+https://github.com/ElevenID/sd-jwt-rust?rev=9fc75ab0befe6b7f80987acd8b740baead40ee76#9fc75ab0befe6b7f80987acd8b740baead40ee76",
+      "version": "0.8.0"
+    }
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "deps": [],
+        "features": [
+          "use_pem"
+        ],
+        "id": "registry+https://github.com/rust-lang/crates.io-index#jsonwebtoken@11.1.0"
+      },
+      {
+        "deps": [],
+        "features": [
+          "crl",
+          "ecdsa-verification",
+          "ed448-verification",
+          "eddsa-verification",
+          "emrtd-compat",
+          "hashing",
+          "jwk",
+          "kms-only",
+          "ocsp",
+          "public-key-codec",
+          "rsa-verification",
+          "secp256k1-verification",
+          "signature-verification",
+          "x509",
+          "x509-parsing"
+        ],
+        "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-crypto@0.2.2"
+      },
+      {
+        "deps": [
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "jsonwebtoken",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#jsonwebtoken@11.1.0"
+          },
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "marty_crypto",
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-crypto@0.2.2"
+          },
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "sd_jwt_rs",
+            "pkg": "git+https://github.com/ElevenID/sd-jwt-rust?rev=9fc75ab0befe6b7f80987acd8b740baead40ee76#sd-jwt-rs@0.8.0"
+          }
+        ],
+        "features": [
+          "jose-verification",
+          "jwt_vc_json",
+          "kms-only",
+          "mso_mdoc",
+          "sd_jwt",
+          "verifier"
+        ],
+        "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-oid4vci@0.2.2"
+      },
+      {
+        "deps": [
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "marty_crypto",
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-crypto@0.2.2"
+          },
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "marty_oid4vci",
+            "pkg": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-oid4vci@0.2.2"
+          }
+        ],
+        "features": [
+          "csca",
+          "iaca",
+          "icao-client",
+          "kms-only",
+          "ldap3",
+          "moka",
+          "network-tls-client",
+          "serde",
+          "tokio"
+        ],
+        "id": "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#marty-verification@0.2.2"
+      },
+      {
+        "deps": [
+          {
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ],
+            "name": "jsonwebtoken",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#jsonwebtoken@11.1.0"
+          }
+        ],
+        "features": [
+          "crypto-provider",
+          "verifier"
+        ],
+        "id": "git+https://github.com/ElevenID/sd-jwt-rust?rev=9fc75ab0befe6b7f80987acd8b740baead40ee76#sd-jwt-rs@0.8.0"
+      }
+    ]
+  },
+  "source_metadata_sha256": "f7252b5074edd6754e2eac0353c6ba10ba2757f690ddab695edb5ae347d506a9"
+}
