@@ -410,6 +410,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
 dependencies = [
  "aws-lc-sys",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -3728,9 +3729,9 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "10.4.0"
+version = "11.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
+checksum = "e75fe14a82d81e5f5af639997db37d8b96045938a7ac6ab18cdbe1c7467e05e1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
@@ -4206,7 +4207,7 @@ dependencies = [
 [[package]]
 name = "marty-biometrics"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4222,7 +4223,7 @@ dependencies = [
 [[package]]
 name = "marty-canonical-digest"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -4231,7 +4232,7 @@ dependencies = [
 [[package]]
 name = "marty-crypto"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -4275,7 +4276,7 @@ dependencies = [
 [[package]]
 name = "marty-oid4vci"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4324,7 +4325,7 @@ dependencies = [
 [[package]]
 name = "marty-secure-storage"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "aes-gcm",
  "apple-native-keyring-store",
@@ -4374,7 +4375,7 @@ dependencies = [
 [[package]]
 name = "marty-types"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "chrono",
  "serde",
@@ -4385,7 +4386,7 @@ dependencies = [
 [[package]]
 name = "marty-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4483,7 +4484,7 @@ dependencies = [
 [[package]]
 name = "marty-x509-verification"
 version = "0.2.2"
-source = "git+https://github.com/ElevenID/marty-core?rev=64601c9513850e3eb60b00f6aa893cae8d9e4b0d#64601c9513850e3eb60b00f6aa893cae8d9e4b0d"
+source = "git+https://github.com/ElevenID/marty-core?rev=11152cfb83ec47174a21ad76fd4c9e811c93602f#11152cfb83ec47174a21ad76fd4c9e811c93602f"
 dependencies = [
  "const-oid 0.9.6",
  "der 0.7.10",
@@ -6200,7 +6201,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -6366,7 +6367,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -6477,7 +6478,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sd-jwt-rs"
 version = "0.8.0"
-source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=ba5a9a154ae530ddcfcc5b52adf3da71e91b1929#ba5a9a154ae530ddcfcc5b52adf3da71e91b1929"
+source = "git+https://github.com/ElevenID/sd-jwt-rust?rev=9fc75ab0befe6b7f80987acd8b740baead40ee76#9fc75ab0befe6b7f80987acd8b740baead40ee76"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",
@@ -8919,6 +8920,12 @@ name = "unsigned-varint"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6889a77d49f1f013504cec6bf97a2c730394adedaeb1deb5ea08949a50541105"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
